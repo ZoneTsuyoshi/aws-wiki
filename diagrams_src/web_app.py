@@ -10,7 +10,7 @@ with Diagram(
     filename="docs/assets/diagrams/web-app",
     outformat="png",
     show=False,
-    graph_attr={"dpi": "150", "pad": "0.2"},
+    graph_attr={"dpi": "150", "pad": "0.5"},
 ):
     users = Users("ユーザー")
     cdn = CloudFront("CloudFront")

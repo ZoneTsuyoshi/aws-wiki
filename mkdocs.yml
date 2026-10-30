@@ -27,9 +27,14 @@ plugins:
   - search:
       lang: [ja, en]
 
+validation:
+  anchors: warn
+
 markdown_extensions:
   - admonition
   - attr_list
+  - pymdownx.details
+  - pymdownx.highlight
   - tables
   - toc:
       permalink: true
@@ -41,8 +46,45 @@ markdown_extensions:
 
 nav:
   - ホーム: index.md
-  - 構成:
-      - Webアプリ構成（サンプル）: architecture/web-app.md
+  - コース:
+      - courses/index.md
+      - Developer - Associate:
+          - courses/dva/index.md
+          - 分野1 開発: courses/dva/domain1.md
+          - 分野2 セキュリティ: courses/dva/domain2.md
+          - 分野3 テストとデプロイ: courses/dva/domain3.md
+          - 分野4 トラブルシューティング: courses/dva/domain4.md
+          - スキル対応表: courses/dva/coverage.md
+  - サービス:
+      - services/index.md
+      - アプリケーション開発:
+          - Lambda: services/lambda.md
+          - API Gateway: services/api-gateway.md
+          - メッセージング: services/messaging.md
+          - Step Functions: services/step-functions.md
+          - ストリーミングと分析: services/streaming.md
+          - SDK と耐障害性: services/sdk-resilience.md
+      - データとコンピューティング:
+          - DynamoDB: services/dynamodb.md
+          - データベースとキャッシュ: services/databases.md
+          - S3: services/s3.md
+          - ストレージ: services/storage.md
+          - EC2 と Elastic Beanstalk: services/ec2-beanstalk.md
+          - コンテナ: services/containers.md
+      - セキュリティ:
+          - IAM と STS: services/iam.md
+          - Cognito: services/cognito.md
+          - KMS と暗号化: services/kms.md
+          - シークレットと設定: services/secrets.md
+          - 証明書と WAF: services/certificates.md
+      - デプロイと運用:
+          - CI/CD: services/cicd.md
+          - IaC と CLI: services/iac.md
+          - オブザーバビリティ: services/observability.md
+          - ネットワークと配信: services/networking.md
+      - AI: services/ai.md
+  - 質問と回答: qa/index.md
   - このwikiの作り方:
       - Cloudflare Pages で公開する: setup/cloudflare-pages.md
       - 構成図の作り方: setup/diagrams.md
+      - Webアプリ構成（サンプル）: architecture/web-app.md
