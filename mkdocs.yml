@@ -1,0 +1,48 @@
+site_name: AWS Wiki
+repo_url: https://github.com/ZoneTsuyoshi/aws-wiki
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  language: ja
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: ダークモードに切り替え
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: ライトモードに切り替え
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search:
+      lang: [ja, en]
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - ホーム: index.md
+  - 構成:
+      - Webアプリ構成（サンプル）: architecture/web-app.md
+  - このwikiの作り方:
+      - Cloudflare Pages で公開する: setup/cloudflare-pages.md
+      - 構成図の作り方: setup/diagrams.md
