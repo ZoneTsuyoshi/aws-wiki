@@ -19,6 +19,7 @@ theme:
   features:
     - navigation.instant
     - navigation.tabs
+    - navigation.prune
     - navigation.top
     - search.highlight
     - content.code.copy
