@@ -2,4 +2,4 @@
 
 これまでに受けた技術的な質問の一覧です。回答の本文は、内容に合うページに追記しています。
 
-質問はまだありません。
+- CodeCommit や GitHub があれば CodeArtifact は不要か: [Git リポジトリがあっても必要か](../services/cicd.md#codeartifact-need)

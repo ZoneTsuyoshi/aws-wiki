@@ -895,6 +895,45 @@ aws codeartifact login --tool pip --domain my-org --repository shared
 
 **パッケージオリジンコントロール**: パッケージごとに、直接の公開とアップストリームからの取り込みを `ALLOW` か `BLOCK` で制御します。社内パッケージと同名の公開パッケージを取り込む、依存関係かく乱を防げます。
 
+### Git リポジトリがあっても必要か {#codeartifact-need}
+
+CodeCommit や GitHub と CodeArtifact は、置くものが違います。多くのプロジェクトでは、Git に置くのはソースコードとロックファイルまでで、依存パッケージそのものは入っていません。
+
+たとえば `package-lock.json` はバージョンを固定しますが、中身は取りに行く必要があります。取得先は通常 npmjs などの公開リポジトリです。CodeArtifact は、この取得先を置き換えるサービスです。
+
+```mermaid
+flowchart TD
+    A["Git: ソースとロックファイル"] --> B["ビルドで npm install"]
+    B --> C["CodeArtifact"]
+    C -->|"保存済みなら"| D["そのまま返す"]
+    C -->|"未保存なら"| E["外部接続で npmjs から取得して保存"]
+```
+
+| 観点 | Git リポジトリ | CodeArtifact |
+|---|---|---|
+| 主に置くもの | ソースコード、ロックファイル | ビルド済みのパッケージ |
+| バージョンの解決 | しない | npm や pip などのパッケージマネージャーの要求に応える |
+| 社内ライブラリの配布 | ソースを渡すことになる | `npm publish` で公開し、`npm install` で使える |
+| 公開パッケージの保持 | 自分で入れた場合だけ | 取得したバージョンをリポジトリに保存する |
+| 同名の公開パッケージへの対策 | なし | パッケージオリジンコントロール |
+| アクセス制御 | リポジトリ単位 | IAM、ドメインポリシー、リポジトリポリシー |
+
+依存パッケージを Git に入れる方法（ベンダリング）でも、ビルドを公開リポジトリから切り離せます。その場合は、パッケージの更新や OS ごとのバイナリの扱い、リポジトリの肥大化を自分で管理します。
+
+判断の目安は次のとおりです。
+
+| 状況 | 判断 |
+|---|---|
+| 公開パッケージだけを使う小さなプロジェクト | なくてよいことが多い。ロックファイルで十分 |
+| 社内ライブラリを複数のチームで共有する | 向いている |
+| インターネットに出られない VPC でビルドする | 向いている。インターフェイス VPC エンドポイントで接続し、公開パッケージは CodeArtifact 経由で取得する |
+| 使えるパッケージや取得元を組織で管理したい | 向いている |
+| すでに GitHub Packages などを使っている | 同じ役割なので、IAM で統一したいなどの理由がなければ増やさなくてよい |
+
+**例**: 社内ライブラリ `@my-org/utils` を CodeArtifact に公開すると、最初のバージョンの公開で、このパッケージの設定は `Publish: ALLOW`、`Upstream: BLOCK` になります。攻撃者が npmjs に同名で高いバージョンを公開しても、取り込まれません。
+
+**設定を誤ったときの症状**: Git にロックファイルがあるだけで CodeArtifact や社内のリポジトリがないと、公開リポジトリの障害時やパッケージの削除時にビルドが失敗します。ロックファイルはバージョンを固定しますが、パッケージの保管はしないためです。
+
 ## Amplify Hosting とブランチ {#amplify}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
