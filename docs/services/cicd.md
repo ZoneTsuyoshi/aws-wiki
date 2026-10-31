@@ -752,6 +752,55 @@ Auto Scaling と組み合わせると、新しいインスタンスへ自動で�
 
 **例**: `Source` の `namespace` を `SourceVariables` とすると、次の承認アクションの `CustomData` に `#{SourceVariables.CommitId}` を入れて、確認するコミットを示せます。
 
+### CodeConnections の接続 {#codeconnections}
+
+CodeConnections は、AWS のサービスと外部の Git リポジトリをつなぐ機能です。接続は ARN を持つ AWS リソースで、CodePipeline や CodeBuild などに渡して使います。
+
+2024年3月29日に AWS CodeStar Connections から改称しました。古い `codestar-connections` の接続も引き続き使えます。
+
+```mermaid
+flowchart TD
+    A["接続を作る"] --> B["外部サービス側で認可し、AWS のアプリをインストール"]
+    B --> C["接続が AVAILABLE になる"]
+    C --> D["CodePipeline などに接続の ARN を指定"]
+    D --> E["コードの変更でパイプラインが起動"]
+```
+
+| 項目 | 内容 |
+|---|---|
+| 対応先 | GitHub.com、GitHub Enterprise Cloud と Server、GitLab.com と自己管理、Bitbucket Cloud、Azure DevOps |
+| 自社環境に置く Git | GitHub Enterprise Server や自己管理の GitLab は、先に「ホスト」を作る |
+| 状態 | CLI や CloudFormation で作ると `PENDING`。コンソールで認可を完了すると `AVAILABLE` |
+| 利用の権限 | `codeconnections:UseConnection`。CodePipeline のサービスロールなどに付ける |
+| 接続数の上限 | アカウントあたり既定で 250（リージョンごと、引き上げ可能） |
+| 名前の長さ | 32 文字まで |
+| ホスト数の上限 | アカウントあたり 50 |
+
+**何がうれしいか**: 個人のアクセストークンをパラメータやシークレットに置かず、テンプレートには接続の ARN だけを書けます。CodeBuild、CodeDeploy のアプリケーション、CodePipeline で、接続へのアクセスを同じ方法で管理できます。
+
+```yaml
+# CodePipeline のソースアクションの例
+ActionTypeId:
+  Category: Source
+  Owner: AWS
+  Provider: CodeStarSourceConnection
+  Version: "1"
+Configuration:
+  ConnectionArn: arn:aws:codeconnections:ap-northeast-1:111122223333:connection/aEXAMPLE-8aad-4d5d-8878-dfcab0bc441f
+  FullRepositoryId: my-org/my-app
+  BranchName: main
+```
+
+改称後も、CodePipeline のアクション名は `CodeStarSourceConnection` のままです。
+
+**設定を誤ったときの症状**:
+
+| 症状 | 原因 | 対処 |
+|---|---|---|
+| CloudFormation で接続を作ったのに、パイプラインのソースが使えない | 接続が `PENDING` のまま | コンソールで保留中の接続を更新し、認可を完了する |
+| サービスロールで接続を使えない | `UseConnection` の許可がない | サービスロールに許可を足し、`Resource` に接続の ARN を指定する |
+| IAM ポリシーを書いたのに拒否される | ポリシーのプレフィックスと接続の ARN が合っていない | `codeconnections` の接続には `codeconnections:` を、古い接続には `codestar-connections:` を使う |
+
 ### リポジトリからの起動 {#pipeline-triggers}
 
 GitHub、GitLab、Bitbucket などは **CodeConnections** の接続で連携します（旧称 CodeStar Connections）。シークレットをテンプレートに書かず、接続の ARN を参照できる点が利点です。CLI で作った接続は保留状態なので、コンソールで認可を完了させます。
