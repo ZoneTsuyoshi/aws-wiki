@@ -220,7 +220,7 @@ AWS の外のワークロードに、長期のアクセスキーを持たせな�
 
 | 動作 | 働き | 実装 |
 |---|---|---|
-| 予防的 | 操作を止める | SCP、RCP |
+| 予防的 | 操作を止める | SCP、RCP、宣言型ポリシー |
 | 検出的 | 違反を見つける | Config ルール |
 | プロアクティブ | 作成前に確認 | CloudFormation Hooks |
 
@@ -361,7 +361,7 @@ CloudTrail のデータイベントは、既定では記録されず追加の料
 | AI の処理リージョンの確認 | CloudTrail の `additionalEventData.inferenceRegion` |
 
 !!! note "CloudTrail Lake の状況"
-    CloudTrail Lake は 2026 年 5 月 31 日で新規顧客の受付を終了しました。長期の検索は、S3 に保存して Athena で問い合わせる形で考えます。
+    CloudTrail Lake は 2026 年 5 月 31 日で新規顧客の受付を終了しました。長期の検索は、S3 に保存して Athena で問い合わせる形か、AWS が移行先として勧める CloudWatch で考えます。
 
 詳細: [CloudTrail の設定](../../services/observability.md#cloudtrail)、[証跡とイベント履歴](../../services/observability.md#cloudtrail-trails)、[CloudTrail の調査](../../services/threat-detection.md#investigate-cloudtrail)、[モデル呼び出しログ](../../services/ai.md#invocation-logging)
 

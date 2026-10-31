@@ -61,7 +61,7 @@
 | 項目 | 内容 |
 |---|---|
 | Valkey、Redis OSS | レプリカと Multi-AZ、永続化、ソート済みセット |
-| Memcached | レプリケーションなし。ノードが落ちるとそのデータは消える |
+| Memcached（ノードベース） | レプリケーションなし。ノードが落ちるとそのデータは消える |
 | 読み取りの増加 | レプリカを追加 |
 | 書き込みやメモリの増加 | クラスターモードでシャードを追加 |
 | 追い出し（`Evictions`）が多い | ノードを大きくする、TTL を見直す |
@@ -78,7 +78,7 @@
 |---|---|---|---|
 | RDS | リードレプリカ（手動、最大 15 個） | インスタンスクラスの変更 | ストレージの自動スケーリング |
 | Aurora | Aurora Auto Scaling でレプリカを増減（最大 15） | ライターのクラス変更 | 自動 |
-| Aurora Serverless v2 | ACU で自動 | ACU で自動。0.5 ACU 単位、最大 256 | 自動 |
+| Aurora Serverless v2 | ACU で自動 | ACU で自動。0.5 ACU 単位、最大は Aurora MySQL 256、Aurora PostgreSQL 384 | 自動 |
 | DynamoDB | Auto Scaling、オンデマンド | Auto Scaling、オンデマンド | 自動 |
 
 **RDS のストレージの自動スケーリング:** 次の条件をすべて満たすと、ストレージを増やします。

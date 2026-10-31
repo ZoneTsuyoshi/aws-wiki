@@ -8,6 +8,7 @@ AWS 上の分散システムのプロビジョニング、運用、管理の力�
     公式ページによると、韓国語の試験は **2026年12月31日より後は提供されません**。英語、日本語、簡体字中国語の提供について、終了の案内はありません。新しい版（DOP-C03 など）の告知も、2026年10月31日に確認した時点ではありません。
 
 [:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+[:material-help-circle-outline: 問題集](exercises/index.md){ .md-button }
 
 ## 試験の概要 {#overview}
 
@@ -28,7 +29,7 @@ AWS 上の分散システムのプロビジョニング、運用、管理の力�
 
 ## 学習の順番 {#study-path}
 
-配点の大きい分野から順に進めます。分野5は分野4の監視を前提にするので、最後にしています。各分野のページで要点を確認し、足りないところはサービス解説で補います。
+配点の大きい分野から順に進めます。分野5は分野4の監視を前提にするので、最後にしています。各分野のページで要点を確認し、足りないところはサービス解説で補います。[問題集](exercises/index.md)で理解を確かめます。
 
 ```mermaid
 flowchart TD
@@ -41,14 +42,14 @@ flowchart TD
     G --> H["確認問題を解き直す"]
 ```
 
-| 分野 | 配点 | 主なサービス |
-|---|---|---|
-| [分野1: SDLC の自動化](domain1.md) | 22% | CodePipeline、CodeBuild、CodeDeploy、CodeArtifact、ECR、Image Builder |
-| [分野2: 構成管理と IaC](domain2.md) | 17% | CloudFormation、CDK、SAM、Organizations、Control Tower、Service Catalog、Systems Manager |
-| [分野3: 回復力のあるクラウドソリューション](domain3.md) | 15% | Auto Scaling、ELB、Route 53、Aurora、DynamoDB、AWS Backup、FIS |
-| [分野4: 監視とログ](domain4.md) | 15% | CloudWatch、CloudWatch Logs、X-Ray、Kinesis、Athena、AWS Config |
-| [分野5: インシデントとイベントへの対応](domain5.md) | 14% | EventBridge、AWS Health、Systems Manager、Step Functions、SQS、SNS |
-| [分野6: セキュリティとコンプライアンス](domain6.md) | 17% | IAM、Identity Center、KMS、Secrets Manager、GuardDuty、Security Hub、Macie |
+| 分野 | サービス別の学習 | 配点 | 主なサービス |
+|---|---|---|---|
+| [分野1: SDLC の自動化](domain1.md) | [開く](study/domain1/index.md) | 22% | CodePipeline、CodeBuild、CodeDeploy、CodeArtifact、ECR、Image Builder |
+| [分野2: 構成管理と IaC](domain2.md) | [開く](study/domain2/index.md) | 17% | CloudFormation、CDK、SAM、Organizations、Control Tower、Service Catalog、Systems Manager |
+| [分野3: 回復力のあるクラウドソリューション](domain3.md) | [開く](study/domain3/index.md) | 15% | Auto Scaling、ELB、Route 53、Aurora、DynamoDB、AWS Backup、FIS |
+| [分野4: 監視とログ](domain4.md) | [開く](study/domain4/index.md) | 15% | CloudWatch、CloudWatch Logs、X-Ray、Kinesis、Athena、AWS Config |
+| [分野5: インシデントとイベントへの対応](domain5.md) | [開く](study/domain5/index.md) | 14% | EventBridge、AWS Health、Systems Manager、Step Functions、SQS、SNS |
+| [分野6: セキュリティとコンプライアンス](domain6.md) | [開く](study/domain6/index.md) | 17% | IAM、Identity Center、KMS、Secrets Manager、GuardDuty、Security Hub、Macie |
 
 公式のすべての項目と解説の対応は、[対応表](coverage.md)で確認できます。
 

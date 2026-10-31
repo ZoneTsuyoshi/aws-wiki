@@ -7,30 +7,34 @@ import os
 import re
 import sys
 
-COURSE = "docs/courses/dva"
+COURSES = "docs/courses"
 START = "<!-- questions:start -->"
 END = "<!-- questions:end -->"
 QUESTION = re.compile(r"^### 問(\d+) \{#q\d+\}\n(.*?)(?=^### 問|\Z)", re.M | re.S)
 TAG = re.compile(r"\*\*スキル:\*\*(.*)")
 SKILL = re.compile(r"C0[23] ((\d)\.\d\.\d+)")
+LINKED = re.compile(r"\[([^\]]+)\]\(\.\./domain(\d)\.md#[\w-]+\)")
 
 
-def load_questions():
+def load_questions(course):
     questions = {}
-    for path in sorted(glob.glob(f"{COURSE}/exercises/*.md")):
+    for path in sorted(glob.glob(f"{course}/exercises/*.md")):
         service = os.path.basename(path)[:-3]
         if service == "index":
             continue
         for number, body in QUESTION.findall(open(path, encoding="utf-8").read()):
-            skills = SKILL.findall(TAG.search(body).group(1).split("**参照")[0])
+            tag = TAG.search(body).group(1).split("**参照")[0]
+            skills = SKILL.findall(tag) + LINKED.findall(tag)
             stem = body.strip().split("\n\n")[0].replace("`", "").replace("|", "/")
             stem = stem[:50] + "…" if len(stem) > 50 else stem
             questions[(service, int(number))] = (skills, stem)
     return questions
 
 
-def rows(items):
+def rows(items, overview=False):
     if not items:
+        if overview:
+            return "この分野の問題は、すべてサービス別のページに載っています。\n"
         return "この組み合わせの問題はまだありません。\n"
     lines = ["| 問題 | スキル | 内容 |", "|---|---|---|"]
     for (service, number), skills, stem in items:
@@ -56,12 +60,11 @@ def render(path, content, block):
     return f"{head}{START}\n\n{block}\n{END}{tail}"
 
 
-def main():
-    check = "--check" in sys.argv
-    questions = load_questions()
+def build(course, check):
+    questions = load_questions(course)
     listed = set()
     stale = []
-    for directory in sorted(glob.glob(f"{COURSE}/study/domain*")):
+    for directory in sorted(glob.glob(f"{course}/study/domain*")):
         domain = directory[-1]
         pages = sorted(glob.glob(f"{directory}/*.md"))
         services = {os.path.basename(p)[:-3] for p in pages} - {"index"}
@@ -72,19 +75,29 @@ def main():
             items = select(questions, domain, targets)
             listed.update(key for key, _, _ in items)
             content = open(path, encoding="utf-8").read()
-            updated = render(path, content, rows(items))
+            updated = render(path, content, rows(items, name == "index"))
             if updated != content:
                 stale.append(path)
                 if not check:
                     open(path, "w", encoding="utf-8").write(updated)
     missing = [key for key in questions if key not in listed]
-    print(f"問題 {len(questions)}問, 学習ページに載っていない問題 {len(missing)}問")
+    print(f"{course}: 問題 {len(questions)}問, 学習ページに載っていない問題 {len(missing)}問")
     for service, number in missing:
-        print("ERROR 行き先なし", service, number)
+        print("ERROR 行き先なし", course, service, number)
     if check:
         for path in stale:
             print("ERROR 問題一覧が古いページ", path)
-    sys.exit(1 if missing or (check and stale) else 0)
+    return bool(missing or (check and stale))
+
+
+def main():
+    check = "--check" in sys.argv
+    if "--course" in sys.argv:
+        courses = [f"{COURSES}/{sys.argv[sys.argv.index('--course') + 1]}"]
+    else:
+        courses = sorted(p for p in glob.glob(f"{COURSES}/*") if os.path.isdir(p))
+    failed = [build(course, check) for course in courses]
+    sys.exit(1 if any(failed) else 0)
 
 
 if __name__ == "__main__":

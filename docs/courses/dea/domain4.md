@@ -196,7 +196,7 @@ sequenceDiagram
 
 | 手順 | 忘れたときの症状 |
 |---|---|
-| データレイク管理者を指定する | 誰も付与できない |
+| データレイク管理者を指定する | 権限を一元的に管理する主体がいない |
 | S3 パスを登録する | 基盤データのアクセスを管理できない |
 | `IAMAllowedPrincipals` の `Super` を外す | 権限を絞っても全員読める |
 
@@ -349,7 +349,7 @@ Glue、Lambda、MWAA、Step Functions のログは CloudWatch Logs に出力で�
 CloudTrail Lake は、イベントを ORC 形式のイベントデータストアに集め、SQL で検索します。S3 と Athena の環境を自分で作らずに、複数のアカウントのイベントを検索できます。
 
 !!! note "CloudTrail Lake の現在の状況"
-    CloudTrail Lake は 2026年5月31日で新規顧客の受付を終了しました。既存の顧客は引き続き使えます。新規の環境では、証跡を S3 に出力して Athena で検索します。試験ではガイドのとおり、一元的な SQL 検索の手段として問われる可能性があります。
+    CloudTrail Lake は 2026年5月31日で新規顧客の受付を終了しました。既存の顧客は引き続き使えます。新規の環境では、証跡を S3 に出力して Athena で検索するか、AWS が移行先として勧める CloudWatch を使います。試験ではガイドのとおり、一元的な SQL 検索の手段として問われる可能性があります。
 
 詳細: [CloudTrail Lake](../../services/observability.md#cloudtrail-lake)
 
@@ -381,7 +381,7 @@ flowchart TD
 |---|---|
 | 非常に大量で複雑な処理が要る | EMR で Spark を実行する |
 | S3 に集めて単発で調べる | Athena |
-| ほぼリアルタイムの検索 | Firehose から OpenSearch へ |
+| ほぼリアルタイムの検索 | OpenSearch。CloudWatch Logs はサブスクリプションフィルターから直接送る |
 
 EMR 自身のログも S3 に出力でき、Athena で分析できます。
 

@@ -15,7 +15,7 @@ AWS 上で ML と生成 AI のソリューションを構築、運用、監視�
 
     C01 で受ける人は[C01 で受ける場合](#c01)を先に読んでください。
 
-[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button } [:material-help-circle-outline: 問題集](exercises/index.md){ .md-button }
 
 ## 試験の概要 {#overview}
 
@@ -65,6 +65,15 @@ flowchart TD
 | [分野2: ML モデルと FM の開発](domain2.md) | 24% | 26% | SageMaker AI、Bedrock、MLflow |
 | [分野3: デプロイとオーケストレーション](domain3.md) | 24% | 22% | エンドポイント、Pipelines、Knowledge Bases、AgentCore |
 | [分野4: 運用、監視、保護](domain4.md) | 24% | 24% | CloudWatch、IAM、Guardrails、Budgets |
+
+サービスごとの要点と問題は、分野ごとの学習ページから進めます。話題ごとの[問題集](exercises/index.md)で理解を確かめます。問題集は C02 を基準にしています。
+
+| 分野 | 分野のページ | サービス別の学習 |
+|---|---|---|
+| 分野1: データ準備 | [開く](domain1.md) | [開く](study/domain1/index.md) |
+| 分野2: モデルと FM の開発 | [開く](domain2.md) | [開く](study/domain2/index.md) |
+| 分野3: デプロイとオーケストレーション | [開く](domain3.md) | [開く](study/domain3/index.md) |
+| 分野4: 運用、監視、保護 | [開く](domain4.md) | [開く](study/domain4/index.md) |
 
 全スキルの一覧は[スキル対応表](coverage.md)にあります。
 

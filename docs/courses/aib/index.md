@@ -20,7 +20,7 @@ AI の能力を事業の成果につなげ、責任ある形で全社に広げ�
 
     条件は変わることがあります。予約の前に[公式ページ](https://aws.amazon.com/certification/certified-ai-business-strategist/)と[ベータ試験の方針](https://aws.amazon.com/certification/policies/before-testing/)を確認してください。
 
-[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button } [:material-help-circle-outline: 問題集](exercises/index.md){ .md-button }
 
 ## 試験の概要 {#overview}
 
@@ -44,7 +44,7 @@ AI の能力を事業の成果につなげ、責任ある形で全社に広げ�
 
 ## 学習の順番 {#study-path}
 
-配点の大きい分野2を中心にしつつ、用語の土台になる分野1から順に進めます。各分野のページでスキルごとの要点を確認し、足りないところはサービス解説で補います。
+配点の大きい分野2を中心にしつつ、用語の土台になる分野1から順に進めます。各分野のページでスキルごとの要点を確認し、足りないところはサービス解説で補います。話題ごとの[問題集](exercises/index.md)で理解を確かめます。
 
 ```mermaid
 flowchart TD
@@ -55,12 +55,12 @@ flowchart TD
     E --> F["確認問題を解き直す"]
 ```
 
-| 分野 | 配点 | タスク | スキル | 中心の話題 |
-|---|---|---|---|---|
-| [分野1: AI の基礎とリテラシー](domain1.md) | 24% | 3 | 13 | AI、ML、生成 AI の違い、解決策の選択、プロンプト、RAG |
-| [分野2: AI 戦略と事業価値の創出](domain2.md) | 28% | 3 | 14 | ユースケース、作る、買う、組む、KPI、ROI、競争優位 |
-| [分野3: AI ガバナンスと責任ある AI のリーダーシップ](domain3.md) | 24% | 3 | 12 | 責任ある AI、ガバナンス体制、規制、リスク対策 |
-| [分野4: 事業の準備状況、リーダーシップ、AI 変革](domain4.md) | 24% | 4 | 19 | 成熟度、データ基盤、変革の管理、全社展開 |
+| 分野 | サービス別の学習 | 配点 | タスク | スキル | 中心の話題 |
+|---|---|---|---|---|---|
+| [分野1: AI の基礎とリテラシー](domain1.md) | [開く](study/domain1/index.md) | 24% | 3 | 13 | AI、ML、生成 AI の違い、解決策の選択、プロンプト、RAG |
+| [分野2: AI 戦略と事業価値の創出](domain2.md) | [開く](study/domain2/index.md) | 28% | 3 | 14 | ユースケース、作る、買う、組む、KPI、ROI、競争優位 |
+| [分野3: AI ガバナンスと責任ある AI のリーダーシップ](domain3.md) | [開く](study/domain3/index.md) | 24% | 3 | 12 | 責任ある AI、ガバナンス体制、規制、リスク対策 |
+| [分野4: 事業の準備状況、リーダーシップ、AI 変革](domain4.md) | [開く](study/domain4/index.md) | 24% | 4 | 19 | 成熟度、データ基盤、変革の管理、全社展開 |
 
 全スキルの一覧は[スキル対応表](coverage.md)にあります。
 

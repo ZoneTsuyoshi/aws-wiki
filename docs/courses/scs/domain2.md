@@ -39,7 +39,7 @@
 | ログの保護 | ログ保管アカウント、Object Lock | 攻撃者に消されない |
 | Shield Advanced | 保護対象の指定、Route 53 ヘルスチェック、SRT の権限 | 保護は指定したリソースにだけ効く。自動では広がらない |
 
-Shield Advanced は月額 3,000 ドルの1年契約です。SRT に頼るには Business または Enterprise のサポートプランが必要で、`AWSShieldDRTAccessPolicy` を付けたロールを `AssociateDRTRole` で渡します。S3 の WAF ログを見せるには、バケットへのアクセスも許可します。
+Shield Advanced は月額 3,000 ドルの1年契約です。SRT に頼るには Business または Enterprise のサポートプランが必要で、`AWSShieldDRTAccessPolicy` を付けたロールを `AssociateDRTRole` で渡します。WAF の web ACL のログは、アカウントへのアクセスを許可すれば読めます。ALB や CloudFront のログなど他のログを見せるには、同じアカウントの S3 バケットへのアクセスも許可します。バケットは平文か SSE-S3 に限られ、KMS で暗号化したバケットのログは読めません。
 
 詳細: [準備](../../services/threat-detection.md#ir-preparation)、[Shield Advanced](../../services/threat-detection.md#shield-advanced)、[Shield Response Team](../../services/threat-detection.md#shield-srt)
 
@@ -63,7 +63,7 @@ Shield Advanced は月額 3,000 ドルの1年契約です。SRT に頼るには 
 | Lambda | 1 回の短い処理（SG の変更、キーの無効化） |
 | Step Functions | 判断、待機、承認を含む複数の手順 |
 | Systems Manager Automation | 定義済みのランブックの実行 |
-| Automated Forensics Orchestrator for Amazon EC2 | 取得、隔離、調査、報告のフォレンジックの流れ全体 |
+| Automated Forensics Orchestrator for Amazon EC2 and EKS | 取得、隔離、調査、報告のフォレンジックの流れ全体 |
 | Application Recovery Controller（ARC） | AZ やリージョンからトラフィックを移す |
 | Security Hub の自動化ルール | 検出結果の更新や抑制。外部の操作はしない |
 

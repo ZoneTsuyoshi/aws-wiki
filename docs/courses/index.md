@@ -2,6 +2,8 @@
 
 AWS 認定試験ごとの学習コースです。各コースは公式の試験ガイドの範囲に沿って要点をまとめ、詳しい内容は[サービス解説](../services/index.md)にリンクしています。
 
+どのコースにも、分野とサービスごとの学習ページと、スキルごとの問題集があります。
+
 試験の版や提供状況は変わります。受験前に[公式の認定ページ](https://aws.amazon.com/certification/exams/)を確認してください。
 
 ## 基礎とビジネス {#foundational}
@@ -17,7 +19,7 @@ AWS 認定試験ごとの学習コースです。各コースは公式の試験�
 | 試験 | コード | 状況 |
 |---|---|---|
 | [Solutions Architect - Associate](saa/index.md) | SAA-C03 | |
-| [Developer - Associate](dva/index.md) | DVA-C03 / C02 | C02 は 2026年11月30日まで。問題集とサービス別の学習ページあり |
+| [Developer - Associate](dva/index.md) | DVA-C03 / C02 | C02 は 2026年11月30日まで |
 | [CloudOps Engineer - Associate](soa/index.md) | SOA-C03 | |
 | [Data Engineer - Associate](dea/index.md) | DEA-C01 | |
 | [Machine Learning Engineer - Associate](mla/index.md) | MLA-C02 / C01 | C02 はベータ版。一般提供は 2027年1月14日 |

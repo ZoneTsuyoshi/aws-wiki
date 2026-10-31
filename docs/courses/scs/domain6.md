@@ -30,7 +30,7 @@ Organizations、Service Catalog、IAM Identity Center などを組み合わせ�
 
 | コントロールの動作 | 働き | 実装 |
 |---|---|---|
-| 予防的 | 操作を止める | SCP、RCP |
+| 予防的 | 操作を止める | SCP、RCP、宣言型ポリシー |
 | 検出的 | 違反を見つける | Config ルール |
 | プロアクティブ | 作成前に確認し、不適合なら作らない | CloudFormation Hooks |
 

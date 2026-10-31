@@ -6,7 +6,7 @@ AWS 上のワークロードをデプロイ、管理、運用する力を問う�
     - **言語:** 韓国語と簡体字中国語の試験は **2026年11月19日より後は提供されません**。
     - **試験ガイドの改訂:** 版の履歴は v1.1 が 2026年6月1日、v1.2 が 2026年10月29日です。AWS は、改訂を試験に反映する少なくとも 1 か月前に公開するとしています。受験日に合わせて、ガイドの改訂履歴を確認してください。
 
-[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button } [:material-help-circle-outline: 問題集](exercises/index.md){ .md-button }
 
 ## 試験の概要 {#overview}
 
@@ -27,7 +27,7 @@ AWS 上のワークロードをデプロイ、管理、運用する力を問う�
 
 ## 学習の順番 {#study-path}
 
-配点の大きい分野から順に進めます。各分野のページでスキルごとの要点を確認し、足りないところはサービス解説で補います。
+配点の大きい分野から順に進めます。各分野のページでスキルごとの要点を確認し、足りないところはサービス解説で補います。分野ごとのサービス別の学習ページと[問題集](exercises/index.md)で理解を確かめます。
 
 分野1と分野3は Systems Manager と EventBridge を共通で使うので、続けて学ぶと効率的です。
 
@@ -41,13 +41,13 @@ flowchart TD
     F --> G["確認問題を解き直す"]
 ```
 
-| 分野 | 配点 | 主なサービス |
-|---|---|---|
-| [分野1: 監視、ログ、分析、修復、性能の最適化](domain1.md) | 22% | CloudWatch、CloudTrail、Systems Manager、EventBridge、EBS、RDS |
-| [分野2: 信頼性と事業継続性](domain2.md) | 22% | Auto Scaling、ELB、Route 53、ElastiCache、AWS Backup |
-| [分野3: デプロイ、プロビジョニング、自動化](domain3.md) | 22% | CloudFormation、CDK、Image Builder、AWS RAM、Systems Manager |
-| [分野4: セキュリティとコンプライアンス](domain4.md) | 16% | IAM、Organizations、Config、KMS、ACM、Secrets Manager、GuardDuty |
-| [分野5: ネットワークとコンテンツ配信](domain5.md) | 18% | VPC、Route 53、CloudFront、Global Accelerator、Transit Gateway |
+| 分野 | サービス別の学習 | 配点 | 主なサービス |
+|---|---|---|---|
+| [分野1: 監視、ログ、分析、修復、性能の最適化](domain1.md) | [開く](study/domain1/index.md) | 22% | CloudWatch、CloudTrail、Systems Manager、EventBridge、EBS、RDS |
+| [分野2: 信頼性と事業継続性](domain2.md) | [開く](study/domain2/index.md) | 22% | Auto Scaling、ELB、Route 53、ElastiCache、AWS Backup |
+| [分野3: デプロイ、プロビジョニング、自動化](domain3.md) | [開く](study/domain3/index.md) | 22% | CloudFormation、CDK、Image Builder、AWS RAM、Systems Manager |
+| [分野4: セキュリティとコンプライアンス](domain4.md) | [開く](study/domain4/index.md) | 16% | IAM、Organizations、Config、KMS、ACM、Secrets Manager、GuardDuty |
+| [分野5: ネットワークとコンテンツ配信](domain5.md) | [開く](study/domain5/index.md) | 18% | VPC、Route 53、CloudFront、Global Accelerator、Transit Gateway |
 
 ## 対象となる人と範囲外のもの {#out-of-scope}
 

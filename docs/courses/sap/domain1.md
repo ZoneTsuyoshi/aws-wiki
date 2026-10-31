@@ -322,7 +322,7 @@ Policy の判定はモデルの判断に頼りません。「返金ツールは 
 
 | 種類 | 入力の上限 | 処理時間の上限 | 選ぶ理由 |
 |---|---|---|---|
-| リアルタイム | 6 MB | 60 秒 | 常に低遅延 |
+| リアルタイム | 25 MB（FAQ。API リファレンスは 6 MB） | 60 秒（ストリーミングの応答は 8 分） | 常に低遅延 |
 | サーバーレス | | | 断続的、コールドスタートを許容 |
 | 非同期 | 1 GB | 1 時間 | 大きな入力。0 台まで縮小できる |
 | バッチ変換 | `MaxPayloadInMB` 最大 100 MB | | データセット全体をまとめて |
@@ -549,7 +549,7 @@ Policy の判定はモデルの判断に頼りません。「返金ツールは 
 | 定型の DWH、複雑な結合 | Redshift | 列指向、分散処理 |
 | SaaS のデータの取り込み | AppFlow | コード不要 |
 
-**費用の判断:** 断続的なジョブは EMR Serverless や Redshift Serverless、常時の負荷はプロビジョンドです。EMR のタスクノードをスポットにすると費用を下げられます。
+**費用の判断:** 断続的なジョブは EMR Serverless や Redshift Serverless、常時の負荷はプロビジョンドです。EMR のタスクノードをスポットにすると、クラスターの停止を避けながら費用を下げられます。やり直しを許容できる一時的なクラスターなら、全ノードをスポットにする方法もあります。
 
 詳細: [MSK](../../services/data-engineering.md#msk)、[Kinesis Data Streams と MSK の違い](../../services/data-engineering.md#msk-vs-kinesis)、[EMR](../../services/data-engineering.md#emr)、[Redshift](../../services/data-engineering.md#redshift)、[AppFlow](../../services/data-engineering.md#appflow)、[変換エンジン](../../services/data-engineering.md#choosing-transform)
 

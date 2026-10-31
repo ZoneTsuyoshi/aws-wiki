@@ -5,7 +5,7 @@ AWS クラウド全体の知識を、特定の職種によらず問う試験で�
 !!! warning "イタリア語とドイツ語の試験が終了します"
     公式ページによると、イタリア語とドイツ語の試験は **2026年12月31日より後に提供されなくなります**。2026年10月31日時点で、公式ページに CLF-C02 の後継や最終受験日の案内はありません。
 
-[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button } [:material-help-circle-outline: 問題集](exercises/index.md){ .md-button }
 
 ## 試験の概要 {#overview}
 
@@ -29,6 +29,8 @@ AWS クラウド全体の知識を、特定の職種によらず問う試験で�
 
 まず分野1で用語を押さえ、配点が最大の分野3でサービスの役割を覚えます。セキュリティのサービスは他のサービスを知っていると理解しやすいので、分野2はその後にします。
 
+各分野のページで要点を確認し、サービス別の学習ページで順に進めます。[問題集](exercises/index.md)で理解を確かめます。
+
 ```mermaid
 flowchart TD
     A["分野1: クラウドの概念 (24%)"] --> B["分野3: テクノロジーとサービス (34%)"]
@@ -38,12 +40,12 @@ flowchart TD
     E --> F["確認問題を解き直す"]
 ```
 
-| 分野 | 配点 | 主な内容 |
-|---|---|---|
-| [分野1: クラウドの概念](domain1.md) | 24% | クラウドの利点、Well-Architected、CAF、移行の戦略、経済性 |
-| [分野2: セキュリティとコンプライアンス](domain2.md) | 30% | 責任共有モデル、Artifact、IAM、ルートユーザー、GuardDuty、WAF |
-| [分野3: クラウドのテクノロジーとサービス](domain3.md) | 34% | リージョンと AZ、EC2、RDS、VPC、S3、AI と分析 |
-| [分野4: 請求、料金、サポート](domain4.md) | 12% | 購入オプション、Budgets、Cost Explorer、サポートプラン |
+| 分野 | サービス別の学習 | 配点 | 主な内容 |
+|---|---|---|---|
+| [分野1: クラウドの概念](domain1.md) | [開く](study/domain1/index.md) | 24% | クラウドの利点、Well-Architected、CAF、移行の戦略、経済性 |
+| [分野2: セキュリティとコンプライアンス](domain2.md) | [開く](study/domain2/index.md) | 30% | 責任共有モデル、Artifact、IAM、ルートユーザー、GuardDuty、WAF |
+| [分野3: クラウドのテクノロジーとサービス](domain3.md) | [開く](study/domain3/index.md) | 34% | リージョンと AZ、EC2、RDS、VPC、S3、AI と分析 |
+| [分野4: 請求、料金、サポート](domain4.md) | [開く](study/domain4/index.md) | 12% | 購入オプション、Budgets、Cost Explorer、サポートプラン |
 
 ## 対象となる受験者と範囲外のもの {#target-candidate}
 

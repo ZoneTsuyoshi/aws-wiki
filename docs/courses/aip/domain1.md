@@ -238,7 +238,7 @@ Knowledge Bases では、文書と同じ場所に `<ファイル名>.metadata.js
 | 独自の社内 wiki | Custom のデータソースに Lambda から文書を送る |
 | 既存の Kendra | Kendra GenAI インデックスを Knowledge Bases から使う |
 
-Customer-managed のコネクタは S3 と Custom だけです。多くのコネクタが要るなら、Managed の強みになります。
+新しく作れる Customer-managed のコネクタは S3 と Custom だけです（2026年9月30日より前に作ったものは動き続けます）。多くのコネクタが要るなら、Managed の強みになります。
 
 !!! note "Kendra と Q Business の状況"
     Kendra は 2026-06-30 にメンテナンスモードに入り、2026-07-30 から新規顧客を受け付けていません。公式の移行先は Managed Knowledge Base です。Q Business と Q Apps も新規顧客を受け付けておらず、移行先は Amazon Quick です。どちらも試験の対象一覧には載っています。
@@ -247,7 +247,7 @@ Customer-managed のコネクタは S3 と Custom だけです。多くのコネ
 
 ### 1.4.5 ベクトルストアの鮮度を保つ {#skill-1-4-5}
 
-Knowledge Bases は自動で同期しません。ファイルを変えたら `StartIngestionJob` を実行します。処理されるのは差分だけです。
+Customer-managed のナレッジベースは自動で同期しません。ファイルを変えたら `StartIngestionJob` を実行します。処理されるのは差分だけです。Managed はスケジュール同期も設定できますが、頻度は日次、週次、月次です。
 
 | 方式 | 実装 | 鮮度 | 向いている場面 |
 |---|---|---|---|

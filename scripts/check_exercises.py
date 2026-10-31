@@ -10,6 +10,8 @@ OPTION = re.compile(r"^- ([A-Z])\. (.+)$", re.M)
 ANSWER = re.compile(r"^    \*\*正解: ([A-Z](?:, [A-Z])*)\*\*$", re.M)
 SELECT = re.compile(r"（(\d)つ選択）")
 MIN_PER_SKILL = 3
+COURSES = "docs/courses"
+ITEM = re.compile(r"domain\d\.md#((?:skill|obj)-\d-\d-\d+|t\d-\d+-[\w-]+)")
 
 
 def check(path, errors, letters):
@@ -17,7 +19,7 @@ def check(path, errors, letters):
     marks = list(QUESTION.finditer(text))
     if not marks:
         errors.append(f"{path}: 問題がありません")
-    longest = total = 0
+    longest = shortest = total = 0
     for i, mark in enumerate(marks):
         where = f"{path} 問{mark.group(1)}"
         if int(mark.group(1)) != i + 1 or mark.group(1) != mark.group(2):
@@ -57,33 +59,53 @@ def check(path, errors, letters):
             length = {name: len(option) for name, option in options}
             if length.get(correct[0], 0) == max(length.values()):
                 longest += 1
-    return len(marks), longest, total
+            if length.get(correct[0], 0) == min(length.values()):
+                shortest += 1
+    return len(marks), longest, shortest, total
 
 
-def check_skills(paths, errors):
-    """対応表にある C03 の全スキルに、最低限の問題数があるか確かめる。"""
+def skill_anchors(line):
+    """スキルの行から分野ページの見出し ID を取り出す。DVA は C03 の番号で書いている。"""
+    line = line.split("**参照")[0]
+    numbered = [f"skill-{n.replace('.', '-')}" for n in re.findall(r"C03 (\d\.\d\.\d+)", line)]
+    return numbered + re.findall(r"domain\d\.md#([\w-]+)", line)
+
+
+def check_skills(course, paths, errors):
+    """対応表にある全スキルに、最低限の問題数があるか確かめる。"""
     tags = collections.Counter()
     for path in paths:
         for line in re.findall(r"\*\*スキル:\*\*(.*)", open(path, encoding="utf-8").read()):
-            tags.update(re.findall(r"C03 (\d\.\d\.\d+)", line.split("**参照")[0]))
-    table = open("docs/courses/dva/coverage.md", encoding="utf-8").read().split("## DVA-C02")[0]
-    for skill in re.findall(r"\[(\d\.\d\.\d+)\]\(domain", table):
+            tags.update(skill_anchors(line))
+    table = open(f"{COURSES}/{course}/coverage.md", encoding="utf-8").read()
+    skills = dict.fromkeys(ITEM.findall(table))
+    for skill in skills:
         if tags[skill] < MIN_PER_SKILL:
-            errors.append(f"スキル {skill}: 問題が {tags[skill]}問しかありません")
+            errors.append(f"{course} {skill}: 問題が {tags[skill]}問しかありません")
+    for skill in tags.keys() - skills.keys():
+        errors.append(f"{course} {skill}: 対応表にないスキルです")
 
 
 def main():
     errors = []
     letters = collections.Counter()
-    pattern = "docs/courses/*/exercises/*.md"
-    paths = [p for p in sorted(glob.glob(pattern)) if os.path.basename(p) != "index.md"]
+    only = sys.argv[sys.argv.index("--course") + 1] if "--course" in sys.argv else None
+    courses = [only] if only else sorted(os.path.basename(p) for p in glob.glob(f"{COURSES}/*") if os.path.isdir(p))
     count = 0
-    for path in paths:
-        questions, longest, total = check(path, errors, letters)
-        count += questions
-        print(f"{path}: {questions}問, 正解が最長の選択肢: {longest}/{total}")
+    for course in courses:
+        paths = [
+            p
+            for p in sorted(glob.glob(f"{COURSES}/{course}/exercises/*.md"))
+            if os.path.basename(p) != "index.md"
+        ]
+        if not paths:
+            errors.append(f"{course}: 問題集がありません")
+        for path in paths:
+            questions, longest, shortest, total = check(path, errors, letters)
+            count += questions
+            print(f"{path}: {questions}問, 正解が最長の選択肢: {longest}/{total}, 最短: {shortest}/{total}")
+        check_skills(course, paths, errors)
     print(f"合計 {count}問, 正解の分布: {dict(sorted(letters.items()))}")
-    check_skills(paths, errors)
     for error in errors:
         print("ERROR", error)
     sys.exit(1 if errors else 0)

@@ -7,7 +7,7 @@ AI、機械学習、生成 AI の基本と、AWS の AI サービスの選び方
     - **試験ガイド:** 第 1.2 版が **2026年10月29日** に公開されました。AWS は、ガイドの更新を試験への反映のおよそ 1 か月前に公開すると説明しています。反映の正確な日は示されていません。
     - **新しい版:** 公式ページに、AIF-C01 の後継の版や最終受験日の案内はありません。
 
-[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button } [:material-help-circle-outline: 問題集](exercises/index.md){ .md-button }
 
 ## 試験の概要 {#overview}
 
@@ -28,7 +28,7 @@ AI、機械学習、生成 AI の基本と、AWS の AI サービスの選び方
 
 ## 学習の順番 {#study-path}
 
-分野3 は分野1、2 の用語を前提にするので、配点順ではなく番号順に進めます。各分野のページで目的ごとの要点を確認し、足りないところはサービス解説で補います。
+分野3 は分野1、2 の用語を前提にするので、配点順ではなく番号順に進めます。各分野のページで目的ごとの要点を確認し、足りないところはサービス解説で補います。話題ごとの[問題集](exercises/index.md)で理解を確かめます。
 
 ```mermaid
 flowchart TD
@@ -40,13 +40,13 @@ flowchart TD
     F --> G["確認問題を解き直す"]
 ```
 
-| 分野 | 配点 | タスク | 目的の数 | 主なサービス |
-|---|---|---|---|---|
-| [分野1: AI と ML の基礎](domain1.md) | 20% | 3 | 17 | SageMaker AI、Comprehend、Transcribe、Translate、Lex、Polly |
-| [分野2: 生成 AI の基礎](domain2.md) | 24% | 3 | 14 | Bedrock、JumpStart、Quick、Kiro、Strands Agents、AgentCore |
-| [分野3: 基盤モデルの応用](domain3.md) | 28% | 4 | 19 | Knowledge Bases、OpenSearch、Aurora、Prompt Management、Bedrock の評価 |
-| [分野4: 責任ある AI](domain4.md) | 14% | 2 | 11 | Guardrails、Model Cards、Bedrock の評価 |
-| [分野5: セキュリティ、コンプライアンス、ガバナンス](domain5.md) | 14% | 2 | 8 | IAM、KMS、Macie、PrivateLink、Config、CloudTrail、Artifact |
+| 分野 | サービス別の学習 | 配点 | タスク | 目的の数 | 主なサービス |
+|---|---|---|---|---|---|
+| [分野1: AI と ML の基礎](domain1.md) | [開く](study/domain1/index.md) | 20% | 3 | 17 | SageMaker AI、Comprehend、Transcribe、Translate、Lex、Polly |
+| [分野2: 生成 AI の基礎](domain2.md) | [開く](study/domain2/index.md) | 24% | 3 | 14 | Bedrock、JumpStart、Quick、Kiro、Strands Agents、AgentCore |
+| [分野3: 基盤モデルの応用](domain3.md) | [開く](study/domain3/index.md) | 28% | 4 | 19 | Knowledge Bases、OpenSearch、Aurora、Prompt Management、Bedrock の評価 |
+| [分野4: 責任ある AI](domain4.md) | [開く](study/domain4/index.md) | 14% | 2 | 11 | Guardrails、Model Cards、Bedrock の評価 |
+| [分野5: セキュリティ、コンプライアンス、ガバナンス](domain5.md) | [開く](study/domain5/index.md) | 14% | 2 | 8 | IAM、KMS、Macie、PrivateLink、Config、CloudTrail、Artifact |
 
 試験ガイドの目的には番号がありません。このコースでは、ガイドの並び順に「1.1.1」のような番号を付けて区別しています。番号は公式のものではありません。全目的の一覧は[対応表](coverage.md)にあります。
 

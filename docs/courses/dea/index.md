@@ -4,7 +4,7 @@
 
 全120スキルと解説の対応は[対応表](coverage.md)で確認できます。
 
-[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button } [:material-help-circle-outline: 問題集](exercises/index.md){ .md-button }
 
 ## 試験の概要 {#overview}
 
@@ -45,6 +45,15 @@ flowchart TD
 | [分野2: データストアの管理](domain2.md) | 26% | 4 | 26 | Redshift、DynamoDB、S3、Data Catalog、Iceberg、Aurora |
 | [分野3: データの運用とサポート](domain3.md) | 22% | 4 | 28 | Athena、Glue Data Quality、DataBrew、CloudWatch、CloudTrail |
 | [分野4: データのセキュリティとガバナンス](domain4.md) | 18% | 5 | 29 | IAM、Lake Formation、KMS、Macie、SageMaker Catalog |
+
+分野ごとのスキルは分野のページで、サービスごとの学習と問題の一覧はサービス別の学習で進めます。問題は[問題集](exercises/index.md)にまとめています。
+
+| 分野 | 分野のページ | サービス別の学習 |
+|---|---|---|
+| 分野1 | [開く](domain1.md) | [開く](study/domain1/index.md) |
+| 分野2 | [開く](domain2.md) | [開く](study/domain2/index.md) |
+| 分野3 | [開く](domain3.md) | [開く](study/domain3/index.md) |
+| 分野4 | [開く](domain4.md) | [開く](study/domain4/index.md) |
 
 ## ガイド 1.1 の変更点 {#guide-revision}
 

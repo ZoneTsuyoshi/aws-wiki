@@ -178,7 +178,7 @@ Data Lifecycle Manager 自体に追加費用はかからず、別のリージョ
 | 鍵の削除 | キーのアクセス制御。削除の待機期間（7〜30日） |
 | バックアップの感染 | GuardDuty の Malware Protection for AWS Backup |
 
-**暗号化の扱い:** 別アカウントへのコピーには、カスタマー管理キーの共有が必要です。Vault Lock の最小、最大の保持期間はロック後の新しいジョブに適用され、既存の復旧ポイントには適用されません。
+**暗号化の扱い:** 送信元のリソースをカスタマー管理キーで暗号化しているなら、そのキーを送信先のアカウントと共有します。AWS 管理キーはポリシーを変更できず共有できないので、AWS Backup が完全に管理しないリソースのアカウント間コピーには使えません。完全に管理するリソースなら、送信先のボールトに `aws/backup` かカスタマー管理キーを使えます。Vault Lock の最小、最大の保持期間はロック後の新しいジョブに適用され、既存の復旧ポイントには適用されません。
 
 詳細: [AWS Backup](../../services/resilience.md#backup)、[Vault Lock](../../services/resilience.md#vault-lock)、[エアギャップのボールト](../../services/resilience.md#logically-air-gapped)、[ランサムウェアと誤削除の防止](../../services/resilience.md#immutable-compare)、[アカウント間コピー](../../services/resilience.md#backup-cross-account)、[DataSync](../../services/migration.md#datasync)、[EBS スナップショット](../../services/storage.md#ebs-snapshots)
 

@@ -23,7 +23,7 @@ AWS とハイブリッドのネットワークを、大規模に設計、実装�
     - **Route 53 Resolver** は現在 **Route 53 VPC Resolver** です。
     - **Transit Gateway Network Manager** の機能は、現在は **AWS Global Networks for Transit Gateways** として説明されています。コンソールは AWS Network Manager です。
 
-[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button } [:material-help-circle-outline: 問題集](exercises/index.md){ .md-button }
 
 ## 試験の概要 {#overview}
 
@@ -62,7 +62,14 @@ flowchart TD
 | [分野3: ネットワークの管理と運用](domain3.md) | 20% | 3 | Reachability Analyzer、フローログ、Traffic Mirroring、Route 53、Global Accelerator |
 | [分野4: セキュリティ、コンプライアンス、ガバナンス](domain4.md) | 24% | 3 | WAF、Shield、Network Firewall、Firewall Manager、ACM、CloudTrail |
 
-全項目と各ページの対応は[対応表](coverage.md)で確認できます。
+| 分野 | 要点 | サービス別の学習 |
+|---|---|---|
+| 分野1: ネットワーク設計 | [開く](domain1.md) | [開く](study/domain1/index.md) |
+| 分野2: ネットワークの実装 | [開く](domain2.md) | [開く](study/domain2/index.md) |
+| 分野3: ネットワークの管理と運用 | [開く](domain3.md) | [開く](study/domain3/index.md) |
+| 分野4: セキュリティ、コンプライアンス、ガバナンス | [開く](domain4.md) | [開く](study/domain4/index.md) |
+
+話題ごとの[問題集](exercises/index.md)で理解を確かめます。全項目と各ページの対応は[対応表](coverage.md)で確認できます。
 
 ## 想定する受験者と範囲外のもの {#candidate}
 

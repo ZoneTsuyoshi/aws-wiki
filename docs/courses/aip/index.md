@@ -4,7 +4,7 @@
 
 モデルの開発や学習は問われません。与えられた制約の中で、AWS のサービスをどう組み合わせるかが中心です。
 
-[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button } [:material-help-circle-outline: 問題集](exercises/index.md){ .md-button }
 
 ## 試験の概要 {#overview}
 
@@ -43,6 +43,16 @@ flowchart TD
 | [分野3: AI の安全性、セキュリティ、ガバナンス](domain3.md) | 20% | 4 | 15 | Guardrails、Comprehend、Macie、Lake Formation、CloudTrail |
 | [分野4: 運用効率と最適化](domain4.md) | 12% | 3 | 16 | CloudWatch、X-Ray、Cost Anomaly Detection、MemoryDB |
 | [分野5: テスト、検証、トラブルシューティング](domain5.md) | 11% | 2 | 14 | Bedrock Evaluations、CloudWatch Synthetics、CodeBuild |
+
+各分野のページでスキルごとの要点を確認し、サービス別の学習ページと[問題集](exercises/index.md)で理解を確かめます。
+
+| 分野 | サービス別の学習 |
+|---|---|
+| [分野1: FM の統合、データ管理、コンプライアンス](domain1.md) | [開く](study/domain1/index.md) |
+| [分野2: 実装と統合](domain2.md) | [開く](study/domain2/index.md) |
+| [分野3: AI の安全性、セキュリティ、ガバナンス](domain3.md) | [開く](study/domain3/index.md) |
+| [分野4: 運用効率と最適化](domain4.md) | [開く](study/domain4/index.md) |
+| [分野5: テスト、検証、トラブルシューティング](domain5.md) | [開く](study/domain5/index.md) |
 
 全スキルの一覧は[スキル対応表](coverage.md)にあります。
 

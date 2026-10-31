@@ -51,7 +51,7 @@ MLA-C02 の配点は **24%** です。デプロイ先の選択、リソースの
 ```mermaid
 flowchart TD
     A["データセット全体を一度に処理する?"] -- はい --> B["バッチ変換"]
-    A -- いいえ --> C["入力が 6 MB 超、または処理が 60 秒超?"]
+    A -- いいえ --> C["入力が上限超、または処理が 60 秒超?"]
     C -- はい --> D["非同期推論"]
     C -- いいえ --> E["断続的で、コールドスタートを許せる?"]
     E -- はい --> F["サーバーレス推論"]
@@ -60,7 +60,7 @@ flowchart TD
 
 | 種類 | 入力の上限 | 処理時間の上限 | スケーリング |
 |---|---|---|---|
-| リアルタイム | 6 MB | 60 秒 | 自動スケーリング |
+| リアルタイム | 6 MB（API リファレンス。FAQ は 25 MB） | 60 秒 | 自動スケーリング |
 | サーバーレス | ― | ― | 自動。GPU と VPC の設定は不可 |
 | 非同期 | 1 GB | 1 時間 | 0 まで縮小可 |
 | バッチ変換 | `MaxPayloadInMB` 最大 100 MB | ― | ジョブの間だけ |
@@ -236,7 +236,7 @@ Application Auto Scaling を使い、ターゲット追跡が基本です。
 | 手順 | 決めること |
 |---|---|
 | 種類 | Managed か Customer-managed |
-| データソース | Managed は S3、SharePoint、Confluence など。Customer-managed は S3、Custom |
+| データソース | Managed は S3、SharePoint、Confluence など。Customer-managed は新規なら S3、Custom |
 | 解析 | 既定、BDA、FM |
 | チャンク | 既定、固定、階層、セマンティック、なし |
 | 埋め込み | モデルと次元。変更すると全データの再埋め込み |
@@ -357,7 +357,7 @@ CodeCommit は 2024 年に新規受付を止めましたが、2025 年 11 月に
 | `SplitType` | `None` だと 1 ファイルを 1 リクエストで送る |
 | `InputFilter`、`JoinSource`、`OutputFilter` | ID を除いて推論し、結果と結合する |
 
-1 ファイルを複数のインスタンスで処理すると、1 台しか働きません。ファイルを分割するか、`SplitType` を設定します。
+1 ファイルを複数のインスタンスで処理すると、1 台しか働きません。入力を複数のファイルに分割します。`SplitType` はファイルをミニバッチに分ける設定で、台数への分散にはなりません。
 
 詳細: [学習ジョブの設定](../../services/sagemaker.md#training-job)、[バッチ変換](../../services/sagemaker.md#batch-transform)
 

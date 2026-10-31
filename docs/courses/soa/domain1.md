@@ -337,14 +337,14 @@ FSx for OpenZFS は、このガイドでは対象外のサービスです。
 
 **FSx の最適化:** ONTAP は階層化ポリシーで、アクセスの少ないデータを安い階層へ移します。Lustre は S3 とリンクして、必要なデータだけ読み込みます。
 
-**S3 Files の設定:** 高性能ストレージへ読み込むサイズのしきい値（既定 1 MiB）と、読まれないデータを外す期限（既定 30 日）で費用を調整します。
+**S3 Files の設定:** 高性能ストレージへ読み込むファイルサイズのしきい値（既定 128 KiB 未満）と、読まれないデータを外す期限（既定 30 日）で費用を調整します。1 MiB 以上の読み取りは S3 から直接読みます。
 
 詳細: [比較](../../services/storage.md#comparison)、[EFS のスループットモード](../../services/storage.md#efs-throughput-mode)、[EFS のライフサイクル](../../services/storage.md#efs-lifecycle)、[FSx の選び方](../../services/storage-advanced.md#fsx-selection)、[ストレージの比較](../../services/storage-advanced.md#storage-comparison)、[ONTAP の階層化](../../services/storage-advanced.md#fsx-ontap-tiering)、[S3 Files](../../services/storage-advanced.md#s3-files)
 
 ### 1.3.5 RDS の監視と性能の改善 {#skill-1-3-5}
 
 !!! note "Performance Insights と Database Insights"
-    試験ガイドは Performance Insights と書いています。現在の RDS のドキュメントは、DB 負荷の分析を CloudWatch Database Insights として説明しています。役割は同じと考えて学習します。
+    試験ガイドは Performance Insights と書いています。Performance Insights は 2026 年 7 月 31 日に提供を終了し、DB 負荷の分析は CloudWatch Database Insights へ移行しました。役割は同じと考えて学習します。
 
 | 手段 | 分かること |
 |---|---|
@@ -362,7 +362,7 @@ FSx for OpenZFS は、このガイドでは対象外のサービスです。
 | 症状 | 対処 |
 |---|---|
 | 接続数の急増で失敗する、Lambda から多数接続する | RDS Proxy |
-| 特定の SQL が重い | Performance Insights で特定して SQL やインデックスを直す |
+| 特定の SQL が重い | Database Insights で特定して SQL やインデックスを直す |
 | 読み取りが多い | リードレプリカ。接続先をアプリで変える |
 | RDS Proxy の効果が低い | `DatabaseConnectionsCurrentlySessionPinned` でピン留めを確認する |
 | 空き容量が減り続ける | ストレージの自動スケーリング（[2.1.3](domain2.md#skill-2-1-3)） |

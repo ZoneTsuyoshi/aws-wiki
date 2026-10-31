@@ -209,7 +209,7 @@ API Gateway の統合のタイムアウトより長い処理は、同期で待�
 | ECS | AWS に統合された形で、運用を簡単にしたい |
 | EKS | Kubernetes の API やエコシステムが必要 |
 | Fargate | サーバーの管理をなくしたい |
-| App Runner | ソースやイメージから Web アプリを動かすだけ |
+| App Runner | ソースやイメージから Web アプリを動かすだけ（新規の利用者の受付は終了。移行先は ECS Express Mode） |
 | EKS Distro | 自分の環境で、EKS と同じ Kubernetes の配布版を動かす |
 | ROSA | OpenShift を AWS のマネージド環境で使う |
 

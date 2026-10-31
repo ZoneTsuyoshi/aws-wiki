@@ -466,7 +466,7 @@ Polly と Transcribe は向きが逆なので、よく問われます。Comprehe
 
     - Amazon AppStream 2.0 は、現在 Amazon WorkSpaces Applications です。
     - Amazon Connect のコンタクトセンターは、現在 Amazon Connect Customer です。
-    - Amazon WorkSpaces Secure Browser はメンテナンスに移行し（公表は 2026年9月29日）、新しい顧客は使えません。
+    - Amazon WorkSpaces Secure Browser は 2026年10月29日にメンテナンスへ移行し（公表は 2026年9月29日）、新しい顧客は使えません。
 
 ### メッセージと通知のサービス {#t3-8-integration}
 

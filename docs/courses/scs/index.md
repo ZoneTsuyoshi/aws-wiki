@@ -7,7 +7,7 @@ SCS-C03 は 2025年12月2日に SCS-C02 から切り替わりました（[試験
 !!! warning "2026年12月31日で一部の言語の提供が終わります"
     公式ページによると、簡体字中国語、スペイン語（ラテンアメリカ）、ポルトガル語（ブラジル）の試験は **2026年12月31日より後は提供されません**。日本語、英語、韓国語にはこの案内はありません。
 
-[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button } [:material-help-circle-outline: 問題集](exercises/index.md){ .md-button }
 
 ## 試験の概要 {#overview}
 
@@ -40,14 +40,16 @@ flowchart TD
     G --> H["確認問題を解き直す"]
 ```
 
-| 分野 | 配点 | タスク数 | スキル数 | 主なサービス |
-|---|---|---|---|---|
-| [分野1: 検出](domain1.md) | 16% | 3 | 13 | GuardDuty、Security Hub、Security Lake、CloudTrail、CloudWatch |
-| [分野2: インシデント対応](domain2.md) | 14% | 2 | 9 | Systems Manager、Step Functions、Detective、FIS、Shield Advanced |
-| [分野3: インフラストラクチャのセキュリティ](domain3.md) | 18% | 3 | 16 | WAF、CloudFront、Inspector、Network Firewall、Verified Access、Bedrock |
-| [分野4: ID とアクセス管理](domain4.md) | 20% | 2 | 8 | IAM、STS、IAM Identity Center、Cognito、Access Analyzer |
-| [分野5: データ保護](domain5.md) | 18% | 3 | 12 | KMS、CloudHSM、Secrets Manager、Private CA、S3 Object Lock、AWS Backup |
-| [分野6: セキュリティの基盤とガバナンス](domain6.md) | 14% | 3 | 12 | Organizations、Control Tower、Config、Firewall Manager、CloudFormation |
+各分野のページでスキルごとの要点を確認し、サービス別の学習ページで問題まで解きます。問題だけを解くなら[問題集](exercises/index.md)から進めます。
+
+| 分野 | サービス別の学習 | 配点 | タスク数 | スキル数 | 主なサービス |
+|---|---|---|---|---|---|
+| [分野1: 検出](domain1.md) | [開く](study/domain1/index.md) | 16% | 3 | 13 | GuardDuty、Security Hub、Security Lake、CloudTrail、CloudWatch |
+| [分野2: インシデント対応](domain2.md) | [開く](study/domain2/index.md) | 14% | 2 | 9 | Systems Manager、Step Functions、Detective、FIS、Shield Advanced |
+| [分野3: インフラストラクチャのセキュリティ](domain3.md) | [開く](study/domain3/index.md) | 18% | 3 | 16 | WAF、CloudFront、Inspector、Network Firewall、Verified Access、Bedrock |
+| [分野4: ID とアクセス管理](domain4.md) | [開く](study/domain4/index.md) | 20% | 2 | 8 | IAM、STS、IAM Identity Center、Cognito、Access Analyzer |
+| [分野5: データ保護](domain5.md) | [開く](study/domain5/index.md) | 18% | 3 | 12 | KMS、CloudHSM、Secrets Manager、Private CA、S3 Object Lock、AWS Backup |
+| [分野6: セキュリティの基盤とガバナンス](domain6.md) | [開く](study/domain6/index.md) | 14% | 3 | 12 | Organizations、Control Tower、Config、Firewall Manager、CloudFormation |
 
 ## C02 と C03 の違い {#c02-vs-c03}
 

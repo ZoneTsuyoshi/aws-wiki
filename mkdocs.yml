@@ -33,6 +33,9 @@ validation:
 extra_css:
   - stylesheets/extra.css
 
+hooks:
+  - hooks/search_scope.py
+
 markdown_extensions:
   - admonition
   - attr_list
@@ -57,36 +60,243 @@ nav:
       - Cloud Practitioner:
           - courses/clf/index.md
           - サービス一覧: courses/clf/services.md
-          - courses/clf/domain1.md
-          - courses/clf/domain2.md
-          - courses/clf/domain3.md
-          - courses/clf/domain4.md
+          - 分野1 クラウドの概念:
+              - スキルごとの要点: courses/clf/domain1.md
+              - サービス別の学習: courses/clf/study/domain1/index.md
+              - クラウドの価値と利点: courses/clf/study/domain1/cloud-value.md
+              - Well-Architected Framework: courses/clf/study/domain1/well-architected.md
+              - クラウドの導入と移行: courses/clf/study/domain1/migration.md
+              - クラウドの経済性: courses/clf/study/domain1/cloud-economics.md
+          - 分野2 セキュリティとコンプライアンス:
+              - スキルごとの要点: courses/clf/domain2.md
+              - サービス別の学習: courses/clf/study/domain2/index.md
+              - 責任共有モデル: courses/clf/study/domain2/shared-responsibility.md
+              - IAM とルートユーザー: courses/clf/study/domain2/iam.md
+              - コンプライアンスとガバナンス: courses/clf/study/domain2/compliance.md
+              - セキュリティのサービスと情報源: courses/clf/study/domain2/security-services.md
+          - 分野3 クラウドのテクノロジーとサービス:
+              - スキルごとの要点: courses/clf/domain3.md
+              - サービス別の学習: courses/clf/study/domain3/index.md
+              - デプロイと運用の方法: courses/clf/study/domain3/deployment.md
+              - グローバルインフラストラクチャ: courses/clf/study/domain3/global-infrastructure.md
+              - コンピューティング: courses/clf/study/domain3/compute.md
+              - データベース: courses/clf/study/domain3/databases.md
+              - ネットワーク: courses/clf/study/domain3/networking.md
+              - ストレージ: courses/clf/study/domain3/storage.md
+              - AI/ML と分析: courses/clf/study/domain3/ai-analytics.md
+              - アプリ統合とその他のサービス: courses/clf/study/domain3/other-services.md
+          - 分野4 請求、料金、サポート:
+              - スキルごとの要点: courses/clf/domain4.md
+              - サービス別の学習: courses/clf/study/domain4/index.md
+              - 料金モデル: courses/clf/study/domain4/pricing.md
+              - 請求と費用管理: courses/clf/study/domain4/billing.md
+              - サポートと技術リソース: courses/clf/study/domain4/support.md
+              - パートナーと Marketplace: courses/clf/study/domain4/partners.md
           - スキル対応表: courses/clf/coverage.md
+          - 問題集:
+              - courses/clf/exercises/index.md
+              - クラウドの価値と利点: courses/clf/exercises/cloud-value.md
+              - Well-Architected Framework: courses/clf/exercises/well-architected.md
+              - クラウドの導入と移行: courses/clf/exercises/migration.md
+              - クラウドの経済性: courses/clf/exercises/cloud-economics.md
+              - 責任共有モデル: courses/clf/exercises/shared-responsibility.md
+              - コンプライアンスとガバナンス: courses/clf/exercises/compliance.md
+              - IAM とルートユーザー: courses/clf/exercises/iam.md
+              - セキュリティのサービスと情報源: courses/clf/exercises/security-services.md
+              - デプロイと運用の方法: courses/clf/exercises/deployment.md
+              - グローバルインフラストラクチャ: courses/clf/exercises/global-infrastructure.md
+              - コンピューティング: courses/clf/exercises/compute.md
+              - データベース: courses/clf/exercises/databases.md
+              - ネットワーク: courses/clf/exercises/networking.md
+              - ストレージ: courses/clf/exercises/storage.md
+              - AI/ML と分析: courses/clf/exercises/ai-analytics.md
+              - アプリ統合とその他のサービス: courses/clf/exercises/other-services.md
+              - 料金モデル: courses/clf/exercises/pricing.md
+              - 請求と費用管理: courses/clf/exercises/billing.md
+              - サポートと技術リソース: courses/clf/exercises/support.md
+              - パートナーと Marketplace: courses/clf/exercises/partners.md
       - AI Practitioner:
           - courses/aif/index.md
           - サービス一覧: courses/aif/services.md
-          - courses/aif/domain1.md
-          - courses/aif/domain2.md
-          - courses/aif/domain3.md
-          - courses/aif/domain4.md
-          - courses/aif/domain5.md
+          - 分野1 AI と ML の基礎:
+              - スキルごとの要点: courses/aif/domain1.md
+              - サービス別の学習: courses/aif/study/domain1/index.md
+              - AI の基本概念: courses/aif/study/domain1/ai-concepts.md
+              - 推論とモデルの入手: courses/aif/study/domain1/inference.md
+              - AI/ML のユースケース: courses/aif/study/domain1/ml-use-cases.md
+              - マネージド AI サービス: courses/aif/study/domain1/managed-ai.md
+              - ML ライフサイクルと MLOps: courses/aif/study/domain1/ml-lifecycle.md
+          - 分野2 生成 AI の基礎:
+              - スキルごとの要点: courses/aif/domain2.md
+              - サービス別の学習: courses/aif/study/domain2/index.md
+              - 生成 AI の基本: courses/aif/study/domain2/genai-concepts.md
+              - エージェント: courses/aif/study/domain2/agents.md
+              - モデルの選び方: courses/aif/study/domain2/model-selection.md
+              - AWS の生成 AI サービス: courses/aif/study/domain2/aws-genai-services.md
+              - 生成 AI の料金とコスト: courses/aif/study/domain2/genai-cost.md
+              - 生成 AI のビジネス価値: courses/aif/study/domain2/business-value.md
+          - 分野3 基盤モデルの応用:
+              - スキルごとの要点: courses/aif/domain3.md
+              - サービス別の学習: courses/aif/study/domain3/index.md
+              - 選定と推論パラメータ: courses/aif/study/domain3/model-selection.md
+              - RAG とベクトルストア: courses/aif/study/domain3/rag.md
+              - エージェントの業務利用: courses/aif/study/domain3/agents.md
+              - プロンプトエンジニアリング: courses/aif/study/domain3/prompts.md
+              - モデルのカスタマイズ: courses/aif/study/domain3/customization.md
+              - FM の評価: courses/aif/study/domain3/evaluation.md
+              - 事業目標との整合: courses/aif/study/domain3/business-value.md
+          - 分野4 責任ある AI:
+              - スキルごとの要点: courses/aif/domain4.md
+              - サービス別の学習: courses/aif/study/domain4/index.md
+              - 責任ある AI: courses/aif/study/domain4/responsible-ai.md
+              - Guardrails: courses/aif/study/domain4/guardrails.md
+              - 透明性と説明可能性: courses/aif/study/domain4/explainability.md
+          - 分野5 AI ソリューションのセキュリティ、コンプライアンス、ガバナンス:
+              - スキルごとの要点: courses/aif/domain5.md
+              - サービス別の学習: courses/aif/study/domain5/index.md
+              - AI システムのセキュリティ: courses/aif/study/domain5/ai-security.md
+              - ハルシネーション対策: courses/aif/study/domain5/guardrails.md
+              - ガバナンスとコンプライアンス: courses/aif/study/domain5/governance.md
           - スキル対応表: courses/aif/coverage.md
+          - 問題集:
+              - courses/aif/exercises/index.md
+              - AI の基本概念: courses/aif/exercises/ai-concepts.md
+              - 推論とモデルの入手: courses/aif/exercises/inference.md
+              - AI/ML のユースケース: courses/aif/exercises/ml-use-cases.md
+              - マネージド AI サービス: courses/aif/exercises/managed-ai.md
+              - ML ライフサイクルと MLOps: courses/aif/exercises/ml-lifecycle.md
+              - 生成 AI の基本: courses/aif/exercises/genai-concepts.md
+              - エージェント: courses/aif/exercises/agents.md
+              - AWS の生成 AI サービス: courses/aif/exercises/aws-genai-services.md
+              - 生成 AI の料金とコスト: courses/aif/exercises/genai-cost.md
+              - 生成 AI のビジネス価値: courses/aif/exercises/business-value.md
+              - モデルの選び方と推論パラメータ: courses/aif/exercises/model-selection.md
+              - RAG とベクトルストア: courses/aif/exercises/rag.md
+              - プロンプトエンジニアリング: courses/aif/exercises/prompts.md
+              - モデルのカスタマイズ: courses/aif/exercises/customization.md
+              - FM の評価: courses/aif/exercises/evaluation.md
+              - 責任ある AI: courses/aif/exercises/responsible-ai.md
+              - Guardrails とハルシネーション対策: courses/aif/exercises/guardrails.md
+              - 透明性と説明可能性: courses/aif/exercises/explainability.md
+              - AI システムのセキュリティ: courses/aif/exercises/ai-security.md
+              - ガバナンスとコンプライアンス: courses/aif/exercises/governance.md
       - AI Business Strategist:
           - courses/aib/index.md
           - サービス一覧: courses/aib/services.md
-          - courses/aib/domain1.md
-          - courses/aib/domain2.md
-          - courses/aib/domain3.md
-          - courses/aib/domain4.md
+          - 分野1 AI の基礎とリテラシー:
+              - スキルごとの要点: courses/aib/domain1.md
+              - サービス別の学習: courses/aib/study/domain1/index.md
+              - AI の基本概念: courses/aib/study/domain1/ai-concepts.md
+              - 解決策の種類: courses/aib/study/domain1/solution-types.md
+              - 生成 AI の技法: courses/aib/study/domain1/genai-techniques.md
+          - 分野2 AI 戦略と事業価値の創出:
+              - スキルごとの要点: courses/aib/domain2.md
+              - サービス別の学習: courses/aib/study/domain2/index.md
+              - AI 戦略と優先順位: courses/aib/study/domain2/ai-strategy.md
+              - 作る、買う、組むと移行: courses/aib/study/domain2/build-buy.md
+              - KPI と ROI: courses/aib/study/domain2/business-value.md
+              - AI のコスト管理: courses/aib/study/domain2/ai-costs.md
+              - 競争優位: courses/aib/study/domain2/competitive-advantage.md
+          - 分野3 AI ガバナンスと責任ある AI のリーダーシップ:
+              - スキルごとの要点: courses/aib/domain3.md
+              - サービス別の学習: courses/aib/study/domain3/index.md
+              - 責任ある AI: courses/aib/study/domain3/responsible-ai.md
+              - ガバナンスと規制: courses/aib/study/domain3/ai-governance.md
+              - AI のリスクと対策: courses/aib/study/domain3/ai-risks.md
+          - 分野4 事業の準備状況、リーダーシップ、AI 変革:
+              - スキルごとの要点: courses/aib/domain4.md
+              - サービス別の学習: courses/aib/study/domain4/index.md
+              - 準備状況と成熟度: courses/aib/study/domain4/readiness.md
+              - データと基盤: courses/aib/study/domain4/data-foundations.md
+              - 変革の主導と人材: courses/aib/study/domain4/change-leadership.md
+              - 全社展開: courses/aib/study/domain4/scaling.md
           - スキル対応表: courses/aib/coverage.md
+          - 問題集:
+              - courses/aib/exercises/index.md
+              - AI の基本概念: courses/aib/exercises/ai-concepts.md
+              - 解決策の種類: courses/aib/exercises/solution-types.md
+              - 生成 AI の技法: courses/aib/exercises/genai-techniques.md
+              - AI 戦略と優先順位: courses/aib/exercises/ai-strategy.md
+              - 作る、買う、組むと移行: courses/aib/exercises/build-buy.md
+              - KPI と ROI: courses/aib/exercises/business-value.md
+              - AI のコスト管理: courses/aib/exercises/ai-costs.md
+              - 競争優位: courses/aib/exercises/competitive-advantage.md
+              - 責任ある AI: courses/aib/exercises/responsible-ai.md
+              - ガバナンスと規制: courses/aib/exercises/ai-governance.md
+              - AI のリスクと対策: courses/aib/exercises/ai-risks.md
+              - 準備状況と成熟度: courses/aib/exercises/readiness.md
+              - データと基盤: courses/aib/exercises/data-foundations.md
+              - 変革の主導と人材: courses/aib/exercises/change-leadership.md
+              - 全社展開: courses/aib/exercises/scaling.md
       - Solutions Architect - Associate:
           - courses/saa/index.md
           - サービス一覧: courses/saa/services.md
-          - courses/saa/domain1.md
-          - courses/saa/domain2.md
-          - courses/saa/domain3.md
-          - courses/saa/domain4.md
+          - 分野1 セキュアなアーキテクチャの設計:
+              - スキルごとの要点: courses/saa/domain1.md
+              - サービス別の学習: courses/saa/study/domain1/index.md
+              - IAM と STS: courses/saa/study/domain1/iam.md
+              - ガバナンスと責任共有: courses/saa/study/domain1/governance.md
+              - アプリケーションのアクセスと認証情報: courses/saa/study/domain1/app-security.md
+              - VPC のセキュリティ: courses/saa/study/domain1/vpc-security.md
+              - 脅威の検出と防御: courses/saa/study/domain1/threat-protection.md
+              - 暗号化と鍵: courses/saa/study/domain1/encryption.md
+              - データの保護: courses/saa/study/domain1/data-protection.md
+          - 分野2 回復性の高いアーキテクチャの設計:
+              - スキルごとの要点: courses/saa/domain2.md
+              - サービス別の学習: courses/saa/study/domain2/index.md
+              - メッセージングと API: courses/saa/study/domain2/messaging.md
+              - コンテナとサーバーレス: courses/saa/study/domain2/containers-serverless.md
+              - アーキテクチャと設計: courses/saa/study/domain2/architecture.md
+              - ストレージの種類と耐久性: courses/saa/study/domain2/storage.md
+              - リードレプリカとプロキシ: courses/saa/study/domain2/databases.md
+              - 高可用性と DR: courses/saa/study/domain2/resilience.md
+              - マネージド AI サービス: courses/saa/study/domain2/ai-services.md
+          - 分野3 高性能なアーキテクチャの設計:
+              - スキルごとの要点: courses/saa/domain3.md
+              - サービス別の学習: courses/saa/study/domain3/index.md
+              - ストレージの性能と拡張: courses/saa/study/domain3/storage.md
+              - ハイブリッドストレージとデータ転送: courses/saa/study/domain3/migration.md
+              - コンピューティングとスケーリング: courses/saa/study/domain3/compute.md
+              - ワークロードの分離: courses/saa/study/domain3/messaging.md
+              - データベースの性能: courses/saa/study/domain3/databases.md
+              - ネットワークの性能と設計: courses/saa/study/domain3/networking.md
+              - データの取り込みと分析: courses/saa/study/domain3/data-analytics.md
+          - 分野4 コストを最適化したアーキテクチャの設計:
+              - スキルごとの要点: courses/saa/domain4.md
+              - サービス別の学習: courses/saa/study/domain4/index.md
+              - コスト管理ツール: courses/saa/study/domain4/cost-management.md
+              - S3 の費用: courses/saa/study/domain4/s3.md
+              - ストレージサービスとサイズの費用: courses/saa/study/domain4/storage.md
+              - データとスキーマの移行: courses/saa/study/domain4/migration.md
+              - コンピューティングの費用: courses/saa/study/domain4/compute-cost.md
+              - データベースの費用: courses/saa/study/domain4/database-cost.md
+              - ネットワークの費用: courses/saa/study/domain4/network-cost.md
           - スキル対応表: courses/saa/coverage.md
+          - 問題集:
+              - courses/saa/exercises/index.md
+              - IAM と STS: courses/saa/exercises/iam.md
+              - ガバナンスと責任共有: courses/saa/exercises/governance.md
+              - VPC のセキュリティ: courses/saa/exercises/vpc-security.md
+              - 脅威の検出と防御: courses/saa/exercises/threat-protection.md
+              - アプリケーションのアクセスと認証情報: courses/saa/exercises/app-security.md
+              - 暗号化と鍵: courses/saa/exercises/encryption.md
+              - データの保護: courses/saa/exercises/data-protection.md
+              - メッセージングと API: courses/saa/exercises/messaging.md
+              - アーキテクチャと設計: courses/saa/exercises/architecture.md
+              - コンテナとサーバーレス: courses/saa/exercises/containers-serverless.md
+              - 高可用性と DR: courses/saa/exercises/resilience.md
+              - マネージド AI サービス: courses/saa/exercises/ai-services.md
+              - ストレージ: courses/saa/exercises/storage.md
+              - コンピューティングとスケーリング: courses/saa/exercises/compute.md
+              - データベース: courses/saa/exercises/databases.md
+              - ネットワーク: courses/saa/exercises/networking.md
+              - 移行とデータ転送: courses/saa/exercises/migration.md
+              - データの取り込みと分析: courses/saa/exercises/data-analytics.md
+              - コスト管理ツール: courses/saa/exercises/cost-management.md
+              - S3 の費用: courses/saa/exercises/s3.md
+              - コンピューティングの費用: courses/saa/exercises/compute-cost.md
+              - データベースの費用: courses/saa/exercises/database-cost.md
+              - ネットワークの費用: courses/saa/exercises/network-cost.md
       - Developer - Associate:
           - courses/dva/index.md
           - サービス一覧: courses/dva/services.md
@@ -171,74 +381,590 @@ nav:
       - CloudOps Engineer - Associate:
           - courses/soa/index.md
           - サービス一覧: courses/soa/services.md
-          - courses/soa/domain1.md
-          - courses/soa/domain2.md
-          - courses/soa/domain3.md
-          - courses/soa/domain4.md
-          - courses/soa/domain5.md
+          - 分野1 監視、ログ、分析、修復、性能の最適化:
+              - スキルごとの要点: courses/soa/domain1.md
+              - サービス別の学習: courses/soa/study/domain1/index.md
+              - CloudWatch: courses/soa/study/domain1/cloudwatch.md
+              - EventBridge と通知: courses/soa/study/domain1/eventbridge.md
+              - 修復と Automation: courses/soa/study/domain1/systems-manager.md
+              - EC2 と性能の最適化: courses/soa/study/domain1/ec2-performance.md
+              - EBS と共有ストレージ: courses/soa/study/domain1/storage.md
+              - S3 の性能: courses/soa/study/domain1/s3.md
+              - RDS の監視と性能: courses/soa/study/domain1/databases.md
+          - 分野2 信頼性と事業継続性:
+              - スキルごとの要点: courses/soa/domain2.md
+              - サービス別の学習: courses/soa/study/domain2/index.md
+              - Auto Scaling: courses/soa/study/domain2/auto-scaling.md
+              - キャッシュ: courses/soa/study/domain2/caching.md
+              - データベースのスケーリングと復元: courses/soa/study/domain2/databases.md
+              - ヘルスチェックと高可用性: courses/soa/study/domain2/high-availability.md
+              - バックアップと災害復旧: courses/soa/study/domain2/backup-dr.md
+              - S3 のバージョニング: courses/soa/study/domain2/s3.md
+          - 分野3 デプロイ、プロビジョニング、自動化:
+              - スキルごとの要点: courses/soa/domain3.md
+              - サービス別の学習: courses/soa/study/domain3/index.md
+              - CloudFormation、CDK、Terraform: courses/soa/study/domain3/iac.md
+              - イメージとデプロイ戦略: courses/soa/study/domain3/deployment.md
+              - Systems Manager による自動化: courses/soa/study/domain3/systems-manager.md
+              - イベント駆動の自動化: courses/soa/study/domain3/eventbridge.md
+          - 分野4 セキュリティとコンプライアンス:
+              - スキルごとの要点: courses/soa/domain4.md
+              - サービス別の学習: courses/soa/study/domain4/index.md
+              - IAM とアクセスの調査: courses/soa/study/domain4/iam.md
+              - Organizations、Trusted Advisor、Config: courses/soa/study/domain4/governance.md
+              - 暗号化とシークレット: courses/soa/study/domain4/encryption.md
+              - データ分類と検出結果: courses/soa/study/domain4/threat-detection.md
+          - 分野5 ネットワークとコンテンツ配信:
+              - スキルごとの要点: courses/soa/domain5.md
+              - サービス別の学習: courses/soa/study/domain5/index.md
+              - VPC の設定と調査: courses/soa/study/domain5/vpc.md
+              - プライベート接続とハイブリッド接続: courses/soa/study/domain5/connectivity.md
+              - DNS と配信: courses/soa/study/domain5/dns-cdn.md
+              - ネットワークの保護、ログ、監視: courses/soa/study/domain5/network-ops.md
           - スキル対応表: courses/soa/coverage.md
+          - 問題集:
+              - courses/soa/exercises/index.md
+              - CloudWatch: courses/soa/exercises/cloudwatch.md
+              - EventBridge と通知: courses/soa/exercises/eventbridge.md
+              - Systems Manager と修復: courses/soa/exercises/systems-manager.md
+              - EC2 と性能の最適化: courses/soa/exercises/ec2-performance.md
+              - EBS、EFS、FSx: courses/soa/exercises/storage.md
+              - S3: courses/soa/exercises/s3.md
+              - Auto Scaling とコンピューティングのスケーリング: courses/soa/exercises/auto-scaling.md
+              - キャッシュ: courses/soa/exercises/caching.md
+              - RDS、Aurora、DynamoDB: courses/soa/exercises/databases.md
+              - ヘルスチェックと高可用性: courses/soa/exercises/high-availability.md
+              - バックアップと災害復旧: courses/soa/exercises/backup-dr.md
+              - CloudFormation、CDK、Terraform: courses/soa/exercises/iac.md
+              - イメージとデプロイ戦略: courses/soa/exercises/deployment.md
+              - IAM とアクセスの調査: courses/soa/exercises/iam.md
+              - Organizations、Trusted Advisor、Config: courses/soa/exercises/governance.md
+              - 暗号化とシークレット: courses/soa/exercises/encryption.md
+              - データ分類と検出結果: courses/soa/exercises/threat-detection.md
+              - VPC の設定と調査: courses/soa/exercises/vpc.md
+              - プライベート接続とハイブリッド接続: courses/soa/exercises/connectivity.md
+              - ネットワークの保護、ログ、監視: courses/soa/exercises/network-ops.md
+              - DNS と配信: courses/soa/exercises/dns-cdn.md
       - Data Engineer - Associate:
           - courses/dea/index.md
           - サービス一覧: courses/dea/services.md
-          - courses/dea/domain1.md
-          - courses/dea/domain2.md
-          - courses/dea/domain3.md
-          - courses/dea/domain4.md
+          - 分野1 データの取り込みと変換:
+              - スキルごとの要点: courses/dea/domain1.md
+              - サービス別の学習: courses/dea/study/domain1/index.md
+              - Kinesis とストリーミング: courses/dea/study/domain1/streaming.md
+              - バッチ取り込みと接続: courses/dea/study/domain1/ingestion.md
+              - 変換と処理: courses/dea/study/domain1/transform.md
+              - オーケストレーションとイベント: courses/dea/study/domain1/orchestration.md
+              - Lambda: courses/dea/study/domain1/lambda.md
+              - データ API: courses/dea/study/domain1/data-apis.md
+              - EMR、コンテナと分散処理: courses/dea/study/domain1/emr-containers.md
+              - IaC、CI/CD と開発の実践: courses/dea/study/domain1/devops.md
+              - LLM を使った処理: courses/dea/study/domain1/genai-vector.md
+          - 分野2 データストアの管理:
+              - スキルごとの要点: courses/dea/domain2.md
+              - サービス別の学習: courses/dea/study/domain2/index.md
+              - データストアの選択: courses/dea/study/domain2/datastores.md
+              - Redshift: courses/dea/study/domain2/redshift.md
+              - データカタログとスキーマ: courses/dea/study/domain2/catalog.md
+              - S3 のライフサイクルとオープンテーブル形式: courses/dea/study/domain2/s3-lifecycle.md
+              - 移行とスキーマ変換: courses/dea/study/domain2/migration.md
+              - ビジネスカタログとリネージ: courses/dea/study/domain2/sagemaker-governance.md
+              - ベクトルインデックスとベクトル化: courses/dea/study/domain2/genai-vector.md
+          - 分野3 データの運用とサポート:
+              - スキルごとの要点: courses/dea/domain3.md
+              - サービス別の学習: courses/dea/study/domain3/index.md
+              - Athena と SQL: courses/dea/study/domain3/athena.md
+              - 監視とトラブルシューティング: courses/dea/study/domain3/monitoring.md
+              - データ品質とデータ準備: courses/dea/study/domain3/data-quality.md
+              - MWAA、Step Functions、EventBridge の運用: courses/dea/study/domain3/orchestration.md
+              - プロビジョンドとサーバーレス、Glue と EMR の保守: courses/dea/study/domain3/emr-containers.md
+              - SDK と API の運用: courses/dea/study/domain3/data-apis.md
+              - Redshift の機能: courses/dea/study/domain3/redshift.md
+              - Lambda による自動化: courses/dea/study/domain3/lambda.md
+          - 分野4 データのセキュリティとガバナンス:
+              - スキルごとの要点: courses/dea/domain4.md
+              - サービス別の学習: courses/dea/study/domain4/index.md
+              - IAM とネットワークの権限: courses/dea/study/domain4/iam.md
+              - Lake Formation と認可の方式: courses/dea/study/domain4/lake-formation.md
+              - 暗号化とシークレット: courses/dea/study/domain4/encryption-secrets.md
+              - Redshift の権限とデータ共有: courses/dea/study/domain4/redshift.md
+              - 監査ログ: courses/dea/study/domain4/audit-logging.md
+              - プライバシーとコンプライアンス: courses/dea/study/domain4/privacy-compliance.md
+              - SageMaker のガバナンス: courses/dea/study/domain4/sagemaker-governance.md
           - スキル対応表: courses/dea/coverage.md
+          - 問題集:
+              - courses/dea/exercises/index.md
+              - Kinesis とストリーミング: courses/dea/exercises/streaming.md
+              - バッチ取り込みと接続: courses/dea/exercises/ingestion.md
+              - 変換と処理: courses/dea/exercises/transform.md
+              - オーケストレーションとイベント: courses/dea/exercises/orchestration.md
+              - Lambda: courses/dea/exercises/lambda.md
+              - データ API と SDK: courses/dea/exercises/data-apis.md
+              - EMR、コンテナと分散処理: courses/dea/exercises/emr-containers.md
+              - IaC、CI/CD と開発の実践: courses/dea/exercises/devops.md
+              - データストアの選択: courses/dea/exercises/datastores.md
+              - Redshift: courses/dea/exercises/redshift.md
+              - データカタログとスキーマ: courses/dea/exercises/catalog.md
+              - S3 のライフサイクルとオープンテーブル形式: courses/dea/exercises/s3-lifecycle.md
+              - 移行とスキーマ変換: courses/dea/exercises/migration.md
+              - LLM とベクトル: courses/dea/exercises/genai-vector.md
+              - Athena と SQL: courses/dea/exercises/athena.md
+              - 監視とトラブルシューティング: courses/dea/exercises/monitoring.md
+              - データ品質とデータ準備: courses/dea/exercises/data-quality.md
+              - IAM とネットワークの権限: courses/dea/exercises/iam.md
+              - Lake Formation と認可の方式: courses/dea/exercises/lake-formation.md
+              - 暗号化とシークレット: courses/dea/exercises/encryption-secrets.md
+              - 監査ログ: courses/dea/exercises/audit-logging.md
+              - プライバシーとコンプライアンス: courses/dea/exercises/privacy-compliance.md
+              - SageMaker Catalog とガバナンス: courses/dea/exercises/sagemaker-governance.md
       - Machine Learning Engineer - Associate:
           - courses/mla/index.md
           - サービス一覧: courses/mla/services.md
-          - courses/mla/domain1.md
-          - courses/mla/domain2.md
-          - courses/mla/domain3.md
-          - courses/mla/domain4.md
+          - 分野1 ML と AI のためのデータ準備:
+              - スキルごとの要点: courses/mla/domain1.md
+              - サービス別の学習: courses/mla/study/domain1/index.md
+              - データの収集と保存: courses/mla/study/domain1/data-ingestion.md
+              - ストリーミング: courses/mla/study/domain1/streaming.md
+              - データ変換と特徴量: courses/mla/study/domain1/data-prep.md
+              - データ品質とバイアス: courses/mla/study/domain1/data-quality.md
+              - AI サービスと多様なデータ: courses/mla/study/domain1/ai-services.md
+              - ベクトルストアと埋め込み: courses/mla/study/domain1/vector-embeddings.md
+              - Knowledge Bases の文書の準備: courses/mla/study/domain1/knowledge-bases.md
+              - 機密データと学習データの検査: courses/mla/study/domain1/guardrails.md
+              - FM の学習データ: courses/mla/study/domain1/fm-customization.md
+          - 分野2 ML モデルと FM の開発:
+              - スキルごとの要点: courses/mla/domain2.md
+              - サービス別の学習: courses/mla/study/domain2/index.md
+              - モデルの選択と基本の調整: courses/mla/study/domain2/ml-modeling.md
+              - SageMaker AI の学習: courses/mla/study/domain2/sagemaker-training.md
+              - モデルと AI の評価: courses/mla/study/domain2/evaluation.md
+              - モデルの監視とテスト: courses/mla/study/domain2/model-monitoring.md
+              - AI サービス: courses/mla/study/domain2/ai-services.md
+              - Bedrock の FM: courses/mla/study/domain2/bedrock-fm.md
+              - カスタマイズの戦略: courses/mla/study/domain2/fm-customization.md
+              - プロンプトの調整: courses/mla/study/domain2/prompts.md
+              - Knowledge Bases と RAG: courses/mla/study/domain2/knowledge-bases.md
+              - 検索の最適化: courses/mla/study/domain2/vector-embeddings.md
+          - 分野3 ML と AI のワークフローのデプロイとオーケストレーション:
+              - スキルごとの要点: courses/mla/domain3.md
+              - サービス別の学習: courses/mla/study/domain3/index.md
+              - SageMaker AI の推論: courses/mla/study/domain3/sagemaker-inference.md
+              - VPC とネットワーク分離: courses/mla/study/domain3/security.md
+              - Bedrock の FM のデプロイ: courses/mla/study/domain3/bedrock-fm.md
+              - Knowledge Bases: courses/mla/study/domain3/knowledge-bases.md
+              - エージェント: courses/mla/study/domain3/agents.md
+              - 学習と推論のジョブの設定: courses/mla/study/domain3/sagemaker-training.md
+              - MLOps: courses/mla/study/domain3/mlops.md
+              - CI/CD、コンテナ、IaC: courses/mla/study/domain3/cicd-iac.md
+              - プロンプトとテスト: courses/mla/study/domain3/prompts.md
+              - ファインチューニングの自動化: courses/mla/study/domain3/fm-customization.md
+          - 分野4 ML と AI のソリューションの運用、監視、保護:
+              - スキルごとの要点: courses/mla/domain4.md
+              - サービス別の学習: courses/mla/study/domain4/index.md
+              - モデルの監視: courses/mla/study/domain4/model-monitoring.md
+              - 監視と調査: courses/mla/study/domain4/observability.md
+              - エージェントの監視: courses/mla/study/domain4/agents.md
+              - インスタンスの選択: courses/mla/study/domain4/sagemaker-inference.md
+              - コストと容量: courses/mla/study/domain4/cost-capacity.md
+              - セキュリティ: courses/mla/study/domain4/security.md
+              - CI/CD の脆弱性の検査: courses/mla/study/domain4/cicd-iac.md
+              - 安全策: courses/mla/study/domain4/guardrails.md
           - スキル対応表: courses/mla/coverage.md
+          - 問題集:
+              - courses/mla/exercises/index.md
+              - データの収集と保存: courses/mla/exercises/data-ingestion.md
+              - ストリーミング: courses/mla/exercises/streaming.md
+              - データ変換と特徴量: courses/mla/exercises/data-prep.md
+              - データ品質とバイアス: courses/mla/exercises/data-quality.md
+              - ベクトルストアと埋め込み: courses/mla/exercises/vector-embeddings.md
+              - 機密データと安全策: courses/mla/exercises/guardrails.md
+              - モデルの選択と基本の調整: courses/mla/exercises/ml-modeling.md
+              - SageMaker AI の学習: courses/mla/exercises/sagemaker-training.md
+              - モデルと AI の評価: courses/mla/exercises/evaluation.md
+              - モデルの監視とテスト: courses/mla/exercises/model-monitoring.md
+              - AI サービス: courses/mla/exercises/ai-services.md
+              - Bedrock の FM の選択とデプロイ: courses/mla/exercises/bedrock-fm.md
+              - FM のカスタマイズ: courses/mla/exercises/fm-customization.md
+              - プロンプトと AI のテスト: courses/mla/exercises/prompts.md
+              - SageMaker AI の推論: courses/mla/exercises/sagemaker-inference.md
+              - Knowledge Bases と RAG: courses/mla/exercises/knowledge-bases.md
+              - エージェント: courses/mla/exercises/agents.md
+              - MLOps: courses/mla/exercises/mlops.md
+              - CI/CD、コンテナ、IaC: courses/mla/exercises/cicd-iac.md
+              - 監視と調査: courses/mla/exercises/observability.md
+              - コストと容量: courses/mla/exercises/cost-capacity.md
+              - セキュリティ: courses/mla/exercises/security.md
       - Solutions Architect - Professional:
           - courses/sap/index.md
           - サービス一覧: courses/sap/services.md
-          - courses/sap/domain1.md
-          - courses/sap/domain2.md
-          - courses/sap/domain3.md
-          - courses/sap/domain4.md
-          - courses/sap/domain5.md
+          - 分野1 クラウド向けのアーキテクチャの設計と実装:
+              - スキルごとの要点: courses/sap/domain1.md
+              - サービス別の学習: courses/sap/study/domain1/index.md
+              - イベントとワークフロー: courses/sap/study/domain1/events-workflows.md
+              - コンテナとスケーリング: courses/sap/study/domain1/containers.md
+              - エッジとマルチテナント: courses/sap/study/domain1/edge-tenancy.md
+              - ネットワーク: courses/sap/study/domain1/network.md
+              - ハイブリッド: courses/sap/study/domain1/hybrid.md
+              - データベースとストレージ: courses/sap/study/domain1/databases-storage.md
+              - データレイクと分析: courses/sap/study/domain1/data-analytics.md
+              - AI と ML の組み込み: courses/sap/study/domain1/ai-ml.md
+          - 分野2 セキュリティ、コンプライアンス、ガバナンス:
+              - スキルごとの要点: courses/sap/domain2.md
+              - サービス別の学習: courses/sap/study/domain2/index.md
+              - ID のセキュリティ: courses/sap/study/domain2/identity.md
+              - マルチアカウントのガバナンス: courses/sap/study/domain2/org-governance.md
+              - 暗号化と鍵管理: courses/sap/study/domain2/encryption.md
+              - コンプライアンス: courses/sap/study/domain2/compliance.md
+              - 責任ある AI の統制: courses/sap/study/domain2/responsible-ai.md
+          - 分野3 コストを最適化したアーキテクチャの設計:
+              - スキルごとの要点: courses/sap/domain3.md
+              - サービス別の学習: courses/sap/study/domain3/index.md
+              - 料金モデル: courses/sap/study/domain3/pricing.md
+              - データ転送とネットワーク費用: courses/sap/study/domain3/data-transfer.md
+              - ストレージとデータベースの費用: courses/sap/study/domain3/storage-db-cost.md
+              - コストの配分と可視化: courses/sap/study/domain3/cost-allocation.md
+          - 分野4 回復性、移行、事業継続:
+              - スキルごとの要点: courses/sap/domain4.md
+              - サービス別の学習: courses/sap/study/domain4/index.md
+              - 移行戦略: courses/sap/study/domain4/migration.md
+              - DR: courses/sap/study/domain4/dr.md
+              - 回復性と事業継続: courses/sap/study/domain4/resilience.md
+          - 分野5 運用の優秀性と自動化:
+              - スキルごとの要点: courses/sap/domain5.md
+              - サービス別の学習: courses/sap/study/domain5/index.md
+              - IaC: courses/sap/study/domain5/iac.md
+              - CI/CD と DevSecOps: courses/sap/study/domain5/cicd.md
+              - オブザーバビリティ: courses/sap/study/domain5/observability.md
+              - 運用の自動化: courses/sap/study/domain5/automation.md
           - スキル対応表: courses/sap/coverage.md
+          - 問題集:
+              - courses/sap/exercises/index.md
+              - イベント駆動とワークフロー: courses/sap/exercises/events-workflows.md
+              - コンテナとスケーリング: courses/sap/exercises/containers.md
+              - エッジ、リアルタイム、マルチテナント: courses/sap/exercises/edge-tenancy.md
+              - AI と ML の組み込み: courses/sap/exercises/ai-ml.md
+              - ハイブリッドの統合: courses/sap/exercises/hybrid.md
+              - ネットワークアーキテクチャ: courses/sap/exercises/network.md
+              - データレイクと分析: courses/sap/exercises/data-analytics.md
+              - データベースとストレージ: courses/sap/exercises/databases-storage.md
+              - ID のセキュリティ: courses/sap/exercises/identity.md
+              - 暗号化と鍵管理: courses/sap/exercises/encryption.md
+              - マルチアカウントのガバナンス: courses/sap/exercises/org-governance.md
+              - コンプライアンス: courses/sap/exercises/compliance.md
+              - 責任ある AI の統制: courses/sap/exercises/responsible-ai.md
+              - 料金モデル: courses/sap/exercises/pricing.md
+              - データ転送とネットワーク費用: courses/sap/exercises/data-transfer.md
+              - コストの配分と可視化: courses/sap/exercises/cost-allocation.md
+              - ストレージとデータベースの費用: courses/sap/exercises/storage-db-cost.md
+              - 移行戦略: courses/sap/exercises/migration.md
+              - DR: courses/sap/exercises/dr.md
+              - 回復性と事業継続: courses/sap/exercises/resilience.md
+              - IaC: courses/sap/exercises/iac.md
+              - CI/CD と DevSecOps: courses/sap/exercises/cicd.md
+              - オブザーバビリティ: courses/sap/exercises/observability.md
+              - 運用の自動化: courses/sap/exercises/automation.md
       - DevOps Engineer - Professional:
           - courses/dop/index.md
           - サービス一覧: courses/dop/services.md
-          - courses/dop/domain1.md
-          - courses/dop/domain2.md
-          - courses/dop/domain3.md
-          - courses/dop/domain4.md
-          - courses/dop/domain5.md
-          - courses/dop/domain6.md
+          - 分野1 SDLC の自動化:
+              - スキルごとの要点: courses/dop/domain1.md
+              - サービス別の学習: courses/dop/study/domain1/index.md
+              - CodePipeline と複数アカウント: courses/dop/study/domain1/pipelines.md
+              - CodeBuild とテスト: courses/dop/study/domain1/codebuild.md
+              - 成果物とリポジトリ: courses/dop/study/domain1/artifacts.md
+              - デプロイ方式: courses/dop/study/domain1/deployments.md
+              - コンテナのデプロイ: courses/dop/study/domain1/containers.md
+          - 分野2 構成管理と IaC:
+              - スキルごとの要点: courses/dop/domain2.md
+              - サービス別の学習: courses/dop/study/domain2/index.md
+              - IaC と StackSets: courses/dop/study/domain2/iac.md
+              - Organizations と統制: courses/dop/study/domain2/organizations.md
+              - Systems Manager と自動化: courses/dop/study/domain2/systems-manager.md
+              - Lambda と Step Functions の自動化: courses/dop/study/domain2/serverless.md
+          - 分野3 回復力のあるクラウドソリューション:
+              - スキルごとの要点: courses/dop/domain3.md
+              - サービス別の学習: courses/dop/study/domain3/index.md
+              - 高可用性: courses/dop/study/domain3/high-availability.md
+              - 複数リージョン: courses/dop/study/domain3/multi-region.md
+              - 負荷分散: courses/dop/study/domain3/load-balancing.md
+              - スケーリング: courses/dop/study/domain3/scaling.md
+              - サーバーレスと疎結合: courses/dop/study/domain3/serverless.md
+              - コンテナ: courses/dop/study/domain3/containers.md
+              - 災害対策: courses/dop/study/domain3/disaster-recovery.md
+          - 分野4 監視とログ:
+              - スキルごとの要点: courses/dop/domain4.md
+              - サービス別の学習: courses/dop/study/domain4/index.md
+              - CloudWatch Logs: courses/dop/study/domain4/cloudwatch-logs.md
+              - CloudWatch メトリクスとアラーム: courses/dop/study/domain4/cloudwatch-metrics.md
+              - ログのストリーミングと分析: courses/dop/study/domain4/log-streaming.md
+              - イベントの通知: courses/dop/study/domain4/messaging.md
+              - AWS Config: courses/dop/study/domain4/config.md
+              - ヘルスチェック: courses/dop/study/domain4/load-balancing.md
+              - 各サービスの Auto Scaling: courses/dop/study/domain4/scaling.md
+              - X-Ray: courses/dop/study/domain4/troubleshooting.md
+              - Inspector: courses/dop/study/domain4/threat-detection.md
+              - ログの保管と CloudTrail: courses/dop/study/domain4/security-audit.md
+          - 分野5 インシデントとイベントへの対応:
+              - スキルごとの要点: courses/dop/domain5.md
+              - サービス別の学習: courses/dop/study/domain5/index.md
+              - イベントソースとワークフロー: courses/dop/study/domain5/messaging.md
+              - フリートと構成の変更: courses/dop/study/domain5/systems-manager.md
+              - 構成管理と状態の修復: courses/dop/study/domain5/config.md
+              - 障害の調査: courses/dop/study/domain5/troubleshooting.md
+          - 分野6 セキュリティとコンプライアンス:
+              - スキルごとの要点: courses/dop/domain6.md
+              - サービス別の学習: courses/dop/study/domain6/index.md
+              - IAM とアクセス管理: courses/dop/study/domain6/iam.md
+              - データ保護: courses/dop/study/domain6/data-protection.md
+              - ネットワークセキュリティと証明書: courses/dop/study/domain6/network-security.md
+              - 脅威の検出と通知: courses/dop/study/domain6/threat-detection.md
+              - 監査とログの設定: courses/dop/study/domain6/security-audit.md
           - スキル対応表: courses/dop/coverage.md
+          - 問題集:
+              - courses/dop/exercises/index.md
+              - CodePipeline と複数アカウント: courses/dop/exercises/pipelines.md
+              - CodeBuild とテスト: courses/dop/exercises/codebuild.md
+              - 成果物とリポジトリ: courses/dop/exercises/artifacts.md
+              - デプロイ方式: courses/dop/exercises/deployments.md
+              - コンテナ: courses/dop/exercises/containers.md
+              - IaC と StackSets: courses/dop/exercises/iac.md
+              - Organizations と統制: courses/dop/exercises/organizations.md
+              - Systems Manager と自動化: courses/dop/exercises/systems-manager.md
+              - サーバーレス: courses/dop/exercises/serverless.md
+              - 高可用性: courses/dop/exercises/high-availability.md
+              - 複数リージョン: courses/dop/exercises/multi-region.md
+              - 負荷分散とヘルスチェック: courses/dop/exercises/load-balancing.md
+              - スケーリング: courses/dop/exercises/scaling.md
+              - 災害対策: courses/dop/exercises/disaster-recovery.md
+              - CloudWatch Logs: courses/dop/exercises/cloudwatch-logs.md
+              - CloudWatch メトリクスとアラーム: courses/dop/exercises/cloudwatch-metrics.md
+              - ログのストリーミングと分析: courses/dop/exercises/log-streaming.md
+              - イベントとメッセージング: courses/dop/exercises/messaging.md
+              - AWS Config: courses/dop/exercises/config.md
+              - X-Ray と障害の調査: courses/dop/exercises/troubleshooting.md
+              - 脅威の検出: courses/dop/exercises/threat-detection.md
+              - 監査とログ: courses/dop/exercises/security-audit.md
+              - IAM とアクセス管理: courses/dop/exercises/iam.md
+              - ネットワークセキュリティと証明書: courses/dop/exercises/network-security.md
+              - データ保護: courses/dop/exercises/data-protection.md
       - Generative AI Developer - Professional:
           - courses/aip/index.md
           - サービス一覧: courses/aip/services.md
-          - courses/aip/domain1.md
-          - courses/aip/domain2.md
-          - courses/aip/domain3.md
-          - courses/aip/domain4.md
-          - courses/aip/domain5.md
+          - 分野1 FM の統合、データ管理、コンプライアンス:
+              - スキルごとの要点: courses/aip/domain1.md
+              - サービス別の学習: courses/aip/study/domain1/index.md
+              - FM の選定と耐障害: courses/aip/study/domain1/fm-selection.md
+              - データの検証と前処理: courses/aip/study/domain1/data-preparation.md
+              - カスタムモデルのデプロイ: courses/aip/study/domain1/custom-models.md
+              - ベクトルストア: courses/aip/study/domain1/vector-stores.md
+              - Knowledge Bases と検索: courses/aip/study/domain1/knowledge-bases.md
+              - プロンプトと Flows: courses/aip/study/domain1/prompts.md
+          - 分野2 実装と統合:
+              - スキルごとの要点: courses/aip/domain2.md
+              - サービス別の学習: courses/aip/study/domain2/index.md
+              - Bedrock の API 統合: courses/aip/study/domain2/bedrock-api.md
+              - AgentCore とエージェント: courses/aip/study/domain2/agents.md
+              - ワークフローとオーケストレーション: courses/aip/study/domain2/workflows.md
+              - モデルのホスト: courses/aip/study/domain2/custom-models.md
+              - 企業システムとの統合: courses/aip/study/domain2/enterprise-integration.md
+              - 安全なアクセス: courses/aip/study/domain2/access-and-data-protection.md
+              - GenAI ゲートウェイとモデルの振り分け: courses/aip/study/domain2/genai-gateway.md
+              - トラブルシューティングの効率化: courses/aip/study/domain2/observability.md
+          - 分野3 AI の安全性、セキュリティ、ガバナンス:
+              - スキルごとの要点: courses/aip/domain3.md
+              - サービス別の学習: courses/aip/study/domain3/index.md
+              - Guardrails と入出力の安全対策: courses/aip/study/domain3/guardrails.md
+              - アクセス制御とデータの保護: courses/aip/study/domain3/access-and-data-protection.md
+              - ガバナンスと責任ある AI: courses/aip/study/domain3/governance.md
+          - 分野4 生成 AI アプリの運用効率と最適化:
+              - スキルごとの要点: courses/aip/domain4.md
+              - サービス別の学習: courses/aip/study/domain4/index.md
+              - コストの最適化とキャッシュ: courses/aip/study/domain4/cost-optimization.md
+              - 性能とパラメータの調整: courses/aip/study/domain4/performance.md
+              - FM に合わせた資源の割り当て: courses/aip/study/domain4/custom-models.md
+              - ベクトル検索の性能と運用: courses/aip/study/domain4/vector-stores.md
+              - 監視とオブザーバビリティ: courses/aip/study/domain4/observability.md
+              - ツールの性能の監視: courses/aip/study/domain4/agents.md
+          - 分野5 テスト、検証、トラブルシューティング:
+              - スキルごとの要点: courses/aip/domain5.md
+              - サービス別の学習: courses/aip/study/domain5/index.md
+              - 評価と Bedrock Evaluations: courses/aip/study/domain5/evaluations.md
+              - 品質保証とデプロイの検証: courses/aip/study/domain5/genai-gateway.md
+              - エージェントの評価: courses/aip/study/domain5/agents.md
+              - 関係者への報告: courses/aip/study/domain5/observability.md
+              - 内容の処理と FM の統合の問題: courses/aip/study/domain5/bedrock-api.md
+              - プロンプトの問題と保守: courses/aip/study/domain5/prompts.md
+              - 検索システムの問題: courses/aip/study/domain5/vector-stores.md
           - スキル対応表: courses/aip/coverage.md
+          - 問題集:
+              - courses/aip/exercises/index.md
+              - FM の選定と耐障害: courses/aip/exercises/fm-selection.md
+              - データの検証と前処理: courses/aip/exercises/data-preparation.md
+              - カスタムモデルとモデルのホスト: courses/aip/exercises/custom-models.md
+              - ベクトルストア: courses/aip/exercises/vector-stores.md
+              - Knowledge Bases と検索: courses/aip/exercises/knowledge-bases.md
+              - プロンプトと Flows: courses/aip/exercises/prompts.md
+              - AgentCore とエージェント: courses/aip/exercises/agents.md
+              - ワークフローとオーケストレーション: courses/aip/exercises/workflows.md
+              - 企業システムとの統合: courses/aip/exercises/enterprise-integration.md
+              - GenAI ゲートウェイと CI/CD: courses/aip/exercises/genai-gateway.md
+              - Bedrock の API 統合: courses/aip/exercises/bedrock-api.md
+              - Guardrails と入出力の安全対策: courses/aip/exercises/guardrails.md
+              - アクセス制御とデータの保護: courses/aip/exercises/access-and-data-protection.md
+              - ガバナンスと責任ある AI: courses/aip/exercises/governance.md
+              - コストの最適化とキャッシュ: courses/aip/exercises/cost-optimization.md
+              - 性能とパラメータの調整: courses/aip/exercises/performance.md
+              - 監視とオブザーバビリティ: courses/aip/exercises/observability.md
+              - 評価と Bedrock Evaluations: courses/aip/exercises/evaluations.md
       - Advanced Networking - Specialty:
           - courses/ans/index.md
           - サービス一覧: courses/ans/services.md
-          - courses/ans/domain1.md
-          - courses/ans/domain2.md
-          - courses/ans/domain3.md
-          - courses/ans/domain4.md
+          - 分野1 ネットワーク設計:
+              - スキルごとの要点: courses/ans/domain1.md
+              - サービス別の学習: courses/ans/study/domain1/index.md
+              - CloudFront と配信設計: courses/ans/study/domain1/cloudfront.md
+              - Global Accelerator と分散: courses/ans/study/domain1/global-accelerator.md
+              - Route 53 のゾーンとレコード: courses/ans/study/domain1/route53-zones.md
+              - Route 53 のルーティングと高可用性: courses/ans/study/domain1/route53-routing.md
+              - VPC Resolver とハイブリッド DNS: courses/ans/study/domain1/resolver.md
+              - ロードバランサー: courses/ans/study/domain1/elb.md
+              - CloudWatch とログの要件: courses/ans/study/domain1/cloudwatch.md
+              - フローログと Traffic Mirroring: courses/ans/study/domain1/flow-logs.md
+              - 到達性の検証とトポロジー: courses/ans/study/domain1/reachability.md
+              - ルーティングと BGP: courses/ans/study/domain1/routing-bgp.md
+              - Direct Connect: courses/ans/study/domain1/direct-connect.md
+              - VPN とカプセル化: courses/ans/study/domain1/vpn.md
+              - Transit Gateway と SD-WAN: courses/ans/study/domain1/transit-gateway.md
+              - マルチ VPC とマルチアカウント: courses/ans/study/domain1/multi-account.md
+          - 分野2 ネットワークの実装:
+              - スキルごとの要点: courses/ans/domain2.md
+              - サービス別の学習: courses/ans/study/domain2/index.md
+              - Direct Connect: courses/ans/study/domain2/direct-connect.md
+              - VPN とカプセル化: courses/ans/study/domain2/vpn.md
+              - ルーティングと BGP: courses/ans/study/domain2/routing-bgp.md
+              - Transit Gateway と SD-WAN: courses/ans/study/domain2/transit-gateway.md
+              - マルチ VPC とマルチアカウント: courses/ans/study/domain2/multi-account.md
+              - VPC の構成とエンドポイント: courses/ans/study/domain2/vpc-endpoints.md
+              - ネットワークのセキュリティ: courses/ans/study/domain2/network-security.md
+              - ロードバランサー: courses/ans/study/domain2/elb.md
+              - Route 53 のゾーンとレコード: courses/ans/study/domain2/route53-zones.md
+              - Route 53 のルーティングと高可用性: courses/ans/study/domain2/route53-routing.md
+              - VPC Resolver とハイブリッド DNS: courses/ans/study/domain2/resolver.md
+              - 到達性の検証とトポロジー: courses/ans/study/domain2/reachability.md
+              - CloudWatch とログの要件: courses/ans/study/domain2/cloudwatch.md
+              - ネットワークの自動化: courses/ans/study/domain2/automation.md
+          - 分野3 ネットワークの管理と運用:
+              - スキルごとの要点: courses/ans/domain3.md
+              - サービス別の学習: courses/ans/study/domain3/index.md
+              - ルーティングと BGP: courses/ans/study/domain3/routing-bgp.md
+              - Direct Connect: courses/ans/study/domain3/direct-connect.md
+              - Transit Gateway と SD-WAN: courses/ans/study/domain3/transit-gateway.md
+              - VPC の構成とエンドポイント: courses/ans/study/domain3/vpc-endpoints.md
+              - CloudWatch とログの要件: courses/ans/study/domain3/cloudwatch.md
+              - フローログと Traffic Mirroring: courses/ans/study/domain3/flow-logs.md
+              - 到達性の検証とトポロジー: courses/ans/study/domain3/reachability.md
+              - MTU と性能の最適化: courses/ans/study/domain3/performance.md
+              - Route 53 のルーティングと高可用性: courses/ans/study/domain3/route53-routing.md
+              - Global Accelerator と分散: courses/ans/study/domain3/global-accelerator.md
+              - CloudFront と配信設計: courses/ans/study/domain3/cloudfront.md
+          - 分野4 ネットワークのセキュリティ、コンプライアンス、ガバナンス:
+              - スキルごとの要点: courses/ans/domain4.md
+              - サービス別の学習: courses/ans/study/domain4/index.md
+              - ネットワークのセキュリティ: courses/ans/study/domain4/network-security.md
+              - 監査と通知の自動化: courses/ans/study/domain4/security-operations.md
+              - フローログと Traffic Mirroring: courses/ans/study/domain4/flow-logs.md
+              - 暗号化と証明書: courses/ans/study/domain4/encryption.md
+              - VPN とカプセル化: courses/ans/study/domain4/vpn.md
+              - Route 53 のゾーンとレコード: courses/ans/study/domain4/route53-zones.md
           - スキル対応表: courses/ans/coverage.md
+          - 問題集:
+              - courses/ans/exercises/index.md
+              - CloudFront と配信設計: courses/ans/exercises/cloudfront.md
+              - Global Accelerator と分散: courses/ans/exercises/global-accelerator.md
+              - ロードバランサー: courses/ans/exercises/elb.md
+              - ルーティングと BGP: courses/ans/exercises/routing-bgp.md
+              - Direct Connect: courses/ans/exercises/direct-connect.md
+              - マルチ VPC とマルチアカウント: courses/ans/exercises/multi-account.md
+              - Route 53 のゾーンとレコード: courses/ans/exercises/route53-zones.md
+              - Route 53 のルーティングと高可用性: courses/ans/exercises/route53-routing.md
+              - VPC Resolver とハイブリッド DNS: courses/ans/exercises/resolver.md
+              - VPN とカプセル化: courses/ans/exercises/vpn.md
+              - Transit Gateway と SD-WAN: courses/ans/exercises/transit-gateway.md
+              - VPC の構成とエンドポイント: courses/ans/exercises/vpc-endpoints.md
+              - ネットワークの自動化: courses/ans/exercises/automation.md
+              - MTU と性能の最適化: courses/ans/exercises/performance.md
+              - 到達性の検証とトポロジー: courses/ans/exercises/reachability.md
+              - CloudWatch とログの要件: courses/ans/exercises/cloudwatch.md
+              - ネットワークのセキュリティ: courses/ans/exercises/network-security.md
+              - フローログと Traffic Mirroring: courses/ans/exercises/flow-logs.md
+              - 監査と通知の自動化: courses/ans/exercises/security-operations.md
+              - 暗号化と証明書: courses/ans/exercises/encryption.md
       - Security - Specialty:
           - courses/scs/index.md
           - サービス一覧: courses/scs/services.md
-          - courses/scs/domain1.md
-          - courses/scs/domain2.md
-          - courses/scs/domain3.md
-          - courses/scs/domain4.md
-          - courses/scs/domain5.md
-          - courses/scs/domain6.md
+          - 分野1 検出:
+              - スキルごとの要点: courses/scs/domain1.md
+              - サービス別の学習: courses/scs/study/domain1/index.md
+              - 脅威の監視: courses/scs/study/domain1/threat-monitoring.md
+              - ログの仕組み: courses/scs/study/domain1/logging.md
+              - 監視とログのトラブルシューティング: courses/scs/study/domain1/monitoring-troubleshooting.md
+          - 分野2 インシデント対応:
+              - スキルごとの要点: courses/scs/domain2.md
+              - サービス別の学習: courses/scs/study/domain2/index.md
+              - インシデント対応計画: courses/scs/study/domain2/incident-planning.md
+              - 検出結果の検証と封じ込め: courses/scs/study/domain2/containment.md
+              - フォレンジックとログ調査: courses/scs/study/domain2/forensics.md
+          - 分野3 インフラストラクチャのセキュリティ:
+              - スキルごとの要点: courses/scs/domain3.md
+              - サービス別の学習: courses/scs/study/domain3/index.md
+              - エッジのセキュリティ: courses/scs/study/domain3/edge-security.md
+              - ネットワークのセキュリティ: courses/scs/study/domain3/network-security.md
+              - コンピューティングの強化: courses/scs/study/domain3/compute-hardening.md
+              - 脆弱性スキャンと実行時の監視: courses/scs/study/domain3/vulnerability-scanning.md
+              - 生成 AI アプリの保護: courses/scs/study/domain3/genai-security.md
+          - 分野4 ID とアクセス管理:
+              - スキルごとの要点: courses/scs/domain4.md
+              - サービス別の学習: courses/scs/study/domain4/index.md
+              - 認証: courses/scs/study/domain4/authentication.md
+              - 認可: courses/scs/study/domain4/authorization.md
+              - アクセスの分析: courses/scs/study/domain4/access-analysis.md
+          - 分野5 データ保護:
+              - スキルごとの要点: courses/scs/domain5.md
+              - サービス別の学習: courses/scs/study/domain5/index.md
+              - 転送時の暗号化: courses/scs/study/domain5/encryption-in-transit.md
+              - 保存時のデータ: courses/scs/study/domain5/data-at-rest.md
+              - 鍵と証明書の管理: courses/scs/study/domain5/key-management.md
+              - シークレットとマスキング: courses/scs/study/domain5/secrets-masking.md
+          - 分野6 セキュリティの基盤とガバナンス:
+              - スキルごとの要点: courses/scs/domain6.md
+              - サービス別の学習: courses/scs/study/domain6/index.md
+              - Organizations と Control Tower: courses/scs/study/domain6/organizations.md
+              - 一貫した展開: courses/scs/study/domain6/deployment.md
+              - 準拠の評価: courses/scs/study/domain6/compliance.md
           - スキル対応表: courses/scs/coverage.md
+          - 問題集:
+              - courses/scs/exercises/index.md
+              - 脅威の監視: courses/scs/exercises/threat-monitoring.md
+              - ログの仕組み: courses/scs/exercises/logging.md
+              - 監視とログのトラブルシューティング: courses/scs/exercises/monitoring-troubleshooting.md
+              - インシデント対応計画: courses/scs/exercises/incident-planning.md
+              - フォレンジックとログ調査: courses/scs/exercises/forensics.md
+              - 検出結果の検証と封じ込め: courses/scs/exercises/containment.md
+              - エッジのセキュリティ: courses/scs/exercises/edge-security.md
+              - コンピューティングの強化: courses/scs/exercises/compute-hardening.md
+              - 脆弱性スキャンと実行時の監視: courses/scs/exercises/vulnerability-scanning.md
+              - 生成 AI アプリの保護: courses/scs/exercises/genai-security.md
+              - ネットワークのセキュリティ: courses/scs/exercises/network-security.md
+              - 認証: courses/scs/exercises/authentication.md
+              - 認可: courses/scs/exercises/authorization.md
+              - アクセスの分析: courses/scs/exercises/access-analysis.md
+              - 転送時の暗号化: courses/scs/exercises/encryption-in-transit.md
+              - 保存時のデータ: courses/scs/exercises/data-at-rest.md
+              - 鍵と証明書の管理: courses/scs/exercises/key-management.md
+              - シークレットとマスキング: courses/scs/exercises/secrets-masking.md
+              - Organizations と Control Tower: courses/scs/exercises/organizations.md
+              - 一貫した展開: courses/scs/exercises/deployment.md
+              - 準拠の評価: courses/scs/exercises/compliance.md
   - サービス:
       - services/index.md
       - アプリケーション開発:

@@ -108,7 +108,7 @@ AWS は自社のインフラについて監査を受け、レポートを提供�
 |---|---|
 | 誰がどの API を呼んだか | CloudTrail |
 | IP 通信の有無と許可、拒否 | VPC フローログ |
-| HTTP リクエストの中身 | ALB、CloudFront、WAF のログ |
+| HTTP リクエストの記録 | ALB、CloudFront、WAF のログ |
 | 設定がいつ変わったか | AWS Config |
 | アプリケーションのログ | CloudWatch Logs |
 

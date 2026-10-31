@@ -14,6 +14,7 @@ AWS Well-Architected Framework に基づいて、ソリューションを設計�
     **イタリア語の試験は 2026年12月31日を最後に終了します。** 公式ページに、SAA-C03 に代わる新しい版の案内は確認できませんでした。受験前に公式ページを確認してください。
 
 [:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+[:material-help-circle-outline: 問題集](exercises/index.md){ .md-button }
 
 ## 試験の概要 {#overview}
 
@@ -34,7 +35,7 @@ AWS Well-Architected Framework に基づいて、ソリューションを設計�
 
 ## 学習の順番 {#study-path}
 
-配点の大きい分野から順に進めます。各分野のページで項目ごとの要点を確認し、足りないところはサービス解説で補います。
+配点の大きい分野から順に進めます。各分野のページで項目ごとの要点を確認し、足りないところはサービス解説で補います。話題ごとの[問題集](exercises/index.md)で理解を確かめます。
 
 ```mermaid
 flowchart TD
@@ -51,6 +52,15 @@ flowchart TD
 | [分野2: 回復性の高いアーキテクチャの設計](domain2.md) | 26% | 2 | SQS、SNS、Lambda、ECS、Route 53、Auto Scaling、AWS Backup |
 | [分野3: 高性能なアーキテクチャの設計](domain3.md) | 24% | 5 | EBS、S3、EC2、Aurora、ElastiCache、CloudFront、Kinesis、Glue |
 | [分野4: コストを最適化したアーキテクチャの設計](domain4.md) | 20% | 4 | Cost Explorer、Budgets、Savings Plans、S3 のストレージクラス、NAT ゲートウェイ、Direct Connect |
+
+各分野のページと、サービス別の学習ページは次のとおりです。
+
+| 分野 | 要点 | サービス別の学習 |
+|---|---|---|
+| 分野1 | [開く](domain1.md) | [開く](study/domain1/index.md) |
+| 分野2 | [開く](domain2.md) | [開く](study/domain2/index.md) |
+| 分野3 | [開く](domain3.md) | [開く](study/domain3/index.md) |
+| 分野4 | [開く](domain4.md) | [開く](study/domain4/index.md) |
 
 試験ガイドに載っている技術と概念の分類は、コンピューティング、コスト管理、データベース、災害復旧、高性能、管理とガバナンス、マイクロサービス、移行とデータ転送、ネットワーク、回復性、セキュリティ、サーバーレスとイベント駆動、ストレージです。
 

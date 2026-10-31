@@ -22,7 +22,7 @@ AWS の構成や運用をまとめる wiki。`docs/` の md を MkDocs Material 
 
 `docs/services/` では、設定項目ごとに「何が変わるか、既定値と範囲、具体的な値を使った例、設定を誤ったときの症状」を書く。リソースには提供単位（グローバル、リージョン、AZ）と VPC の内外も書き、`docs/services/resource-scope.md` にそろえる。
 
-問題集は `docs/courses/<試験>/exercises/` に置き、形式を `scripts/check_exercises.py` で検査する。問題はオリジナルで書き、正解は公式ドキュメントで確認する。過去問やダンプは使わない。各スキルに最低3問そろえる。
+問題集は `docs/courses/<試験>/exercises/` に置き、形式を `scripts/check_exercises.py` で検査する。スキルの行は分野ページの見出しへのリンクで書く（例: `[1.1.3](../domain1.md#skill-1-1-3)`。DVA だけは `C03 1.1.3` の形）。問題はオリジナルで書き、正解は公式ドキュメントで確認する。過去問やダンプは使わない。各スキルに最低3問そろえる。
 
 サービス解説の試験バッジ（`{ .exam-badge` の行）と `docs/courses/<試験>/services.md` は手で書かない。サービスや見出しを増やしたら `data/service_pages.json` を更新して `python3 scripts/build_exam_badges.py` を実行する。試験ガイドが改訂されたら `data/exam_services.json` も更新する。
 

@@ -256,7 +256,8 @@ flowchart TD
 | しきい値を超えたら通知 | CloudWatch アラームと SNS |
 | 誤報を減らす | M out of N、複合アラーム |
 | 季節性がある | 異常検知のアラーム |
-| 自動で調査や修復 | アラームから Systems Manager Automation |
+| 自動で修復 | アラームの状態変化を EventBridge で受けて Systems Manager Automation を実行する。アラームのアクションには直接指定できない |
+| 自動で調査 | アラームのアクションで CloudWatch の調査（investigations）を開始する |
 | 運用の作業項目を作る | OpsCenter の OpsItem |
 
 **欠落データの扱い:** `treatMissingData` を誤ると、データがないときにアラームが動かない、または誤報になります。

@@ -178,8 +178,8 @@
 
 - A. `GetItem` で読み、1 を足して `PutItem` で書き戻す
 - B. `TransactWriteItems` で加算し、`TransactGetItems` で読み直す
-- C. `ADD views :one` の `UpdateItem` に `ReturnValues=UPDATED_NEW` を付ける
-- D. アプリで計算した値を `SET views = :new` で書き、続けて `GetItem` で読み直す
+- C. `ADD viewCount :one` の `UpdateItem` に `ReturnValues=UPDATED_NEW` を付ける
+- D. アプリで計算した値を `SET viewCount = :new` で書き、続けて `GetItem` で読み直す
 
 ??? success "答えと解説"
     **正解: C**

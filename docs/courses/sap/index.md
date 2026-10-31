@@ -7,7 +7,7 @@
 
     すでに準備が進んでいるなら、11月16日までに C02 を受ける選択肢もあります。C02 で取得した認定は、元の有効期限まで有効です。受験日に合わせて範囲を確認してください（[AWS のお知らせ](https://aws.amazon.com/blogs/training-and-certification/september-2026-new-offerings/)）。
 
-[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button } [:material-help-circle-outline: 問題集](exercises/index.md){ .md-button }
 
 ## 試験の概要 {#overview}
 
@@ -27,7 +27,7 @@
 
 ## 学習の順番 {#study-path}
 
-配点の大きい分野から進めます。各分野のページでスキルごとの要点を確認し、足りないところはサービス解説で補います。
+配点の大きい分野から進めます。各分野のページでスキルごとの要点を確認し、足りないところはサービス解説で補います。話題ごとの[問題集](exercises/index.md)で理解を確かめます。
 
 ```mermaid
 flowchart TD
@@ -39,13 +39,13 @@ flowchart TD
     F --> G["確認問題を解き直す"]
 ```
 
-| 分野 | 配点 | タスク数 | スキル数 | 主なサービス |
-|---|---|---|---|---|
-| [分野1: クラウド向けのアーキテクチャの設計と実装](domain1.md) | 25% | 5 | 34 | EventBridge、EKS、VPC Lattice、Bedrock、Direct Connect、Transit Gateway、Lake Formation |
-| [分野2: セキュリティ、コンプライアンス、ガバナンス](domain2.md) | 25% | 5 | 24 | IAM Identity Center、KMS、CloudHSM、Organizations、Control Tower、Security Lake、Bedrock Guardrails |
-| [分野3: コストを最適化したアーキテクチャの設計](domain3.md) | 15% | 4 | 19 | Savings Plans、CloudFront、Budgets、Cost Explorer、AWS Backup |
-| [分野4: 回復性、移行、事業継続](domain4.md) | 15% | 3 | 17 | AWS Transform、DMS、DRS、Resilience Hub、ARC、FIS |
-| [分野5: 運用の優秀性と自動化](domain5.md) | 20% | 4 | 21 | CloudFormation、CDK、CodePipeline、CloudWatch、Systems Manager |
+| 分野 | サービス別の学習 | 配点 | タスク数 | スキル数 | 主なサービス |
+|---|---|---|---|---|---|
+| [分野1: クラウド向けのアーキテクチャの設計と実装](domain1.md) | [開く](study/domain1/index.md) | 25% | 5 | 34 | EventBridge、EKS、VPC Lattice、Bedrock、Direct Connect、Transit Gateway、Lake Formation |
+| [分野2: セキュリティ、コンプライアンス、ガバナンス](domain2.md) | [開く](study/domain2/index.md) | 25% | 5 | 24 | IAM Identity Center、KMS、CloudHSM、Organizations、Control Tower、Security Lake、Bedrock Guardrails |
+| [分野3: コストを最適化したアーキテクチャの設計](domain3.md) | [開く](study/domain3/index.md) | 15% | 4 | 19 | Savings Plans、CloudFront、Budgets、Cost Explorer、AWS Backup |
+| [分野4: 回復性、移行、事業継続](domain4.md) | [開く](study/domain4/index.md) | 15% | 3 | 17 | AWS Transform、DMS、DRS、Resilience Hub、ARC、FIS |
+| [分野5: 運用の優秀性と自動化](domain5.md) | [開く](study/domain5/index.md) | 20% | 4 | 21 | CloudFormation、CDK、CodePipeline、CloudWatch、Systems Manager |
 
 ## C02 と C03 の違い {#c02-vs-c03}
 
