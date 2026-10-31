@@ -107,7 +107,7 @@ ACM の公開証明書の有効期間と更新について、現在の仕様と�
     - C: 誤り。証明書の期限はわからない。
     - D: 誤り。期限の通知にはならない。
 
-    **スキル:** C03 2.2.2 / **参照:** [更新の監視](../../../services/certificates.md#renewal-monitoring)
+    **スキル:** C03 2.2.2, C03 4.2.3 / **参照:** [更新の監視](../../../services/certificates.md#renewal-monitoring)
 
 ### 問6 {#q6}
 
@@ -257,3 +257,68 @@ WAF のログを S3 に送ろうとしましたが、バケットが送信先の
     - D: 誤り。サンプルの設定で、ログの送信先とは別。
 
     **スキル:** C03 2.1.2 / **参照:** [ログ](../../../services/certificates.md#waf-logging)
+
+### 問13 {#q13}
+
+ローカルの開発サーバーで HTTPS を試すために、`localhost` 用の秘密鍵と自己署名証明書を 1 回のコマンドで作りたいと考えています。最も適切なものはどれですか。
+
+- A. `aws acm request-certificate --domain-name localhost --validation-method DNS --key-algorithm RSA_2048`
+- B. `openssl genrsa -out key.pem 2048`
+- C. `openssl req -new -newkey rsa:2048 -nodes -sha256 -keyout key.pem -out dev.csr -subj "/CN=localhost"`
+- D. `openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -subj "/CN=localhost"`
+
+??? success "答えと解説"
+    **正解: D**
+
+    `openssl req` に `-x509` を付けると、CSR ではなく自己署名証明書を出力します。`-newkey` で秘密鍵も同時に作ります。ブラウザからは信頼されないので警告が出ます。本番の公開サイトには使いません。
+
+    - A: 誤り。ACM の公開証明書はドメインの検証が必要で、`localhost` の所有は検証できません。
+    - B: 誤り。秘密鍵を作るだけで、証明書はできません。
+    - C: 誤り。`-x509` がないので、できるのは CA に署名を依頼する CSR です。
+    - D: 正しい。秘密鍵と自己署名証明書が同時にできます。
+
+    **スキル:** C03 2.2.5 / **参照:** [自己署名証明書](../../../services/certificates.md#self-signed)
+
+### 問14 {#q14}
+
+開発者は EC2 への SSH に使うキーを用意します。セキュリティの方針で、秘密鍵は手元で生成し、AWS の API の応答に含まれないようにします。インスタンスは Amazon Linux です。最も適切な手順はどれですか。
+
+- A. `aws ec2 create-key-pair --key-type ed25519` で作り、`KeyMaterial` を保存する
+- B. `ssh-keygen` で作り、公開鍵を `aws ec2 import-key-pair` で登録する
+- C. `ssh-keygen` で作り、秘密鍵を `aws ec2 import-key-pair` で登録する
+- D. CloudFormation の `AWS::EC2::KeyPair` で作り、秘密鍵を Parameter Store から読む
+
+??? success "答えと解説"
+    **正解: B**
+
+    手元のツールで作り、公開鍵だけを EC2 にインポートすれば、秘密鍵は AWS を通りません。
+
+    - A: 誤り。AWS が生成した秘密鍵が API の応答で返ります。
+    - B: 正しい。方針を満たします。
+    - C: 誤り。登録するのは公開鍵です。秘密鍵は手元から出しません。
+    - D: 誤り。AWS が生成し、秘密鍵は Parameter Store に保存されます。
+
+    **スキル:** C03 2.2.5 / **参照:** [SSH キーと EC2 キーペア](../../../services/certificates.md#ssh-keys)
+
+### 問15 {#q15}
+
+EC2 キーペアについて、正しい説明はどれですか。（2つ選択）
+
+- A. 秘密鍵をなくすと、EC2 はコピーを持たないので取り戻せない
+- B. `describe-key-pairs` を使えば、秘密鍵を後から何度でも取得できる
+- C. Windows インスタンスにも ED25519 のキーペアを使うことができる
+- D. 秘密鍵のファイルは `chmod 400` にしないと接続に使えない場合がある
+- E. EC2 に作成させる RSA のキーペアは 1024 ビットも選ぶことができる
+
+??? success "答えと解説"
+    **正解: A, D**
+
+    EC2 は秘密鍵のコピーを保持しません。作成時に保存する機会は 1 回だけです。秘密鍵の権限が広いと、`UNPROTECTED PRIVATE KEY FILE` のエラーになって接続できません。
+
+    - A: 正しい。別の公開鍵を追加するなどの方法で接続し直します。
+    - B: 誤り。EC2 は秘密鍵を保持していないので、取得できません。
+    - C: 誤り。ED25519 は Windows インスタンスでは使えません。RSA を使います。
+    - D: 正しい。AWS の手順でも `chmod 400` を実行しています。
+    - E: 誤り。EC2 が作成する RSA のキーは 2048 ビットです。1024 ビットを使えるのは、インポートする鍵です。
+
+    **スキル:** C03 2.2.5 / **参照:** [SSH キーと EC2 キーペア](../../../services/certificates.md#ssh-keys)

@@ -433,3 +433,45 @@ ECS でアプリと X-Ray デーモンを別のコンテナで動かしていま
     - E: 配信は平均で約 5 分かかり、保証もありません。
 
     **スキル:** C03 4.1.2 / **参照:** [イベントの種類](../../../services/observability.md#cloudtrail-events)
+
+### 問21 {#q21}
+
+Lambda 関数のロググループで、`ERROR` を含むログの件数を 5 分ごとに集計したいと考えています。最も適切な Logs Insights のクエリはどれですか。
+
+- A. `fields @timestamp, @message | sort @timestamp desc | limit 5`
+- B. `stats count(*) by bin(5m) | filter @message like /ERROR/`
+- C. `parse @message "ERROR" | stats sum(@message) by bin(5m)`
+- D. `filter @message like /ERROR/ | stats count(*) by bin(5m)`
+
+??? success "答えと解説"
+    **正解: D**
+
+    コマンドはパイプの順に処理します。先に `filter` で絞り込み、次に `stats` と `bin` で時間ごとに数えます。
+
+    - A: 誤り。新しいログを 5 件表示するだけです。
+    - B: 誤り。`stats` の後には集計の結果しか残らず、`@message` で絞り込めません。
+    - C: 誤り。文字列のフィールドは `sum` で集計できません。
+    - D: 正しい。要件のとおりに集計できます。
+
+    **スキル:** C03 4.1.3 / **参照:** [Logs Insights でログを検索する](../../../services/observability.md#logs-insights)
+
+### 問22 {#q22}
+
+Python の Lambda 関数は標準の `logging` でテキストのログを出しています。Logs Insights でレベルやリクエスト ID で絞り込むには、毎回 `parse` を書く必要があります。コードの変更は最小にしたいと考えています。最も適切な対応はどれですか。
+
+- A. メトリクスフィルターを作成し、テキストのログを JSON に変換して保存する
+- B. 関数のログの形式（`LogFormat`）を `JSON` にする
+- C. `ApplicationLogLevel` を `DEBUG` にして、記録する情報を増やす
+- D. ロググループを、取り込みの料金が安いログクラスに変更する
+
+??? success "答えと解説"
+    **正解: B**
+
+    `LogFormat` を `JSON` にすると、対応するランタイムの標準のロギングの出力が、`level` や `requestId` などのキーを持つ JSON になります。Python の `logging` なら、コードの変更は不要です。`filter level = "ERROR"` のように絞り込めます。
+
+    - A: 誤り。メトリクスフィルターはログからメトリクスを作る機能で、ログの形式は変えません。
+    - B: 正しい。構造化されたログになります。
+    - C: 誤り。形式は変わらず、ログの量だけが増えます。また `ApplicationLogLevel` は JSON 形式のときの設定です。
+    - D: 誤り。ログの形式は変わりません。また、ロググループのクラスは作成後に変更できません。
+
+    **スキル:** C03 4.2.1 / **参照:** [構造化ログ](../../../services/observability.md#structured-logging)

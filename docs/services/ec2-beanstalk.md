@@ -652,7 +652,7 @@ option_settings:
     XRayEnabled: true
 ```
 
-`XRayEnabled` は X-Ray デーモンを動かす設定です。アプリ側の計装は別に必要です。デーモンの権限は `AWSXrayWriteOnlyAccess` で、既定のインスタンスプロファイルに含まれます。独自のプロファイルなら自分で追加します。
+`XRayEnabled` は X-Ray デーモンを動かす設定です。アプリ側の計装は別に必要です。デーモンに必要な権限を、Beanstalk のドキュメントは `AWSXrayWriteOnlyAccess` と記載し、X-Ray のドキュメントは `AWSXRayDaemonWriteAccess` と記載しています。どちらの管理ポリシーも許可するアクションは同じです。既定のインスタンスプロファイルには `AWSElasticBeanstalkWebTier` で同じ権限が含まれます。独自のプロファイルなら自分で追加します。
 
 ## ワーカー環境 {#worker-tier}
 

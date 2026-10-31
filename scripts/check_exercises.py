@@ -9,6 +9,7 @@ QUESTION = re.compile(r"^### 問(\d+) \{#q(\d+)\}$", re.M)
 OPTION = re.compile(r"^- ([A-Z])\. (.+)$", re.M)
 ANSWER = re.compile(r"^    \*\*正解: ([A-Z](?:, [A-Z])*)\*\*$", re.M)
 SELECT = re.compile(r"（(\d)つ選択）")
+MIN_PER_SKILL = 3
 
 
 def check(path, errors, letters):
@@ -59,6 +60,18 @@ def check(path, errors, letters):
     return len(marks), longest, total
 
 
+def check_skills(paths, errors):
+    """対応表にある C03 の全スキルに、最低限の問題数があるか確かめる。"""
+    tags = collections.Counter()
+    for path in paths:
+        for line in re.findall(r"\*\*スキル:\*\*(.*)", open(path, encoding="utf-8").read()):
+            tags.update(re.findall(r"C03 (\d\.\d\.\d+)", line.split("**参照")[0]))
+    table = open("docs/courses/dva/coverage.md", encoding="utf-8").read().split("## DVA-C02")[0]
+    for skill in re.findall(r"\[(\d\.\d\.\d+)\]\(domain", table):
+        if tags[skill] < MIN_PER_SKILL:
+            errors.append(f"スキル {skill}: 問題が {tags[skill]}問しかありません")
+
+
 def main():
     errors = []
     letters = collections.Counter()
@@ -70,6 +83,7 @@ def main():
         count += questions
         print(f"{path}: {questions}問, 正解が最長の選択肢: {longest}/{total}")
     print(f"合計 {count}問, 正解の分布: {dict(sorted(letters.items()))}")
+    check_skills(paths, errors)
     for error in errors:
         print("ERROR", error)
     sys.exit(1 if errors else 0)

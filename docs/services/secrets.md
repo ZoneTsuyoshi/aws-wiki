@@ -483,7 +483,7 @@ aws logs put-data-protection-policy \
 
 - アカウント全体、または個別のロググループに設定できる。両方あれば両方が適用される。
 - ロググループごとのポリシーは 1 つ。上限は 30,720 文字。
-- 検出にはマネージドデータ識別子（金融、PHI、PII）と、正規表現のカスタムデータ識別子を使う。
+- 検出にはマネージドデータ識別子（資格情報、デバイス ID、金融、PHI、PII）と、正規表現のカスタムデータ識別子を使う。
 - マスキングは取り込み時に行われる。ポリシー設定前のログはマスキングされない。
 - Logs Insights、メトリクスフィルター、サブスクリプションフィルターなど、出口のすべてでマスキングされる。
 - マスクされていないデータを見られるのは `logs:Unmask` を持つ主体のみ。
@@ -492,7 +492,7 @@ aws logs put-data-protection-policy \
 
 | 対象 | 使うもの |
 | --- | --- |
-| DynamoDB の特定の属性を隠す | IAM の `dynamodb:Attributes` 条件。`ProjectionExpression` の指定も必須にする |
+| DynamoDB の特定の属性を隠す | IAM の `dynamodb:Attributes` 条件。`dynamodb:Select` を `SPECIFIC_ATTRIBUTES` に限定し、属性の指定も必須にする |
 | S3 の特定のプレフィックスのみ許可 | バケットポリシー、S3 Access Points |
 | 生成 AI の入出力の PII | Amazon Bedrock Guardrails（[AI](ai.md) を参照） |
 | 監査ログ | CloudTrail。データイベントは別途有効にする |

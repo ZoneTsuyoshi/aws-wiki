@@ -22,7 +22,9 @@ AWS の構成や運用をまとめる wiki。`docs/` の md を MkDocs Material 
 
 `docs/services/` では、設定項目ごとに「何が変わるか、既定値と範囲、具体的な値を使った例、設定を誤ったときの症状」を書く。
 
-問題集は `docs/courses/<試験>/exercises/` に置き、形式を `scripts/check_exercises.py` で検査する。問題はオリジナルで書き、正解は公式ドキュメントで確認する。
+問題集は `docs/courses/<試験>/exercises/` に置き、形式を `scripts/check_exercises.py` で検査する。問題はオリジナルで書き、正解は公式ドキュメントで確認する。過去問やダンプは使わない。各スキルに最低3問そろえる。
+
+`docs/courses/<試験>/study/domainN/` は分野とサービスの組み合わせごとの学習ページで、事実は `docs/services/` の内容に合わせる。問題の一覧は手で書かず、問題を追加したら `python3 scripts/build_study_pages.py` を実行して更新する。
 
 ## 技術的な質問への対応
 

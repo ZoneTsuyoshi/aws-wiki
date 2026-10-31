@@ -604,7 +604,7 @@ API でサインインするアプリは、`UserContextData` や `ContextData` �
 | 設定 | 値 |
 | --- | --- |
 | `identitySource` | `$request.header.Authorization` |
-| `issuerUrl` | `https://cognito-idp.<region>.amazonaws.com/<userPoolId>` |
+| `issuer`（CLI と CloudFormation では `Issuer`） | `https://cognito-idp.<region>.amazonaws.com/<userPoolId>` |
 | `audience` | アプリクライアント ID |
 | ルートの `authorizationScopes` | 少なくとも 1 つを含むこと |
 

@@ -32,7 +32,9 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Check exercises
-        run: python scripts/check_exercises.py
+        run: |
+          python scripts/check_exercises.py
+          python scripts/build_study_pages.py --check
 
       - name: Generate diagrams
         run: for f in diagrams_src/*.py; do python "$f"; done

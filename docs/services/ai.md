@@ -1198,7 +1198,7 @@ kiro-cli chat --v3 --no-interactive --trust-tools=read_file,grep_search \
 | Q Developer（コンソール） | コンソールで出たエラー | 権限、設定、サービス上限のエラーで「Diagnose with Amazon Q」ボタンが出る。Lambda、ECS、S3 なども対象。この機能は Q の IDE 終了の影響を受けないコンソール側のもの |
 | Q Developer（IDE） | コードのバグ | 選択したコードの Fix |
 | Kiro | コードのバグ、ビルド失敗 | Bugfix Spec、ヘッドレスでのビルド失敗の切り分け |
-| AWS DevOps Agent | 本番インシデント | アラームを契機に調査し、ログ、トレース、デプロイ履歴を関連付けて根本原因を示す。AWS リソースには読み取り専用で、緩和策の実行には人の承認が必要 |
+| AWS DevOps Agent | 本番インシデント | アラームを契機に調査し、ログ、トレース、デプロイ履歴を関連付けて根本原因を示す。AWS リソースには既定で読み取り専用で、変更を伴う操作は明示的に有効にしたうえで、実行のたびに人の承認が必要 |
 
 CloudWatch investigations は、設定なしでも実行できますが、調査グループを設定すると共有、提案の採否、クロスアカウント、Systems Manager Automation ランブックの実行まで使えます。以前は Amazon Q Developer operational investigations という名前でプレビュー提供されていました。
 

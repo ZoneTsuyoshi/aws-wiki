@@ -169,7 +169,7 @@ JSON キーを省くとシークレット全体を取得します。別のアカ
 | `RETRY-<正規表現>` | メッセージが一致すれば最大 3 回再試行 |
 | `RETRY-<回数>-<正規表現>` | 両方を指定 |
 
-Lambda コンピュートとリザーブドキャパシティでは使えません。`finally` は `commands` が失敗しても動きます。
+CodeBuild 提供のイメージの EC2 コンピュートでだけ動き、Lambda コンピュートとリザーブドキャパシティでは使えません。`finally` は `commands` が失敗しても動きます。
 
 #### artifacts と cache のキー {#buildspec-artifacts-cache}
 
@@ -223,7 +223,7 @@ flowchart TD
 | `build` | ビルドとテストの本体 |
 | `post_build` | イメージのプッシュや通知など |
 | `finally` | 同じフェーズの `commands` が失敗しても実行される |
-| `on-failure` | フェーズ失敗時の動作。`ABORT`、`CONTINUE`、`RETRY` など（EC2 コンピュートのみ） |
+| `on-failure` | フェーズ失敗時の動作。`ABORT`、`CONTINUE`、`RETRY` など（CodeBuild 提供のイメージの EC2 コンピュートのみ。Lambda コンピュートとリザーブドキャパシティでは使えない） |
 
 `UPLOAD_ARTIFACTS` は `BUILD` が失敗しても試行されます。`post_build` などで成否を判定したいときは、環境変数 `CODEBUILD_BUILD_SUCCEEDING`（`1` は成功、`0` は失敗）を見ます。
 

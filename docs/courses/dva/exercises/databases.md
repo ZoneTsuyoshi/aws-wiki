@@ -322,3 +322,47 @@ ElastiCache のキャッシュでメモリが一杯になると、`SET` がエ�
     - E: 更新時にキャッシュも最新にします。
 
     **スキル:** C03 1.3.3 / **参照:** [キャッシュ戦略](../../../services/databases.md#caching-strategies)
+
+### 問16 {#q16}
+
+DynamoDB の `GetItem` が中心の商品ページで、読み取りの遅延を数ミリ秒からマイクロ秒の単位に縮めたいと考えています。結果整合性で問題ありません。キャッシュの更新処理は自分で実装せず、コードの変更を最小にします。最も適切なものはどれですか。
+
+- A. ElastiCache for Valkey を置き、遅延読み込みと更新の処理をアプリに実装する
+- B. テーブルに GSI を追加し、読み取りの向き先をすべて GSI に変更する
+- C. DAX クラスターを作成し、アプリを DAX クライアントに切り替える
+- D. RDS Proxy を DynamoDB の前に置き、読み取りの接続を再利用する
+
+??? success "答えと解説"
+    **正解: C**
+
+    DAX は DynamoDB 専用のインメモリキャッシュで、DynamoDB と互換の API を持ちます。読み取りのキャッシュと書き込みの反映を DAX が処理するので、アプリの変更は少なくて済みます。
+
+    - A: 誤り。動きますが、キャッシュの処理をアプリに実装する必要があります。
+    - B: 誤り。GSI はアクセスパターンのためのもので、キャッシュではありません。
+    - C: 正しい。データストアが DynamoDB のときの選択肢です。
+    - D: 誤り。RDS Proxy は RDS と Aurora のためのもので、DynamoDB には使えません。
+
+    **スキル:** C03 1.3.3 / **参照:** [DAX、ElastiCache、CloudFront の使い分け](../../../services/databases.md#cache-comparison)
+
+### 問17 {#q17}
+
+データストアとキャッシュの組み合わせとして、適切なものはどれですか。（2つ選択）
+
+- A. Aurora の頻出クエリの結果を、DAX にキャッシュする
+- B. RDS の頻出クエリの結果を、ElastiCache にキャッシュする
+- C. RDS の頻出クエリの結果を、RDS Proxy にキャッシュする
+- D. S3 の画像を、CloudFront で世界中の利用者に配信する
+- E. S3 の画像を、DAX にキャッシュして利用者に配信する
+
+??? success "答えと解説"
+    **正解: B, D**
+
+    キャッシュはデータストアに合わせて選びます。DAX は DynamoDB 専用です。RDS や Aurora のクエリ結果には ElastiCache を使います。S3 のコンテンツの配信には CloudFront を使います。
+
+    - A: 誤り。DAX は DynamoDB 専用です。
+    - B: 正しい。アプリの中でキャッシュの処理を実装します。
+    - C: 誤り。RDS Proxy は接続のプールで、クエリ結果のキャッシュではありません。
+    - D: 正しい。エッジでキャッシュされます。
+    - E: 誤り。DAX は DynamoDB 専用です。
+
+    **スキル:** C03 1.3.3 / **参照:** [DAX、ElastiCache、CloudFront の使い分け](../../../services/databases.md#cache-comparison)

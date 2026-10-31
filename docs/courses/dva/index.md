@@ -31,12 +31,12 @@ flowchart TD
     E --> F["確認問題を解き直す"]
 ```
 
-| 分野 | C03 の配点 | C02 の配点 | 主なサービス |
-|---|---|---|---|
-| [分野1: AWS サービスによる開発](domain1.md) | 30% | 32% | Lambda、API Gateway、DynamoDB、SQS、SNS、EventBridge |
-| [分野2: セキュリティ](domain2.md) | 26% | 26% | IAM、Cognito、KMS、Secrets Manager、Bedrock Guardrails |
-| [分野3: テストとデプロイ](domain3.md) | 22% | 24% | SAM、CloudFormation、CodeDeploy、CodePipeline、ECS |
-| [分野4: トラブルシューティングと最適化](domain4.md) | 22% | 18% | CloudWatch、X-Ray、ElastiCache、DAX |
+| 分野 | サービス別の学習 | C03 の配点 | C02 の配点 | 主なサービス |
+|---|---|---|---|---|
+| [分野1: AWS サービスによる開発](domain1.md) | [開く](study/domain1/index.md) | 30% | 32% | Lambda、API Gateway、DynamoDB、SQS、SNS、EventBridge |
+| [分野2: セキュリティ](domain2.md) | [開く](study/domain2/index.md) | 26% | 26% | IAM、Cognito、KMS、Secrets Manager、Bedrock Guardrails |
+| [分野3: テストとデプロイ](domain3.md) | [開く](study/domain3/index.md) | 22% | 24% | SAM、CloudFormation、CodeDeploy、CodePipeline、ECS |
+| [分野4: トラブルシューティングと最適化](domain4.md) | [開く](study/domain4/index.md) | 22% | 18% | CloudWatch、X-Ray、ElastiCache、DAX |
 
 ## C02 と C03 の違い {#c02-vs-c03}
 

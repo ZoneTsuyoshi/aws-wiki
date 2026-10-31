@@ -50,10 +50,59 @@ nav:
       - courses/index.md
       - Developer - Associate:
           - courses/dva/index.md
-          - 分野1 開発: courses/dva/domain1.md
-          - 分野2 セキュリティ: courses/dva/domain2.md
-          - 分野3 テストとデプロイ: courses/dva/domain3.md
-          - 分野4 トラブルシューティング: courses/dva/domain4.md
+          - 分野1 開発:
+              - スキルごとの要点: courses/dva/domain1.md
+              - サービス別の学習: courses/dva/study/domain1/index.md
+              - Lambda: courses/dva/study/domain1/lambda.md
+              - API Gateway: courses/dva/study/domain1/api-gateway.md
+              - メッセージング: courses/dva/study/domain1/messaging.md
+              - Step Functions: courses/dva/study/domain1/step-functions.md
+              - ストリーミングと分析: courses/dva/study/domain1/streaming.md
+              - SDK と耐障害性: courses/dva/study/domain1/sdk-resilience.md
+              - DynamoDB: courses/dva/study/domain1/dynamodb.md
+              - データベースとキャッシュ: courses/dva/study/domain1/databases.md
+              - S3: courses/dva/study/domain1/s3.md
+              - ストレージ: courses/dva/study/domain1/storage.md
+              - AI サービス: courses/dva/study/domain1/ai.md
+          - 分野2 セキュリティ:
+              - スキルごとの要点: courses/dva/domain2.md
+              - サービス別の学習: courses/dva/study/domain2/index.md
+              - IAM と STS: courses/dva/study/domain2/iam.md
+              - Cognito: courses/dva/study/domain2/cognito.md
+              - KMS と暗号化: courses/dva/study/domain2/kms.md
+              - シークレットと設定: courses/dva/study/domain2/secrets.md
+              - 証明書と WAF: courses/dva/study/domain2/certificates.md
+              - S3: courses/dva/study/domain2/s3.md
+              - AI サービス: courses/dva/study/domain2/ai.md
+              - API Gateway: courses/dva/study/domain2/api-gateway.md
+              - ネットワークと配信: courses/dva/study/domain2/networking.md
+              - データベース: courses/dva/study/domain2/databases.md
+          - 分野3 テストとデプロイ:
+              - スキルごとの要点: courses/dva/domain3.md
+              - サービス別の学習: courses/dva/study/domain3/index.md
+              - CI/CD: courses/dva/study/domain3/cicd.md
+              - IaC と CLI: courses/dva/study/domain3/iac.md
+              - コンテナ: courses/dva/study/domain3/containers.md
+              - Lambda: courses/dva/study/domain3/lambda.md
+              - API Gateway: courses/dva/study/domain3/api-gateway.md
+              - EC2 と Elastic Beanstalk: courses/dva/study/domain3/ec2-beanstalk.md
+              - シークレットと設定: courses/dva/study/domain3/secrets.md
+              - AI サービス: courses/dva/study/domain3/ai.md
+          - 分野4 トラブルシューティング:
+              - スキルごとの要点: courses/dva/domain4.md
+              - サービス別の学習: courses/dva/study/domain4/index.md
+              - オブザーバビリティ: courses/dva/study/domain4/observability.md
+              - Lambda: courses/dva/study/domain4/lambda.md
+              - メッセージング: courses/dva/study/domain4/messaging.md
+              - DynamoDB: courses/dva/study/domain4/dynamodb.md
+              - データベースとキャッシュ: courses/dva/study/domain4/databases.md
+              - ネットワークと配信: courses/dva/study/domain4/networking.md
+              - EC2 と Elastic Beanstalk: courses/dva/study/domain4/ec2-beanstalk.md
+              - コンテナ: courses/dva/study/domain4/containers.md
+              - API Gateway: courses/dva/study/domain4/api-gateway.md
+              - ストリーミングと分析: courses/dva/study/domain4/streaming.md
+              - CI/CD: courses/dva/study/domain4/cicd.md
+              - AI サービス: courses/dva/study/domain4/ai.md
           - スキル対応表: courses/dva/coverage.md
           - 問題集:
               - courses/dva/exercises/index.md

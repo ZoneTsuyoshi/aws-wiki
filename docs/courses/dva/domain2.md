@@ -2,6 +2,8 @@
 
 C03 の配点は **26%** です。認証と認可、暗号化と機密データ、AI サービスのリスク対策の3つを扱います。AI のタスクは C03 で新しく追加されました。
 
+サービスごとに順を追って学ぶときは、[サービス別の学習ページ](study/domain2/index.md)から始めます。
+
 ## タスク 2.1: 認証と認可を実装する {#task-2-1}
 
 [![Cognito のユーザープールと ID プール](../../assets/diagrams/cognito-pools.png)](../../assets/diagrams/cognito-pools.png)
