@@ -153,7 +153,7 @@ DVA-C02 が名指しする Amazon Q Developer は、IDE 向けの部分が Kiro 
 | 2026-05-15 | 新規の Free Tier アカウントと新規サブスクリプションの作成を停止（既存の Pro へのユーザー追加は可） |
 | 2026-11-18 | Amazon Q Developer for GitHub App の新規インストールを停止 |
 | 2027-01-30 | 同 GitHub App のサポート終了 |
-| 2027-04-30 | IDE プラグインと有料サブスクリプションのサポート終了 |
+| 2027-04-30 | IDE プラグインのサポート終了 |
 
 - **影響を受けないもの:** マネジメントコンソール、AWS ドキュメントサイト、AWS Console Mobile App、チャットアプリ（Slack と Microsoft Teams）の Q Developer。
 - **CLI:** Kiro CLI は Q Developer CLI の次期版です。`q` コマンドや `.amazonq` の設定は引き続き動きます。

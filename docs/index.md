@@ -4,8 +4,8 @@ AWS の学習と運用の情報をまとめた個人用 wiki です。
 
 ## 試験別コース {#courses}
 
-- [Developer - Associate（DVA-C03 / C02）](courses/dva/index.md)
-- [すべてのコース](courses/index.md)
+- [すべてのコース](courses/index.md)（全13試験）
+- [Developer - Associate（DVA-C03 / C02）](courses/dva/index.md)（問題集とサービス別の学習ページあり）
 
 ## サービス解説 {#services}
 

@@ -48,6 +48,35 @@ nav:
   - ホーム: index.md
   - コース:
       - courses/index.md
+      - Cloud Practitioner:
+          - courses/clf/index.md
+          - courses/clf/domain1.md
+          - courses/clf/domain2.md
+          - courses/clf/domain3.md
+          - courses/clf/domain4.md
+          - スキル対応表: courses/clf/coverage.md
+      - AI Practitioner:
+          - courses/aif/index.md
+          - courses/aif/domain1.md
+          - courses/aif/domain2.md
+          - courses/aif/domain3.md
+          - courses/aif/domain4.md
+          - courses/aif/domain5.md
+          - スキル対応表: courses/aif/coverage.md
+      - AI Business Strategist:
+          - courses/aib/index.md
+          - courses/aib/domain1.md
+          - courses/aib/domain2.md
+          - courses/aib/domain3.md
+          - courses/aib/domain4.md
+          - スキル対応表: courses/aib/coverage.md
+      - Solutions Architect - Associate:
+          - courses/saa/index.md
+          - courses/saa/domain1.md
+          - courses/saa/domain2.md
+          - courses/saa/domain3.md
+          - courses/saa/domain4.md
+          - スキル対応表: courses/saa/coverage.md
       - Developer - Associate:
           - courses/dva/index.md
           - 分野1 開発:
@@ -128,6 +157,69 @@ nav:
               - IaC と CLI: courses/dva/exercises/iac.md
               - オブザーバビリティ: courses/dva/exercises/observability.md
               - ネットワークと配信: courses/dva/exercises/networking.md
+      - CloudOps Engineer - Associate:
+          - courses/soa/index.md
+          - courses/soa/domain1.md
+          - courses/soa/domain2.md
+          - courses/soa/domain3.md
+          - courses/soa/domain4.md
+          - courses/soa/domain5.md
+          - スキル対応表: courses/soa/coverage.md
+      - Data Engineer - Associate:
+          - courses/dea/index.md
+          - courses/dea/domain1.md
+          - courses/dea/domain2.md
+          - courses/dea/domain3.md
+          - courses/dea/domain4.md
+          - スキル対応表: courses/dea/coverage.md
+      - Machine Learning Engineer - Associate:
+          - courses/mla/index.md
+          - courses/mla/domain1.md
+          - courses/mla/domain2.md
+          - courses/mla/domain3.md
+          - courses/mla/domain4.md
+          - スキル対応表: courses/mla/coverage.md
+      - Solutions Architect - Professional:
+          - courses/sap/index.md
+          - courses/sap/domain1.md
+          - courses/sap/domain2.md
+          - courses/sap/domain3.md
+          - courses/sap/domain4.md
+          - courses/sap/domain5.md
+          - スキル対応表: courses/sap/coverage.md
+      - DevOps Engineer - Professional:
+          - courses/dop/index.md
+          - courses/dop/domain1.md
+          - courses/dop/domain2.md
+          - courses/dop/domain3.md
+          - courses/dop/domain4.md
+          - courses/dop/domain5.md
+          - courses/dop/domain6.md
+          - スキル対応表: courses/dop/coverage.md
+      - Generative AI Developer - Professional:
+          - courses/aip/index.md
+          - courses/aip/domain1.md
+          - courses/aip/domain2.md
+          - courses/aip/domain3.md
+          - courses/aip/domain4.md
+          - courses/aip/domain5.md
+          - スキル対応表: courses/aip/coverage.md
+      - Advanced Networking - Specialty:
+          - courses/ans/index.md
+          - courses/ans/domain1.md
+          - courses/ans/domain2.md
+          - courses/ans/domain3.md
+          - courses/ans/domain4.md
+          - スキル対応表: courses/ans/coverage.md
+      - Security - Specialty:
+          - courses/scs/index.md
+          - courses/scs/domain1.md
+          - courses/scs/domain2.md
+          - courses/scs/domain3.md
+          - courses/scs/domain4.md
+          - courses/scs/domain5.md
+          - courses/scs/domain6.md
+          - スキル対応表: courses/scs/coverage.md
   - サービス:
       - services/index.md
       - アプリケーション開発:
@@ -155,7 +247,29 @@ nav:
           - IaC と CLI: services/iac.md
           - オブザーバビリティ: services/observability.md
           - ネットワークと配信: services/networking.md
-      - AI: services/ai.md
+      - クラウドの基礎とガバナンス:
+          - クラウドの基礎: services/cloud-foundations.md
+          - ガバナンス: services/governance.md
+          - コスト管理: services/cost-management.md
+          - 運用: services/operations.md
+      - 高度なネットワークとセキュリティ:
+          - ネットワーク接続: services/network-connectivity.md
+          - 脅威検出とインシデント対応: services/threat-detection.md
+          - ID とディレクトリ: services/identity-directory.md
+      - データと分析:
+          - データエンジニアリング: services/data-engineering.md
+          - 専用データベース: services/databases-specialized.md
+          - 高度なストレージ: services/storage-advanced.md
+      - 移行と事業継続:
+          - 移行: services/migration.md
+          - レジリエンスと災害対策: services/resilience.md
+      - AI:
+          - AI サービス: services/ai.md
+          - AI と ML の基礎: services/ai-fundamentals.md
+          - SageMaker: services/sagemaker.md
+          - マネージド AI サービス: services/ai-managed-services.md
+          - 生成 AI アプリケーション: services/genai-apps.md
+      - その他のサービス: services/other-services.md
   - 質問と回答: qa/index.md
   - このwikiの作り方:
       - Cloudflare Pages で公開する: setup/cloudflare-pages.md

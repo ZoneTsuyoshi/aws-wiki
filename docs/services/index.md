@@ -43,8 +43,50 @@ AWS サービスの解説です。試験に関係なく参照でき、[試験別
 | [オブザーバビリティ](observability.md) | Amazon CloudWatch、Amazon CloudWatch Logs、AWS X-Ray、AWS CloudTrail |
 | [ネットワークと配信](networking.md) | Amazon VPC、AWS PrivateLink、Amazon Route 53、Elastic Load Balancing、Amazon CloudFront |
 
+## クラウドの基礎とガバナンス {#foundations}
+
+| ページ | 扱うサービス |
+|---|---|
+| [クラウドの基礎](cloud-foundations.md) | Well-Architected、責任共有モデル、グローバルインフラ、Support、Trusted Advisor |
+| [ガバナンス](governance.md) | AWS Organizations、Control Tower、AWS Config、Service Catalog、Resource Access Manager |
+| [コスト管理](cost-management.md) | Cost Explorer、Budgets、Savings Plans、Reserved Instances、Compute Optimizer |
+| [運用](operations.md) | Systems Manager、EC2 の運用、Auto Scaling、Managed Grafana、Managed Service for Prometheus |
+
+## 高度なネットワークとセキュリティ {#advanced-network-security}
+
+| ページ | 扱うサービス |
+|---|---|
+| [ネットワーク接続](network-connectivity.md) | Direct Connect、Site-to-Site VPN、Transit Gateway、Cloud WAN、Global Accelerator、Route 53 Resolver |
+| [脅威検出とインシデント対応](threat-detection.md) | GuardDuty、Security Hub、Inspector、Macie、Detective、Shield、Network Firewall |
+| [ID とディレクトリ](identity-directory.md) | IAM Identity Center、Directory Service、CloudHSM、Verified Permissions、Access Analyzer |
+
+## データと分析 {#data-analytics}
+
+| ページ | 扱うサービス |
+|---|---|
+| [データエンジニアリング](data-engineering.md) | AWS Glue、Amazon EMR、Amazon Redshift、Lake Formation、MSK、MWAA、Quick Sight |
+| [専用データベース](databases-specialized.md) | Neptune、DocumentDB、Keyspaces、MemoryDB、Timestream |
+| [高度なストレージ](storage-advanced.md) | Amazon FSx、インスタンスストア、S3 の応用 |
+
+## 移行と事業継続 {#migration-resilience}
+
+| ページ | 扱うサービス |
+|---|---|
+| [移行](migration.md) | Migration Hub、Transform MGN、DMS、DataSync、Storage Gateway、Snow Family |
+| [レジリエンスと災害対策](resilience.md) | AWS Backup、Elastic Disaster Recovery、Resilience Hub、Application Recovery Controller、Fault Injection Service |
+
 ## AI {#ai}
 
 | ページ | 扱うサービス |
 |---|---|
 | [AI サービス](ai.md) | Amazon Bedrock、Amazon Bedrock AgentCore、Amazon Quick、Kiro、Amazon Q Developer |
+| [AI と ML の基礎](ai-fundamentals.md) | 機械学習の概念、評価指標、生成 AI の概念、責任ある AI、AI 戦略 |
+| [SageMaker](sagemaker.md) | Amazon SageMaker AI |
+| [マネージド AI サービス](ai-managed-services.md) | Comprehend、Lex、Textract、Transcribe、Translate、Polly、Rekognition、Personalize、Kendra |
+| [生成 AI アプリケーション](genai-apps.md) | Bedrock Knowledge Bases、Flows、Prompt Management、Nova、ベクトルストア |
+
+## その他 {#others}
+
+| ページ | 扱うサービス |
+|---|---|
+| [その他のサービス](other-services.md) | AWS Batch、AppSync、SES、Amazon MQ、IoT、WorkSpaces、メディアサービスなど |
