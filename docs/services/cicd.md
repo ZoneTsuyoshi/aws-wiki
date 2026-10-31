@@ -793,6 +793,53 @@ Configuration:
 
 改称後も、CodePipeline のアクション名は `CodeStarSourceConnection` のままです。
 
+ソースアクションの各設定は次のとおりです。
+
+#### ConnectionArn {#connection-arn}
+
+使う接続の ARN です。必須で、認可が終わった接続を指定します。
+
+- **例:** `arn:aws:codeconnections:ap-northeast-1:111122223333:connection/aEXAMPLE-8aad-4d5d-8878-dfcab0bc441f`
+- **誤ると:** 接続が `PENDING` のままだと、ソースのステージを実行できません。
+
+#### FullRepositoryId {#full-repository-id}
+
+監視するリポジトリを「所有者/リポジトリ名」で書きます。必須で、大文字と小文字も正確に書きます。
+
+- **例:** GitHub の組織 `my-org` のリポジトリ `My-App` なら、`my-org/My-App` です。
+- **誤ると:** `my-org/my-app` のように大文字と小文字が違うと、公式が推奨する値から外れます。ソースの取得やトリガーで問題が出たら、まずここを確認します。URL の `https://github.com/my-org/My-App` をそのまま入れるのも誤りです。
+
+#### BranchName {#connection-branch-name}
+
+変更を検知するブランチです。必須です。
+
+- **例:** 本番用のパイプラインは `main`、検証用は `develop` と、ブランチごとにパイプラインを分けられます。
+- **誤ると:** `master` と書いたまま `main` に push しても、パイプラインは起動しません。
+
+#### DetectChanges {#connection-detect-changes}
+
+新しいコミットでパイプラインを自動起動するかを決めます。省略時は `true` です。
+
+| 値 | 動き | 使う場面 |
+|---|---|---|
+| `true` | コミットで自動起動する | 通常の CI/CD |
+| `false` | コミットでは起動しない | 手動やスケジュールで起動する夜間リリース |
+
+- **例:** 毎日 22 時にだけ本番へ出すなら `false` にし、EventBridge のスケジュールから `StartPipelineExecution` を呼びます。
+- **誤ると:** `false` のまま忘れると、push しても動かず、エラーも出ません。
+
+#### OutputArtifactFormat {#connection-output-format}
+
+後続のアクションへ渡す成果物の形式です。省略時は `CODE_ZIP` です。
+
+| 値 | 中身 | 使う場面 |
+|---|---|---|
+| `CODE_ZIP` | ソースの ZIP。Git の履歴は含まない | 履歴が要らないビルドとデプロイ |
+| `CODEBUILD_CLONE_REF` | リポジトリへの参照。CodeBuild が Git でクローンする | `git log` やタグを使うビルド |
+
+- **例:** ビルドで `git describe --tags` を使い、`v1.4.2` のようなバージョンを作るなら `CODEBUILD_CLONE_REF` にします。`CODE_ZIP` には `.git` の情報がないので、このコマンドは失敗します。
+- **誤ると:** `CODEBUILD_CLONE_REF` は後続が CodeBuild のときだけ使えます。CodeBuild のサービスロールにも、接続を使う権限を追加します。
+
 **設定を誤ったときの症状**:
 
 | 症状 | 原因 | 対処 |
@@ -940,9 +987,49 @@ aws codeartifact login --tool pip --domain my-org --repository shared
 
 **例**: ロールを引き受けて `login` を呼ぶなら、`--duration-seconds 0` で、トークンの寿命をセッションの残り時間と同じにできます。
 
+**ドメインの例**: `frontend` と `backend` の 2 つのリポジトリが同じドメイン `my-org` にあり、どちらも `lodash@4.17.21` を取得したとします。リポジトリには 2 つ見えますが、アセットの実体はドメイン内に 1 つだけ保存されます。ドメインを `dev` と `prod` に分けると、この重複排除は効きません。AWS も、本番用のドメインは組織で 1 つにすることを推奨しています。
+
+**暗号化の例**: `aws codeartifact create-domain --domain my-org --encryption-key arn:aws:kms:ap-northeast-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab` のように指定します。ドメイン内のアセットとメタデータは 1 つのキーで暗号化されるので、リポジトリごとにキーを管理する必要はありません。対応するのは対称キーだけで、非対称キーは使えません。
+
+**直接のアップストリームの例**: `--upstreams` に書いた順が優先順位です。
+
+```bash
+aws codeartifact update-repository --domain my-org --repository app \
+  --upstreams repositoryName=internal repositoryName=npm-store
+```
+
+この設定で `app` が `react@19.0.0` を持っていなければ、先に `internal` を探し、なければ `npm-store` を探します。見つかった時点で探索は止まります。直接のアップストリームは 10 個までで、連なった先を含めて探索するのは 25 個までです。
+
+**外部接続の例**: `npm-store` にだけ npmjs への外部接続を付け、他のリポジトリは `npm-store` をアップストリームにします。チームごとのリポジトリに外部接続を付けると、取得の経路が分かれ、同じパッケージを別々に取り込むことになります。
+
+**認証トークンの例**: CodeBuild のビルドが最長 30 分なら、`--duration-seconds 3600` で足ります。900 秒（15 分）では、後半の `npm install` が認証エラーになります。
+
+**権限の例**: トークンの発行には `codeartifact:GetAuthorizationToken` に加えて `sts:GetServiceBearerToken` も必要です。後者が足りないと、`aws codeartifact login` の時点で失敗します。
+
+**上限**: 代表的な既定値は次のとおりです。
+
+| 項目 | 既定値 | 引き上げ |
+|---|---|---|
+| アカウントあたりのドメイン | 10 | 可能 |
+| ドメインあたりのリポジトリ | 1,000 | 可能 |
+| アセットのファイルサイズ | 5 GB | 可能 |
+| パッケージバージョンあたりのアセット | 350 | 不可 |
+| 探索するアップストリーム | 25 | 不可 |
+
 **アップストリームと外部接続の違い**: アップストリームは同じドメインの別リポジトリを見る設定です。外部接続は npmjs や PyPI などの公開リポジトリを見る設定です。取得したパッケージは下流のリポジトリに保持されます。
 
 **パッケージオリジンコントロール**: パッケージごとに、直接の公開とアップストリームからの取り込みを `ALLOW` か `BLOCK` で制御します。社内パッケージと同名の公開パッケージを取り込む、依存関係かく乱を防げます。
+
+既定値は、最初のバージョンの入り方で決まります。パッケージグループの制限がすべて `ALLOW` の場合です。
+
+| 最初のバージョン | Publish | Upstream | 例 |
+|---|---|---|---|
+| 直接公開した | `ALLOW` | `BLOCK` | 社内の `@my-org/utils` |
+| 公開リポジトリから取り込んだ | `BLOCK` | `ALLOW` | npmjs の `lodash` |
+| 2022年5月ごろより前からある | `ALLOW` | `ALLOW` | 古いパッケージ。手動で見直す |
+
+- **例:** `lodash` に社内で修正を加えた `4.17.21-patch.1` を公開したいとします。既定は `Publish: BLOCK` なので、公開は拒否されます。`Publish: ALLOW` に変えて公開し、新しい公開版を取り込まないなら `Upstream: BLOCK` にします。
+- **誤ると:** 社内パッケージを `Upstream: ALLOW` に変えると、npmjs に公開された同名の `99.0.0` が取り込まれて、最新版として選ばれるおそれがあります。
 
 ### Git リポジトリがあっても必要か {#codeartifact-need}
 
