@@ -20,6 +20,8 @@ AWS の費用を把握し、予算を管理し、割引を使って減らすた�
 
 [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
+[提供単位](resource-scope.md#two-axes): グローバル。リージョンを選ばず、VPC の外です。Cost Explorer、CUR、Cost Optimization Hub、Data Exports は `us-east-1` でだけ提供されます。
+
 請求、支払い、費用の分析をまとめたコンソールです。請求書の確認、支払い方法の設定、クレジットの確認ができます。
 
 ### 一括請求 {#consolidated-billing}
@@ -37,6 +39,9 @@ Organizations の管理アカウントが、メンバーアカウントの費用
 
 たとえば、規制上の理由で部門の費用を分けたいときは、その部門のアカウントの共有を止めます。
 
+- **階段料金の例:** S3 の料金は使うほど単価が下がる階段です。アカウント A が 40 TB、B が 20 TB なら、合算の 60 TB で階段を計算します。別々の請求だと、どちらも最初の段にとどまります。
+- **RI の共有の例:** A が買った未使用の RI は、同じファミリーを使う B に自動で適用されます。共有を止めた C には適用されません。
+
 ### 請求アラーム {#billing-alarms}
 
 CloudWatch の請求メトリクス `EstimatedCharges` でアラームを作れます。
@@ -48,6 +53,19 @@ CloudWatch の請求メトリクス `EstimatedCharges` でアラームを作れ�
 | 内容 | 全世界の費用の見積もり | リージョン別の予算には向かない |
 
 実績だけでなく予測でも通知したい、サービスやタグで絞りたい場合は Budgets を使います。
+
+```bash
+aws cloudwatch put-metric-alarm --region us-east-1 \
+  --alarm-name bill-over-500 \
+  --namespace AWS/Billing --metric-name EstimatedCharges \
+  --dimensions Name=Currency,Value=USD \
+  --statistic Maximum --period 21600 --evaluation-periods 1 \
+  --threshold 500 --comparison-operator GreaterThanThreshold \
+  --alarm-actions arn:aws:sns:us-east-1:111122223333:billing
+```
+
+- **例:** 請求額の見積もりが 500 USD を超えるとアラームになります。月初にリセットされる累計の値です。
+- **誤ると:** 東京の SNS トピックを指定しても、メトリクスが `us-east-1` にあるのでアラームを作れません。
 
 ## Cost Explorer {#cost-explorer}
 
@@ -64,6 +82,10 @@ CloudWatch の請求メトリクス `EstimatedCharges` でアラームを作れ�
 | 更新頻度 | 少なくとも 24 時間に 1 回 |
 | データの準備 | 有効化して当月分は約 24 時間、残りは数日 |
 
+- **API の料金の例:** ページ単位で 0.01 USD なので、毎日 100 ページを取得するダッシュボードは 100 × 0.01 × 30 = 月 30 USD です。画面は無料です。
+- **期間の例:** 2026 年 10 月に見られるのは、2025 年 9 月からのデータです（当月と過去 13 か月）。それより前は複数年のデータの設定が要ります。
+- **誤ると:** 当日の費用は最大 24 時間遅れるので、数時間前の急増は見えません。
+
 サービス、アカウント、リージョン、タグなどでフィルターとグループ化ができます。RI と Savings Plans の使用率、カバレッジのレポートもあります。
 
 たとえば「先月から増えた EC2 の費用がどのアカウントのものか」は、サービスで EC2 に絞り、連結アカウントでグループ化します。
@@ -75,6 +97,8 @@ CloudWatch の請求メトリクス `EstimatedCharges` でアラームを作れ�
 ## AWS Budgets {#budgets}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): グローバル。アカウントや組織に対して作り、リージョンを選びません。VPC の外です。
 
 費用や使用量のしきい値を設定して、超えそうなときに通知や処理を行います。監視と通知は無料です。
 
@@ -90,6 +114,13 @@ CloudWatch の請求メトリクス `EstimatedCharges` でアラームを作れ�
 | Savings Plans カバレッジ | カバー率の低下 | 70% を切ったら通知 |
 
 期間は日次、月次、四半期、年次のほか、カスタムの期間（例: 4 月 15 日から 7 月 15 日のプロジェクト）を選べます。
+
+計算の例です。
+
+- **コストの例:** 月 1,000 USD の 80% は 800 USD です。10 日で 500 USD 使うと、ペースから月末の予測は 1,500 USD になり、`FORECASTED` の 80% を超えて通知が来ます。
+- **RI 使用率の例:** 購入した 100 時間のうち使ったのが 76 時間なら 76% です。80% のしきい値を下回ります。
+- **RI カバレッジの例:** 全 1,000 インスタンス時間のうち RI の適用が 650 時間なら 65% です。70% のしきい値を下回ります。
+- **SP 使用率の例:** 確約 7 USD/時に対して 6 USD/時分しか使わないと 6 ÷ 7 ≒ 85.7% です。90% のしきい値を下回ります。
 
 ```bash
 aws budgets create-budget --account-id 111122223333 \
@@ -111,6 +142,10 @@ aws budgets create-budget --account-id 111122223333 \
 
 通知が遅れる前提で、しきい値を低めに設定します。
 
+- **遅れの計算の例:** 暴走で毎時 200 USD 増えると、更新の間隔 8 時間で 1,600 USD 進みます。しきい値が 1,000 USD の予算でも、気づくのは超えた後です。
+- **`ThresholdType` の例:** `PERCENTAGE` で 80 は予算の 80%、`ABSOLUTE_VALUE` で 800 は 800 USD です。
+- **誤ると:** SNS のトピックポリシーで `budgets.amazonaws.com` に `sns:Publish` を許可しないと、通知が届きません。
+
 ### 予算アクション {#budget-actions}
 
 しきい値に達したとき、自動または承認後に処理を実行します。
@@ -127,9 +162,16 @@ Budgets 用のサービスロールが必要です。ないとアクションが
 
 料金は、アクションが有効な予算のうち最初の 2 個が無料で、3 個目から 1 予算につき 1 日 0.10 USD です。
 
+- **料金の計算の例:** アクションが有効な予算が 5 個なら、有料は 3 個で 3 × 0.10 × 30 日 = 月 9 USD です（2026 年 10 月時点の公式の料金。変わることがあります）。
+- **自動と承認の例:** 検証用アカウントは自動で Deny を適用します。本番は承認のあとに適用します。
+- **Auto Scaling の罠:** グループの EC2 をアクションで止めても、Auto Scaling が置き換えて費用は止まりません。グループの希望容量を下げる別の手段と組み合わせます。
+- **SCP の例:** 管理アカウントからメンバーに SCP を適用できますが、別アカウントの EC2 と RDS は対象にできません。
+
 ## Data Exports と Cost and Usage Reports {#data-exports}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): グローバル。設定は `us-east-1` で、配信先の S3 バケットはリージョンにあります。VPC の外です。
 
 Cost and Usage Reports（CUR）は、最も詳しい費用と使用量のデータです。S3 に配信し、Athena や Redshift、QuickSight で分析します。
 
@@ -165,11 +207,17 @@ Athena 向けの設定では Parquet で配信し、セットアップ用のス�
 | グラフでざっと見る | Cost Explorer |
 | 行単位の分析や独自の BI | CUR 2.0 |
 
+- **列の選択の例:** 上の SQL の 3 列だけを配信すると、Athena のスキャン量が減ります。
+- **形式の例:** Athena 向けは Parquet、Redshift 向けは gzip CSV を選びます。
+- **タグの例:** CUR 2.0 ではタグは `resource_tags` の入れ子の列です。従来の CUR の `resource_tags_user_costcenter` という列を前提にしたクエリは、書き換えます。
+
 たとえば、データ転送料の内訳は `UsageType` で見ます。AZ 間の転送は `USE2-DataTransfer-Regional-Bytes` のような値になります。
 
 ## Cost Anomaly Detection {#cost-anomaly-detection}
 
 [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): グローバル。アカウントや組織に対して動き、VPC の外です。
 
 機械学習で通常と異なる費用を検出して通知します。週次や月次の季節性や自然な成長を考慮するので、誤検知を減らせます。
 
@@ -199,11 +247,20 @@ Cost Explorer を有効にすると、自動で設定されます。オプトア
 
 しきい値が高すぎると通知が来ません。低すぎると通知が多くなります。
 
+しきい値には金額（絶対値）と割合があり、AND や OR で組み合わせられます。
+
+- **計算の例:** 想定 100 USD、実績 180 USD の異常は、影響が 80 USD、80% です。「100 USD 以上」なら通知されません。「50% 以上」なら通知されます。
+- **AND の例:** 「50 USD 以上 AND 20% 以上」なら、大きなサービスのわずかな増加と、小さなサービスの少額の増加の両方を除けます。
+- **サマリーの例:** 1 月 14 日 04:30 UTC に検出した異常は、1 月 15 日 00:00 UTC の日次サマリーに入ります。すぐ知りたいなら SNS の個別通知です。
+- **モニターの例:** タグのモニターで `team` の値を指定するなら、10 個までです。
+
 Budgets との違いは、Budgets は自分で決めた額との比較で、異常検出は過去のパターンとの比較であることです。
 
 ## Cost Categories {#cost-categories}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): グローバル。組織の請求データに対する設定で、VPC の外です。
 
 費用を、事業の構造に合わせた独自の分類にまとめる機能です。ルールを定義し、評価はルールの順に行います。
 
@@ -215,6 +272,10 @@ Budgets との違いは、Budgets は自分で決めた額との比較で、異�
 作成や編集から、反映まで最大 24 時間かかります。結果は Cost Explorer、Budgets、Data Exports で使えます。
 
 タグが揃っていなくても、アカウントなどを組み合わせて分類できます。
+
+- **月の始まりの例:** ルールは当月の初日から効きます。10 月 15 日に変えると、10 月 1 日以降の費用が新しいルールで分類されます。
+- **分割の例:** 共有基盤の 900 USD を、Team A（6,000 USD）と Team B（3,000 USD）に分けます。比例なら 600 USD と 300 USD、均等なら 450 USD ずつ、固定 70:30 なら 630 USD と 270 USD です。
+- **誤ると:** ルールの順序を誤ると、先に一致したルールで分類され、後のルールは使われません。
 
 ## コスト配分タグ {#cost-allocation-tags}
 
@@ -242,6 +303,9 @@ flowchart TD
 
 症状の例として、「タグを付けたのに Cost Explorer で選べない」場合は、有効化していないか、反映を待っている状態です。
 
+- **時間の例:** 10 月 1 日にタグを付け、10 月 2 日に有効にすると、有効になった後の費用からタグが付きます。9 月の分を見るには、管理アカウントからバックフィルを依頼します（最大 12 か月）。
+- **誤ると:** `costcenter` と `CostCenter` は別のタグです。大文字と小文字を揃えないと、費用が 2 つに分かれます。
+
 タグ戦略は [ガバナンス](governance.md#tagging-strategy) を参照してください。
 
 ## Pricing Calculator {#pricing-calculator}
@@ -256,6 +320,8 @@ flowchart TD
 | コンソール内 | 自分の割引や購入済みのコミットメントを反映して試算 |
 
 作った後の分析は Cost Explorer で行います。「移行前に費用を見積もる」は Pricing Calculator です。
+
+- **例:** 移行前に `m7g.large` 10 台、EBS 1 TB、データ転送 500 GB を入れて試算します。コンソール内の版なら、自社の Savings Plans を反映します。
 
 ## 購入オプション {#purchase-options}
 
@@ -274,6 +340,8 @@ flowchart TD
 ### Savings Plans {#savings-plans}
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): Compute はリージョンを問わず、EC2 Instance は選んだリージョンに効く請求上の割引です。VPC とは関係しません。
 
 1 時間あたりの利用額（USD/時）を 1 年か 3 年確約して、割引を受けます（Database は 1 年、前払いなしのみ）。公式は RI より Savings Plans を推奨しています。
 
@@ -295,9 +363,21 @@ flowchart TD
 
 使用率が低いと、確約した額を使わない分だけ損をします。Budgets の使用率の予算で監視します。確約額は、Cost Explorer の推奨を基に決めます。
 
+計算の例です。割引率 30% は説明用の値です。
+
+- **カバー範囲の例:** 確約 7 USD/時は、割引 30% なら 7 ÷ 0.7 = オンデマンド換算 10 USD/時の使用をカバーします。
+- **超えた場合:** 使用がオンデマンド換算 12 USD/時なら、7 + 超過の 2 = 9 USD/時です。12 USD/時より安く済みます。
+- **下回った場合:** 使用が 5 USD/時なら、確約の 7 USD/時を払います。オンデマンドの 5 USD/時より高くなります。
+- **損益の分かれ目:** オンデマンド換算 7 USD/時です。このとき確約の 7 USD/時と同額です。
+- **1 年の確約額:** 7 USD/時 × 8,760 時間 = 61,320 USD です。
+- **返品の例:** 確約 120 USD/時は 100 USD/時を超えるので、7 日以内でも返品できません。
+- **種類の例:** Fargate や Lambda も使うなら Compute、m7g を東京で使い続けるなら EC2 Instance です。Database は RDS と DynamoDB を混ぜても効きます。
+
 ### Reserved Instances {#reserved-instances}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): リージョナルはリージョン、ゾーナルは AZ に効く請求上の割引です。VPC とは関係しません。
 
 特定の構成を 1 年か 3 年確約する割引です。物理的なインスタンスではなく、条件の合う利用に自動で適用される請求上の割引です。
 
@@ -322,9 +402,16 @@ flowchart TD
 - 前払い額の 12% が手数料としてかかる。
 - RDS や ElastiCache の RI は販売できない。
 
+- **手数料の例:** 前払い 1,000 USD の RI を販売すると、手数料は 12% の 120 USD で、受け取りは 880 USD です。
+- **スコープの例:** ゾーナル RI を `ap-northeast-1a` で買うと、その AZ の容量も確保されます。`1c` の使用には割引が効きません。リージョナルなら両方に効きます。
+- **サイズの柔軟性の例:** リージョナルの Linux の RI `m5.xlarge` 1 個は、同じファミリーの `m5.large` 2 個に適用できます。
+- **誤ると:** Windows の RI にはサイズの柔軟性がなく、`m5.large` に変えると割引が外れます。
+
 組織では、購入したアカウントで使わない分は他のアカウントに適用されます。割引の共有をオフにしたアカウントには適用されません。
 
 ### スポットインスタンス {#spot}
+
+[提供単位](resource-scope.md#two-axes): AZ。インスタンスはサブネット（VPC の中）で起動します。
 
 EC2 の余剰容量を、最大 90% 引きで使います。AWS が容量を必要とすると中断されます。
 
@@ -338,6 +425,10 @@ EC2 の余剰容量を、最大 90% 引きで使います。AWS が容量を必�
 複数のインスタンスタイプと AZ を指定すると、中断の影響を減らせます。
 
 中断できない処理に使うと、処理が途中で失われます。状態を S3 などの外部に保存して、再実行できる形にします。
+
+- **通知の取得の例:** インスタンスから IMDSv2 のトークンを付けて `http://169.254.169.254/latest/meta-data/spot/instance-action` を確かめ、あれば 2 分以内に作業を S3 に保存します。
+- **分散の例:** `m5.large`、`m6i.large`、`m7i.large` を 3 AZ で指定すると、9 個のプールから選べます。1 種類だけより中断の影響が小さくなります。
+- **割合の例:** 定常 10 台はオンデマンドか確約、ピークの 40 台はスポットにします。
 
 ### 向いているものの選び方 {#purchase-choice}
 
@@ -360,6 +451,8 @@ flowchart TD
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
+[提供単位](resource-scope.md#two-axes): リージョン。推奨はリージョンごとで、VPC の外です。
+
 使用状況を分析して、適正サイズの推奨とアイドルリソースを示すサービスです。使うにはオプトインが必要です。
 
 | 対象 | データの条件 |
@@ -373,9 +466,15 @@ flowchart TD
 
 拡張インフラストラクチャメトリクスは有料の機能で、分析の期間を 93 日に広げます。EC2、Auto Scaling グループ、RDS で使えます。
 
+- **データ不足の例:** 3 日前に起動した EC2 でメトリクスが 20 時間分なら、推奨は出ません。Lambda は 14 日で 49 回の呼び出しでは `Insufficient data` です。
+- **Lambda の例:** メモリが 1,792 MB を超える関数は `Inconclusive` になることがあります。
+- **93 日の例:** 四半期末にだけ負荷が上がるシステムは、14 日の分析ではピークを見逃して小さすぎる推奨になります。拡張メトリクスで 93 日を見ます。
+
 ### Cost Optimization Hub {#cost-optimization-hub}
 
 アカウントとリージョンをまたいで、適正サイズ、アイドルリソースの削除、Savings Plans、RI の推奨を集約します。割引を考慮した推定節約額で優先順位を付けられます。
+
+- **例:** Compute Optimizer のサイズ変更で月 100 USD、Savings Plans で月 300 USD の節約が見込めるとき、両方を実行すると足し算にはなりません。Hub は割引を考慮した額で比べるので、重複を見込んで優先順位を付けられます。
 
 ### 推奨を出すサービスの違い {#recommendation-tools}
 
@@ -388,6 +487,8 @@ flowchart TD
 | S3 Storage Lens | S3 の使用状況と傾向 |
 
 ## S3 のストレージ費用 {#s3-cost}
+
+[提供単位](resource-scope.md#two-axes): リージョン。One Zone-IA と Express One Zone は AZ に置きます。VPC の外です。
 
 アクセスの頻度で選びます。低いクラスほど保存料は安く、取り出し料がかかります。
 
@@ -408,6 +509,13 @@ flowchart TD
 - 小さいオブジェクトは IA クラスで割高になる。128 KB 未満は既定でライフサイクルの移行対象外。
 - Intelligent-Tiering では 128 KB 未満の小さなオブジェクトは自動階層化されない。
 - アクセスが読めないなら Intelligent-Tiering を選ぶ。30 日アクセスがないと IA 層、90 日で Archive Instant Access 層に移る。
+
+計算の例です。
+
+- **最低保存期間の例:** Standard-IA を 10 日で削除すると、残り 20 日分も課金されます。Deep Archive を 30 日で削除すると、残り 150 日分です。
+- **最低課金サイズの例:** 10 KB のオブジェクト 1,000 個を Standard-IA に置くと、実際は 10 MB ですが、128 KB × 1,000 = 128 MB 分の課金です。
+- **Intelligent-Tiering の例:** 30 日読まないオブジェクトは低頻度の層へ、90 日読まないと Archive Instant Access 層へ移ります。読むと高頻度の層へ戻ります。
+- **Requester Pays の例:** 公開データセットを 1 TB 取得する利用者の転送料は、利用者が払います。
 
 バケットの所有者ではなく、利用者に取得費用を払わせたいときは Requester Pays を使います。
 
@@ -437,6 +545,11 @@ flowchart TD
 
 たとえば「プライベートサブネットから同じリージョンの S3 に大量のデータを転送して、NAT の費用が高い」場合は、S3 のゲートウェイエンドポイントを追加すれば解決します。
 
+- **無料枠の例:** 月のインターネットへの送信が 150 GB なら、100 GB を引いた 50 GB が課金されます。
+- **パブリック IPv4 の例:** 0.005 USD/時 × 730 時間 = 1 個で月 3.65 USD、10 個で月 36.5 USD です（2026 年 10 月時点の公式の料金。変わることがあります）。
+- **AZ 間の例:** 1 TB の AZ 間の通信は、送信側と受信側の両方で 1 TB ずつ課金されます。
+- **NAT の例:** 月 10 TB を NAT で S3 へ送ると、10 TB 分の処理料がかかります。ゲートウェイエンドポイントなら処理料は 0 です。
+
 AZ 間の通信が多いアプリは、同じ AZ の中で処理を完結させると減らせます。ただし可用性とのトレードオフです。
 
 ## AI サービスの料金の構造 {#ai-pricing}
@@ -446,6 +559,8 @@ AZ 間の通信が多いアプリは、同じ AZ の中で処理を完結させ�
 AI サービスの課金の単位はさまざまです。金額は変わりやすいので、単位を覚えます。
 
 ### Amazon Bedrock {#bedrock-pricing}
+
+[提供単位](resource-scope.md#two-axes): リージョン。モデルの提供と単価はリージョンで異なり、VPC の外です。VPC からは PrivateLink で呼べます。
 
 テキストモデルは主に入力と出力のトークン数で課金されます。単価はモデルとプロバイダーで異なります。出力の単価は入力より高いのが一般的で、長い応答ほど費用が増えます。
 
@@ -468,11 +583,21 @@ AI サービスの課金の単位はさまざまです。金額は変わりや�
 | プロンプトキャッシュ | 繰り返す部分の読み取りが安くなる（TTL は多くのモデルで 5 分、失効すると再度書き込み） |
 | バッチ、Flex | リアルタイムでない処理が安くなる |
 
+トークンの計算の例です。
+
+- **日量の例:** 1 リクエストが入力 2,000、出力 500 トークンで 1 日 10,000 回なら、入力 2,000 万、出力 500 万トークンです。
+- **`maxTokens` の例:** 出力を 500 から 250 に抑えると、出力は 1 日 250 万トークンに半減します。切り詰められた応答は `stopReason` が `max_tokens` です。
+- **バッチの例:** 対象のモデルで 50% 引きなので、夜間の 2,000 万トークンの要約は、オンデマンドの半額です。
+- **キャッシュの例:** 共通のシステムプロンプト 1,500 トークンを、5 分以内に繰り返すならキャッシュが効きます。1 時間に 1 回の呼び出しなら毎回失効し、書き込みの費用だけかかります。
+- **Reserved の例:** 毎分 100 リクエストで入力 2,000 トークンなら 200,000 TPM で、Reserved の入力の最小 100,000 TPM に届きます。出力にも最小 10,000 TPM があります。
+
 | 付加機能 | 課金の単位 |
 | --- | --- |
 | Guardrails | テキスト単位（1 単位は最大 1,000 文字）。正規表現と単語フィルターは無料 |
 | カスタマイズ | トレーニング（モデルで異なる）、月額のストレージ、推論 |
 | Knowledge Bases | 種類で異なる。ベクトルストアなどの費用にも注意 |
+
+- **Guardrails の例:** 1 単位は最大 1,000 文字です。1,000 文字は 1 単位、1,001 文字は 2 単位、2,500 文字は 3 単位です。
 
 トークンについては [AI の基礎](ai-fundamentals.md)、実装は [AI](ai.md) を参照してください。
 
@@ -489,6 +614,9 @@ AI サービスの課金の単位はさまざまです。金額は変わりや�
 | Amazon Q Business | ユーザーごとの月額（Lite、Pro）とインデックスの時間課金 |
 
 SageMaker のエンドポイントは、リクエストがなくても稼働中は課金されます。使わないときは削除するか、サーバーレスを検討します。
+
+- **SageMaker の例:** 1 インスタンスのエンドポイントを放置すると、730 時間分の課金です。1 日 8 時間だけ使うなら、残りの 16 時間は削除すれば約 3 分の 1 になります。
+- **Comprehend の例:** 50 文字は最小の 3 単位（300 文字分）です。1,050 文字は 100 文字単位で切り上げて 11 単位です。
 
 ## 選び方の比較 {#choosing}
 

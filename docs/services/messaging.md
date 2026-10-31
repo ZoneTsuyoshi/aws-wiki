@@ -18,6 +18,9 @@
 
 密結合のサインは「A の障害で B も止まる」「消費者を追加するたびに発行者のコードを変える」「B のピークに合わせて A も増やす」など。
 
+- **例:** 注文 API に毎秒 1,000 件の注文が 60 秒続き、在庫処理は毎秒 200 件しかこなせないとする。直接呼ぶと、差の毎秒 800 件が失敗かタイムアウトになる。
+- **例（続き）:** SQS を挟むと、60 秒で (1,000 − 200) × 60 = 48,000 件がキューにたまる。注文が止まった後、48,000 ÷ 200 = 240 秒で捌き切れる。注文 API は受け付けだけ返せばよい。
+
 | 解決したい問題 | 使うサービス |
 | --- | --- |
 | 処理を後回しにして負荷を平準化 | SQS |
@@ -51,11 +54,16 @@ sequenceDiagram
 
 API Gateway の統合タイムアウト（REST API の既定は 29 秒）を超えそうな処理は、この形にする。呼び出し方の違いは [Lambda](lambda.md) を参照する。
 
+- **例:** 帳票の作成に 180 秒かかる処理を同期で呼ぶと、29 秒の時点でクライアントに 504 が返る。関数は動き続けるが、結果は呼び出し元に届かない。
+- **例（非同期）:** `POST /reports` は `SendMessage` して `202` と受付 ID をすぐ返す。クライアントは `GET /reports/ID` で状態を確認し、180 秒後に完了を受け取る。
+
 ## SQS {#sqs}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
 
 メッセージをためるキュー。消費者が **取りに行く** プル型で、1つのメッセージは基本的に1つの消費者が処理する。
+
+提供単位はリージョンで、AZ は選ばない。VPC の外のサービスで、VPC 内からはインターフェイスエンドポイントか NAT を経由して呼ぶ（[リソースの提供単位](resource-scope.md#scope-regional-outside)）。
 
 ```python
 import boto3
@@ -87,6 +95,10 @@ for m in res.get("Messages", []):
 | 名前 | 自由 | `.fifo` で終わる |
 | 向いている場面 | スループット優先 | 順序や重複防止が必須 |
 
+- **例（標準）:** 画像のサムネイル作成を毎秒 5,000 件流す。順番は関係なく、2 回作っても上書きで済む。FIFO の通常モードはバッチでも 3,000 件/秒なので足りない。
+- **例（FIFO）:** 口座の「入金 → 出金」の順が入れ替わると残高不足で誤って失敗する。`MessageGroupId` に口座 ID を入れ、口座ごとに順序を守る。
+- **誤ると:** 標準キューを後から FIFO に変えることはできない。新しい FIFO キューを作って切り替える。名前に `.fifo` がないと FIFO キューとして作成できない。
+
 FIFO の属性は次の2つを押さえる。
 
 | 属性 | 役割 |
@@ -107,6 +119,8 @@ sqs.send_message(
 
 標準キューでも `MessageGroupId` を指定すると **フェアキュー** になり、特定のテナントの大量メッセージが他のテナントの遅延を招く問題を和らげられる。
 
+- **例:** テナント A が 10,000 件を一度に送り、テナント B が 10 件だけ送ったとする。グループ ID なしでは B の 10 件が A の滞留の後ろで待つ。テナント ID をグループ ID に入れると、SQS は B を優先して返し、B の待ち時間は短いまま保たれる。A の処理速度に上限はかからず、消費者に余裕があれば A も受信できる。
+
 ### FIFO の設定の詳細 {#fifo-settings}
 
 #### MessageGroupId
@@ -116,6 +130,9 @@ sqs.send_message(
 同じグループのメッセージは1つずつしか処理されない。たとえば全メッセージのグループ ID を `"orders"` に固定すると、消費者を 10 台に増やしても同時に処理されるのは 1 件だけになる。顧客 ID や注文 ID のように種類の多い値を使う。
 
 処理中のメッセージが削除されるか可視性タイムアウトが切れるまで、そのグループの次のメッセージは渡されない。1件の処理が失敗し続けると、そのグループ全体が止まる。
+
+- **例:** 1 件の処理に 30 秒かかるワーカーが 10 台ある。グループ ID を `"orders"` に固定すると 1 件ずつなので毎分 2 件。顧客 ID に分けると 10 件並列になり、毎分 20 件まで出る。
+- **誤ると:** 壊れたメッセージが 1 件あると、そのグループの後続が止まる。可視性タイムアウト 60 秒、`maxReceiveCount` 5 なら、DLQ に移るまで約 5 × 60 = 300 秒そのグループは進まない。他のグループは止まらない。
 
 #### MessageDeduplicationId と ContentBasedDeduplication
 
@@ -132,6 +149,9 @@ sqs.send_message(
 
 逆に、送信成功の応答を失った後、5 分を過ぎてから同じ ID で再送すると、重複として検出できない。
 
+- **例:** `order-1` を 10:00:00 に送り、応答を失ったので 10:02:00 に同じ ID で再送する。SQS は再送を受け付けるが配信しないので、消費者には 1 通だけ届く。再送が 10:06:00 なら 5 分を過ぎているので 2 通届く。
+- **誤ると:** 再送のたびに UUID を作り直すと、毎回別の ID になり重複を防げない。ID は注文番号のように業務上の値から作る。
+
 #### DeduplicationScope と FifoThroughputLimit
 
 | 属性 | 値 | 意味 |
@@ -145,8 +165,20 @@ sqs.send_message(
 
 高スループットモードの上限はリージョンで異なる。たとえばバージニア北部では、バッチなしで 70,000 件/秒、バッチありで 700,000 件/秒。パーティションあたりは 300 件/秒（バッチで 3,000 件/秒）なので、グループ ID の種類が少ないと出せない。
 
+東京リージョンの上限は、バッチなしで 9,000 件/秒、バッチありで 90,000 件/秒。
+
+```bash
+aws sqs create-queue --queue-name orders.fifo --attributes \
+  FifoQueue=true,DeduplicationScope=messageGroup,FifoThroughputLimit=perMessageGroupId
+```
+
+- **例:** 東京で毎秒 30,000 件を 10 件ずつのバッチで送る。パーティションあたり 3,000 件/秒なので、30,000 ÷ 3,000 = 10 パーティション分が必要になる。パーティションは SQS が自動で増やすので、利用者はグループ ID を十分に分散させるだけでよい。
+- **誤ると:** `perQueue` のままだとバッチでも 3,000 件/秒で頭打ちになる。設定が正しくても、グループ ID が 1 種類なら同じパーティションに集まり、3,000 件/秒を超えられない。
+
 !!! note "ReceiveRequestAttemptId"
     FIFO で `ReceiveMessage` の応答がネットワーク障害で失われたとき、同じ `ReceiveRequestAttemptId` で再試行すると、可視性タイムアウトが切れる前でも同じメッセージの組を受け取り直せる。
+
+    **例:** `ReceiveRequestAttemptId="poll-20261031-0001"` で受信し、応答がタイムアウトした。同じ値で呼び直すと、同じメッセージの組が返る。別の値で呼ぶと、その組は可視性タイムアウトが切れるまで受け取れない。
 
 ### 主な設定と上限 {#sqs-limits}
 
@@ -166,6 +198,10 @@ sqs.send_message(
 
 属性を変えると反映までに最大 60 秒かかる。`MessageRetentionPeriod` だけは最大 15 分かかる。
 
+- **例（`VisibilityTimeout`）:** 属性を 360 に変えた直後は、最大 60 秒の間、古い値の 30 秒で動くことがある。切り替え直後の重複に備え、処理を冪等にしておく。
+- **例（`MaxNumberOfMessages`）:** 省略すると 1 回で 1 件。滞留が 500 件あるときに 1 件ずつ受信すると 500 回、10 件ずつなら最少 50 回で済む。
+- **例（メッセージ属性）:** `tenant`、`source`、`schemaVersion` のような判定用の短い値を入れる。10 個を超えるなら本文の JSON に入れる。
+
 ```bash
 aws sqs set-queue-attributes \
   --queue-url "$QUEUE_URL" \
@@ -180,6 +216,9 @@ aws sqs set-queue-attributes \
 `MessageRetentionPeriod` を過ぎたメッセージは、受信されていなくても自動で削除される。
 
 週末に消費者を止めるシステムで既定の 4 日のままだと、連休中の障害で失う可能性がある。復旧にかかる最長の時間より長くする。
+
+- **例:** `MessageRetentionPeriod=604800` で 7 日にする。金曜 18 時に止めて 6 日後に再開するシステムで 4 日のままだと、金曜夜に入ったメッセージは火曜の夜に消える。7 日なら再開時に全部残っている。
+- **誤ると:** 消費者が動いていてもエラーは出ないまま、古いメッセージから消える。`ApproximateAgeOfOldestMessage` が保持期間に近づいたらアラームを出す。
 
 短くする変更は **既存のメッセージにも効く**。14 日から 1 日に変えると、1 日より古いメッセージは期限切れとして消えることがある。
 
@@ -197,6 +236,10 @@ aws sqs set-queue-attributes \
 
 受信側も同じライブラリで読む。普通のクライアントで受けると、本体ではなく参照が見える。
 
+- **例（`MaximumMessageSize`）:** `MaximumMessageSize=65536` にすると 70,000 バイトの本文は送信エラーになる。大きなメッセージを誤って送るバグを、送信の時点で止められる。
+- **例（Extended Client）:** 20 MB の PDF を送るなら、本体が S3 に置かれ、キューには S3 の参照だけが入る。受信側が普通の `boto3` クライアントだと、`Body` は PDF ではなく参照の JSON になる。
+- **誤ると:** ライブラリの実行ロールに S3 の権限がないと、キューの権限があっても送受信に失敗する。
+
 ### 処理中メッセージの上限 {#in-flight}
 
 処理中（受信済みで未削除）のメッセージには上限がある。キューにためられるメッセージ数には上限がない。
@@ -209,6 +252,9 @@ aws sqs set-queue-attributes \
 
 症状は「キューにメッセージがあるのに受信できない」。処理後の `DeleteMessage` を忘れていないか確認する。対処は早めの削除、キューの追加、クォータの引き上げ申請。
 
+- **例:** 毎秒 3 件を受信するのに削除を忘れ、可視性タイムアウトが 12 時間だとする。処理中は 1 時間で 3 × 3,600 = 10,800 件増え、120,000 ÷ 3 = 40,000 秒（約 11 時間）で上限に達する。
+- **例（正常時の見積もり）:** 処理中の件数は、受信の速さ × 処理時間で見積もる。毎秒 500 件を平均 20 秒で処理するなら 500 × 20 = 10,000 件で、上限まで余裕がある。
+
 ### 暗号化 {#sqs-encryption}
 
 | 方式 | 属性 | 鍵 |
@@ -218,11 +264,29 @@ aws sqs set-queue-attributes \
 
 1つのキューで使えるのはどちらか一方だけ。
 
+```bash
+# SQS 管理の鍵
+aws sqs set-queue-attributes --queue-url "$QUEUE_URL" \
+  --attributes SqsManagedSseEnabled=true
+
+# KMS の鍵。データキーを 1 時間再利用する
+aws sqs set-queue-attributes --queue-url "$QUEUE_URL" \
+  --attributes KmsMasterKeyId=alias/orders-key,KmsDataKeyReusePeriodSeconds=3600
+```
+
+- **例（選び方）:** 暗号化だけが要件なら SSE-SQS で足りる。鍵の利用を CloudTrail で追いたい、キーポリシーで使える人を絞りたいなら SSE-KMS にする。
+
 - 暗号化されるのは **本文のみ**。キュー名、メッセージ ID、タイムスタンプ、属性は暗号化されない。機密情報を属性に入れない。
 - 有効にした後に送られたメッセージだけが暗号化される。滞留中のメッセージは対象外。
 - 暗号化キューへのリクエストは HTTPS と署名バージョン 4 が必須で、匿名リクエストは拒否される。
 
 `KmsDataKeyReusePeriodSeconds` はデータキーを再利用する時間で、60〜86,400 秒（既定 300 秒）。短いほど安全だが KMS の呼び出しと料金が増える。KMS のスロットリングが出るなら長くする。
+
+KMS の呼び出し回数は `R = (B ÷ D) × (2P + C)` で見積もる。`B` は期間（秒）、`D` は再利用の秒数、`P` は送信するプリンシパルの数、`C` は受信するプリンシパルの数。
+
+- **例:** 1 月（2,678,400 秒）に送信側 1、受信側 1 なら、`D=300` で 8,928 × 3 = 26,784 回。`D=3600` にすると 744 × 3 = 2,232 回で、約 12 分の 1 になる。
+- **例（送信側が多い）:** `D=300` で送信側 5、受信側 1 なら 8,928 × 11 = 98,208 回。プリンシパルごとに別のデータキーを使うので増える。
+- **誤ると:** KMS の権限がないと、送受信が `KmsAccessDenied` で失敗する。呼び出しが多いと `KmsThrottled` が出る。
 
 | 操作する側 | 必要な KMS の権限 |
 | --- | --- |
@@ -231,6 +295,8 @@ aws sqs set-queue-attributes \
 | AWS サービス（SNS、EventBridge など） | キーポリシーで `kms:GenerateDataKey`、`kms:Decrypt` を許可 |
 
 AWS マネージドキー（`alias/aws/sqs`）のキューは、別アカウントの Lambda を呼べない。サービスのプリンシパルを許可する必要があるなら、キーポリシーを編集できるカスタマーマネージドキーを使う。鍵の基本は [KMS](kms.md) を参照する。
+
+- **例:** SNS から `alias/aws/sqs` のキューへ配信すると、キーポリシーを編集できないので配信に失敗する。`Publish` は成功するため発行側では気づけない。カスタマーマネージドキーにして、`sns.amazonaws.com` に `kms:GenerateDataKey` と `kms:Decrypt` を許可する。
 
 ### 可視性タイムアウト {#visibility-timeout}
 
@@ -272,6 +338,8 @@ SQS は少なくとも1回の配信なので、タイムアウトが十分でも
 | `ReceiveMessage` の `VisibilityTimeout` | その受信で返るメッセージ |
 | `ChangeMessageVisibility` | 受信済みの1通 |
 
+- **例:** キューの属性が 60 秒で、`ReceiveMessage` に `VisibilityTimeout=120` を渡すと、その受信は 120 秒隠れる。受信の 30 秒後に `ChangeMessageVisibility` で 300 を指定すると、受信から 330 秒後まで隠れる。
+
 #### ChangeMessageVisibility の動き
 
 ```python
@@ -288,6 +356,10 @@ sqs.change_message_visibility(
 - 変更はその受信にだけ効く。削除せずに次に受信されたときは、元の値に戻る。
 
 12 時間を超える処理は、1つのメッセージで扱わない。[Step Functions](step-functions.md) を使うか、処理を分割する。
+
+- **例（ハートビート）:** キューの属性を 60 秒にして、30 秒ごとに 60 秒へ延長する。10 分かかる処理なら 20 回呼ぶ。ワーカーが落ちると延長が止まり、最大 60 秒で別のワーカーに渡る。
+- **例（上限）:** 受信から 11 時間 50 分が過ぎていれば、残りは 600 秒。`VisibilityTimeout=900` はエラーで、`600` なら通る。
+- **例（返却）:** 依存先が落ちていて処理できないなら `VisibilityTimeout=0` を指定する。すぐに次のワーカーが受信できる。ただし受信回数は増えるので、`maxReceiveCount` に近づく。
 
 #### Lambda の 6 倍の根拠
 
@@ -318,6 +390,30 @@ sqs.change_message_visibility(
 - 暗号化キューなら実行ロールに `kms:Decrypt` が要る。`AWSLambdaSQSQueueExecutionRole` には含まれない。
 - `MaximumConcurrency` とプロビジョンドモードは同時に使えない。
 
+#### 値を入れた例 {#sqs-lambda-examples}
+
+```bash
+aws lambda create-event-source-mapping \
+  --function-name notify \
+  --event-source-arn arn:aws:sqs:ap-northeast-1:111122223333:orders \
+  --batch-size 100 \
+  --maximum-batching-window-in-seconds 30 \
+  --scaling-config MaximumConcurrency=20 \
+  --function-response-types ReportBatchItemFailures
+```
+
+- **例（`BatchSize`）:** 上の設定では、100 件そろうか、30 秒たつか、合計が 6 MB に達すると関数を呼ぶ。1 件 0.5 秒なら 100 件で 50 秒かかるので、関数のタイムアウトは 60 秒以上にする。
+- **例（6 MB）:** 1 件 200 KB のメッセージなら 6,000 KB ÷ 200 KB = 30 件が上限の目安で、`BatchSize=100` でも 30 件未満で届く。メタデータも合計に含まれるので、実際はさらに少ない。
+- **例（可視性タイムアウト）:** 関数のタイムアウトが 60 秒、バッチウィンドウが 30 秒なら 60 × 6 + 30 = 390 秒以上にする。
+- **誤ると（`BatchSize`）:** 10 より大きくしてバッチウィンドウが 0 のままだと、マッピングの作成や更新がエラーになる。
+- **例（スケール）:** 標準キューでは同時 5 呼び出しから始まり、1 分ごとに最大 300 増え、1,250 で頭打ちになる。1 分後に 305、4 分後に 1,205、5 分後に 1,250 に届く。アカウントの同時実行クォータが既定の 1,000 なら、そこで止まる。
+- **例（`MaximumConcurrency`）:** DB の接続を守るため 20 にすると、同時実行は 20 までで、残りはキューで待つ。`BatchSize=10` なら同時に処理されるのは最大 20 × 10 = 200 件。
+- **誤ると（`MaximumConcurrency`）:** 予約済み同時実行が 10 の関数に 20 を設定すると、関数がスロットリングされ、受信回数が増えて DLQ に移ることがある。予約は全マッピングの合計以上にする。下限は 2 なので 1 は指定できない。
+- **例（FIFO）:** グループ ID が 6 種類で `MaximumConcurrency` が 10 なら、同時実行は少ない方の 6 になる。
+- **例（プロビジョンドモード）:** ポーラーの最小（2〜200）と最大（2〜2,000）を指定する。1 ポーラーは最大 10 同時呼び出し、1 MB/秒なので、最大 20 ポーラーなら 200 同時呼び出し、20 MB/秒まで。1,250 を超える同時実行や、急な増加に備えるときに使う。追加料金がかかる。
+- **例（`FunctionResponseTypes`）:** 10 件中 1 件だけ失敗したとき、関数が `{"batchItemFailures":[{"itemIdentifier":"<messageId>"}]}` を返すと、その 1 件だけ戻る。設定がないと、関数がエラーを返したとき 10 件すべてが戻り、成功済みの 9 件も再処理される。
+- **例（`FilterCriteria`）:** `{"Filters":[{"Pattern":"{\"body\":{\"status\":[\"paid\"]}}"}]}` は本文の `status` が `paid` のものだけ関数に渡す。一致しないメッセージは **キューから自動で削除される**。後で別の処理が読む予定なら、同じキューでフィルターしない。
+
 ### ショートポーリングとロングポーリング {#long-polling}
 
 | | ショート | ロング |
@@ -336,6 +432,10 @@ SDK のクライアントで読み取りタイムアウトを `WaitTimeSeconds` 
 ショートポーリングでは一部のサーバーしか見ないので、メッセージがあっても空の応答（false empty）が返ることがある。「メッセージがあるのに受信できない」「空の受信が多く料金が高い」は、ロングポーリングで解決する。
 
 `MaxNumberOfMessages` の既定は 1。10 にすると1回の受信で最大 10 件取れるが、10 件そろうまで待つわけではなく、少なく返ることもある。
+
+- **例（料金）:** 消費者 1 台がメッセージのないキューを毎秒ポーリングすると、1 日に 86,400 リクエストになる。`WaitTimeSeconds=20` なら 86,400 ÷ 20 = 4,320 リクエストで、20 分の 1 に減る。
+- **例（`MaxNumberOfMessages`）:** `MaxNumberOfMessages=10`、`WaitTimeSeconds=20` で 3 件しかないと、20 秒待たずに 3 件を返すことがある。
+- **誤ると（読み取りタイムアウト）:** SDK の読み取りタイムアウトが 10 秒で `WaitTimeSeconds=20` だと、メッセージがない間はタイムアウトエラーを繰り返す。
 
 ### デッドレターキュー {#sqs-dlq}
 
@@ -378,6 +478,9 @@ sqs.set_queue_attributes(
 
 標準キューで `maxReceiveCount` が 3 より大きいとき、削除されないまま 3 回以上受信されたメッセージはキューの後ろに回される。このとき `ApproximateAgeOfOldestMessage` は、次のメッセージの経過時間を示す。
 
+- **例:** 可視性タイムアウト 60 秒、`maxReceiveCount=5` なら、毒メッセージは 5 回受信された後、約 300 秒で DLQ に移る。`maxReceiveCount=1000` なら単純計算で 60,000 秒（約 16.7 時間）居座る。
+- **例（正常なのに移る）:** 処理に 90 秒かかるのに可視性タイムアウトが 30 秒だと、処理中に再受信が続く。`maxReceiveCount=3` なら、処理は成功しているはずのメッセージまで DLQ に移る。
+
 #### DLQ の保持期間
 
 標準キューでは、DLQ に移っても期限は最初の送信時刻のまま。
@@ -389,6 +492,8 @@ FIFO キュー: 時刻がリセットされ、DLQ に 4 日残る
 ```
 
 元のキューの保持期間が 14 日で、DLQ も 14 日だと、13 日目に移ったメッセージは DLQ に 1 日しか残らない。DLQ の保持期間は常に元のキューより長くする。
+
+- **例:** 元のキューが 4 日なら、DLQ は最大の 14 日にする。4 日目に移ったメッセージでも DLQ に 10 日残り、調査の時間を取れる。
 
 #### リドライブ許可ポリシー {#redrive-allow-policy}
 
@@ -409,6 +514,9 @@ DLQ 側に `RedriveAllowPolicy` を設定し、どのキューが自分を DLQ �
 
 `RedrivePolicy` は元のキューに、`RedriveAllowPolicy` は DLQ に設定する。
 
+- **例:** 上の設定の DLQ は `orders` だけが使える。`payments` キューの `RedrivePolicy` にこの DLQ を指定しても使えない。別の失敗が混ざらないので、原因の調査が楽になる。
+- **例（`denyAll`）:** 通常の業務キューに `denyAll` を設定すると、誤って DLQ に指定されるのを防げる。
+
 #### DLQ リドライブの動き
 
 既定では元のキューに戻すが、同じ種類の別のキューも指定できる。
@@ -418,6 +526,18 @@ DLQ 側に `RedriveAllowPolicy` を設定し、どのキューが自分を DLQ �
 - FIFO から FIFO の DLQ に移るとき、重複排除 ID は元のメッセージ ID に置き換わる。
 
 DLQ のアラームは `ApproximateNumberOfMessagesVisible` に設定する。`NumberOfMessagesSent` は失敗で移動したメッセージを数えないので使えない。
+
+`StartMessageMoveTask` の `MaxNumberOfMessagesPerSecond` で戻す速さを決められる。上限は 500 件/秒で、省略すると SQS が滞留量に合わせて調整する。
+
+```bash
+aws sqs start-message-move-task \
+  --source-arn arn:aws:sqs:ap-northeast-1:111122223333:orders-dlq \
+  --destination-arn arn:aws:sqs:ap-northeast-1:111122223333:orders \
+  --max-number-of-messages-per-second 10
+```
+
+- **例:** DLQ に 3,600 件あるとき、毎秒 10 件なら 3,600 ÷ 10 = 360 秒で戻し終わる。下流が毎秒 50 件しか捌けないなら、新着の分を引いた余力の範囲に抑える。
+- **誤ると:** 原因を直さずに戻すと、また失敗して `maxReceiveCount` の後に DLQ へ戻る。
 
 ### 遅延キューとメッセージタイマー {#delay}
 
@@ -438,6 +558,11 @@ sqs.send_message(QueueUrl=url, MessageBody=body, DelaySeconds=45)
 - FIFO で送信時に `DelaySeconds` を指定することはできない。
 - 遅延中のメッセージは受信されないので、`ApproximateNumberOfMessagesDelayed` に数えられる。
 - 900 秒（15 分）を超える値はエラーになる。
+
+- **例（優先）:** キューの `DelaySeconds` が 300 の標準キューに、送信時の `DelaySeconds=45` で送ると、45 秒後に受信できる。
+- **例（遅延と可視性）:** キューの遅延が 300 秒、可視性タイムアウトが 60 秒なら、送信の 300 秒後に受信でき、受信後 60 秒は隠れる。送信からの合計で 360 秒の間、他の消費者には見えない。
+- **例（順序待ち）:** 決済の完了イベントの到着を待ってから在庫を確認するなら、在庫確認のメッセージに 45 秒のタイマーを付ける。45 秒では足りない可能性があるなら、タイマーではなく Step Functions で待つ。
+- **誤ると:** FIFO キューに送信時の `DelaySeconds` を付けると、エラーになる。キューの属性で設定する。
 
 ### バッチ処理 {#batching}
 
@@ -461,11 +586,17 @@ for failed in res.get("Failed", []):
 - FIFO でパーティションを有効に使うには、`SendMessageBatch` で同じグループ ID をまとめる。
 - コンソールからバッチ操作はできない。
 
+- **例（リクエスト数）:** 100 万件を 1 件ずつ送ると 1,000,000 リクエスト、10 件のバッチなら 100,000 リクエストで済む。
+- **例（一部の失敗）:** 10 件のうち 8 件が `Successful`、2 件が `Failed` に入って HTTP は 200 で返る。例外にならないので、`Failed` の 2 件だけを再送するコードを書く。
+- **誤ると:** 同じ `Id` を 2 回使うと `BatchEntryIdsNotDistinct`、合計が 1 MiB を超えると `BatchRequestTooLong` でリクエスト全体が失敗する。
+
 ## SNS {#sns}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 トピックに発行すると、購読者全員に **プッシュ** するサービス。1対多の配信に使う。
+
+提供単位はリージョンで、AZ は選ばない。VPC の外のサービスで、VPC 内からはインターフェイスエンドポイントか NAT を経由して呼ぶ（[リソースの提供単位](resource-scope.md#scope-regional-outside)）。
 
 ```python
 import boto3
@@ -503,6 +634,11 @@ sns.publish(
 
 HTTP/S の購読が保留のままなら、エンドポイントが確認の要求を処理していない。`SubscribeURL` に GET する処理を実装する。
 
+- **例（`email`）:** 注文確定の通知を 600 件同時に発行すると、購読 1 つあたり 10 件/秒なので配信に 60 秒以上かかる。この上限は引き上げられないので、大量のメールには SES を使う。
+- **例（`firehose`）:** 同じトピックに、同じ所有者で Firehose の購読を 6 つ作ることはできない。上限は 5 個。
+- **例（`ReturnSubscriptionArn`）:** `aws sns subscribe --topic-arn ... --protocol https --notification-endpoint https://example.com/hook --return-subscription-arn` なら、未確認でも ARN が返る。
+- **誤ると:** IaC でメール購読を作っても、メールのリンクを押すまで `pending confirmation` のままで、通知は届かない。
+
 ### メッセージのサイズと属性 {#sns-message-attributes}
 
 トピックの `MaximumMessageSize` 属性で、受け付ける最大サイズを決める。
@@ -517,6 +653,9 @@ HTTP/S の購読が保留のままなら、エンドポイントが確認の要�
 
 つまり、HTTP/S やメールの購読があるトピックは 256 KiB を超えられない。
 
+- **例:** 500 KiB の通知を送るなら `MaximumMessageSize=524288`（512 KiB）にする。購読が SQS 3 つと Lambda 1 つなら設定できる。ここに HTTPS の購読を足す構成にはできない。
+- **誤ると:** 既定の 262,144 バイトのまま、本文 260,000 バイトと属性 3,000 バイトで発行すると、合計が超えるので `InvalidParameter` になる。
+
 メッセージ属性は本文とは別のメタデータで、受信側が本文を解析せずに判断したり、フィルターに使ったりする。
 
 | データ型 | 内容 |
@@ -528,7 +667,12 @@ HTTP/S の購読が保留のままなら、エンドポイントが確認の要�
 
 属性を送れるのは `MessageStructure` が文字列のときだけで、`json` のときは送られない。
 
+- **例（値の入れ方）:** `{"DataType":"String","StringValue":"created"}`、`{"DataType":"Number","StringValue":"12.5"}`、`{"DataType":"String.Array","StringValue":"[\"a\",\"b\"]"}`。`Number` でも `StringValue` に文字列で入れる。
+- **誤ると（精度）:** `Number` の比較は小数点以下 5 桁まで。`1.000001` と `1.000002` は区別できない前提で設計する。
+
 raw 配信の SQS 購読では、属性は 10 個まで。11 個以上のメッセージはクライアント側エラーとして **破棄される**。
+
+- **例:** 属性 12 個で発行すると、raw 配信の SQS 購読には届かず、DLQ がなければ失われる。`Publish` は成功するので、発行側では気づけない。属性を 10 個以内に減らすか、raw 配信を無効にする。
 
 ### ファンアウト {#fanout}
 
@@ -555,6 +699,9 @@ SNS から複数の SQS キューに配信し、それぞれ独立して処理�
 
 `aws:SourceArn` がないと、他のトピックからも送れてしまう。購読は成功しているのにメッセージが届かないときは、このポリシーをまず確認する。キューが KMS で暗号化されているなら、キーポリシーで SNS に `kms:GenerateDataKey` と `kms:Decrypt` も許可する。
 
+- **例:** `orders` トピックに `email-q`、`shipping-q`、`analytics-q` の 3 つを購読させる。1 通発行すると、キューごとに 1 通ずつ、計 3 通が入る。分析の消費者が 3 時間止まっても、メールと出荷には影響しない。
+- **例（raw なしの解析）:** `json.loads(json.loads(m["Body"])["Message"])` のように 2 回解析する。raw を有効にすると `json.loads(m["Body"])` の 1 回で済む。
+
 ### raw メッセージ配信の詳細 {#sns-raw-delivery}
 
 サブスクリプションの `RawMessageDelivery` を `true` にする。
@@ -574,6 +721,20 @@ aws sns set-subscription-attributes \
 
 Lambda には raw 配信の設定はない。有効にすると `TopicArn` や `Timestamp` は受け取れなくなるので、必要なら本文に入れる。
 
+- **例（無効のとき）:** SQS の `Body` は次の JSON になる。
+
+```json
+{
+  "Type": "Notification",
+  "TopicArn": "arn:aws:sns:ap-northeast-1:111122223333:orders",
+  "Message": "{\"orderId\":\"1\"}",
+  "MessageAttributes": { "event_type": { "Type": "String", "Value": "created" } }
+}
+```
+
+- **例（有効のとき）:** `Body` は `{"orderId":"1"}` だけで、`event_type` は SQS のメッセージ属性になる。
+- **誤ると:** 有効にした後も `Body["Message"]` を読むコードのままだと `KeyError` で失敗し続け、メッセージが DLQ にたまる。
+
 ### トピックのアクセスポリシーと暗号化 {#sns-access}
 
 トピックのリソースポリシーで、誰が `sns:Publish` できるかを決める。別アカウントや AWS サービス（S3、CloudWatch アラームなど）からの発行にはこの許可が要る。
@@ -590,6 +751,10 @@ Lambda には raw 配信の設定はない。有効にすると `TopicArn` や `
 
 SSE は `KmsMasterKeyId` で有効にする。暗号化されるのは本文のみで、件名、属性、メッセージ ID は暗号化されない。AWS サービスから暗号化トピックに発行するなら、キーポリシーを編集できるカスタマーマネージドキーを使う。
 
+- **例（別アカウント）:** 発行側のアカウントが `111122223333` なら、トピックを持つ別アカウント側のポリシーで `Principal` に `{"AWS":"arn:aws:iam::111122223333:root"}` を書き、`sns:Publish` を許可する。呼び出し側の IAM にも `sns:Publish` が要る。
+- **誤ると（S3）:** このポリシーがないと、S3 の通知設定の保存が宛先の検証エラーで失敗する。
+- **誤ると（暗号化）:** S3 や CloudWatch アラームから `alias/aws/sns` のトピックへ発行すると、キーポリシーを編集できないので届かない。アラームは `ALARM` になるのに通知が来ない、という症状になる。
+
 ### サブスクリプションフィルターポリシー {#filter-policies}
 
 既定では購読者は全メッセージを受け取る。フィルターポリシーを設定すると、必要なものだけ受け取れる。消費者側で捨てるより、処理量と料金を減らせる。
@@ -605,6 +770,17 @@ SSE は `KmsMasterKeyId` で有効にする。暗号化されるのは本文の�
 - `FilterPolicyScope` で対象を選ぶ。`MessageAttributes`（既定）か `MessageBody`。
 - プロパティの間は AND、値の配列は OR で評価する。
 - 発行者は購読者が増えても変更不要で、トピックを分ける必要も減る。
+
+上のポリシーと属性の組み合わせで確かめる。
+
+| `event_type` | `price_usd` | `store` | 結果 |
+| --- | --- | --- | --- |
+| `created` | 150 | `web` | 届く |
+| `paid` | 100 | `shop` | 届く。`>=` なので 100 も含む |
+| `refunded` | 150 | `web` | 届かない。`event_type` が不一致 |
+| `created` | 50 | `web` | 届かない。金額が不足 |
+| `created` | 150 | `test` | 届かない。`anything-but` で除外 |
+| `created` | なし | `web` | 届かない。属性がない |
 
 #### FilterPolicyScope
 
@@ -635,6 +811,9 @@ SSE は `KmsMasterKeyId` で有効にする。暗号化されるのは本文の�
 
 ポリシーを変えた直後は最大 15 分の間、古いポリシーで判定されることがある。
 
+- **例（キー数）:** `event_type`、`price_usd`、`store`、`country`、`channel` の 5 個までは設定できる。`device` を足して 6 個にするとエラーになる。絞り込みの一部は消費者側に任せる。
+- **例（反映）:** 10:00 にポリシーを変えて、10:01 のテストで届かなくても、設定の誤りとは限らない。15 分待ってから判断する。
+
 ### 配信の再試行 {#sns-retries}
 
 失敗の種類で動きが分かれる。
@@ -651,6 +830,19 @@ SSE は `KmsMasterKeyId` で有効にする。暗号化されるのは本文の�
 | HTTP/S | 既定は 3 回（20 秒間隔、linear） | 配信ポリシーで可 |
 
 Firehose のスロットリングエラーには、顧客管理の宛先と同じポリシーが使われる。
+
+既定の内訳は次のとおり。
+
+| 段階 | AWS 管理 | 顧客管理（SMTP、SMS、プッシュ） |
+| --- | --- | --- |
+| 遅延なし | 3 回 | 0 回 |
+| バックオフ前 | 2 回（1 秒間隔） | 2 回（10 秒間隔） |
+| バックオフ | 10 回（1〜20 秒） | 10 回（10〜600 秒） |
+| バックオフ後 | 100,000 回（20 秒間隔） | 38 回（600 秒間隔） |
+| 合計 | 100,015 回、23 日 | 50 回、6 時間 |
+
+- **例:** Lambda の購読で関数を消してしまうと、クライアント側エラーなので再試行されない。一方、SQS のキューが内部エラーを返す間は 23 日まで再試行される。
+- **例（HTTP/S の既定）:** 既定は 20 秒間隔で 3 回なので、再試行は約 60 秒で終わる。エンドポイントのデプロイで 2 分止まると、その間のメッセージは DLQ がなければ失われる。
 
 HTTP/S の配信ポリシーはトピックかサブスクリプションに設定する。
 
@@ -679,7 +871,13 @@ HTTP/S の配信ポリシーはトピックかサブスクリプションに設�
 
 上の例のバックオフの回数は 50 − 3 − 2 − 35 = 10 回。合計の再試行時間は 3,600 秒が上限（引き上げ不可）。
 
+- **例（時間の計算）:** 上の例の待ち時間は、バックオフ前が 2 × 1 秒、バックオフ後が 35 × 60 秒 = 2,100 秒。バックオフの 10 回は長くても 10 × 60 秒 = 600 秒で、合計は最大 2,702 秒。3,600 秒に収まる。
+- **誤ると:** `numRetries=100` で間隔を 60 秒に固定すると 100 × 60 = 6,000 秒で、3,600 秒の上限に収まらない。60 秒間隔なら 60 回までが目安になる。
+
 `maxReceivesPerSecond` は平均の目安で、厳密な上限ではない。これを超えた分は再試行を消費せずに待たされるので、発行が速いと遅延が増える。
+
+- **例:** `maxReceivesPerSecond=10` のエンドポイントに毎秒 50 件を 60 秒発行すると、(50 − 10) × 60 = 2,400 件が SNS 側にたまる。発行が止まった後、2,400 ÷ 10 = 240 秒で配信が終わる。
+- **例（`headerContentType`）:** 既定の `Content-Type` は `text/plain; charset=UTF-8`。JSON として受けたいエンドポイントには、`requestPolicy` の `headerContentType` に `application/json` を指定する。
 
 #### サブスクリプションの DLQ
 
@@ -695,6 +893,9 @@ SQS と違い、SNS の DLQ はトピックではなく **サブスクリプシ�
 - DLQ がないと、再試行を使い切ったメッセージとクライアント側エラーのメッセージは失われる。
 - AWS は DLQ の保持期間を最大の 14 日にすることを勧めている。
 
+- **例:** `shipping` の購読に `sns-orders-dlq` を設定する。購読先のキューを誤って消すと、クライアント側エラーとして再試行なしで DLQ に入る。`email` の購読には別に設定しない限り、同じ失敗でも DLQ には入らない。
+- **誤ると:** DLQ のキューポリシーで `sns.amazonaws.com` に `sqs:SendMessage` を許可していないと、DLQ にも送れず失われる。
+
 ### SNS FIFO {#sns-fifo}
 
 | 項目 | 内容 |
@@ -708,6 +909,9 @@ SQS と違い、SNS の DLQ はトピックではなく **サブスクリプシ�
 | トピック名 | `.fifo` で終わる |
 
 厳密な順序と重複防止が必要なら、SNS FIFO と SQS FIFO を組み合わせる。
+
+- **例:** 価格の更新を卸売、小売、分析の 3 つの SQS FIFO に配信する。グループ ID を商品 ID にすると、同じ商品の更新はどのキューでも発行順に届く。
+- **誤ると:** Lambda を直接購読しようとするとエラーになる。SQS FIFO を購読させ、そのキューを Lambda のイベントソースにする。
 
 ```python
 sns.publish(
@@ -725,6 +929,10 @@ sns.publish(
 
 フィルターポリシーを設定すると、FIFO トピックは「最大1回」の配信になる。フィルターで落とされるメッセージがあるので、そのキューには届かない前提で作る。
 
+- **例（`FifoThroughputScope`）:** `Topic` の上限は 3,000 件/秒か 20 MB/秒で、先に達した方で止まる。1 件 10 KB を毎秒 3,000 件なら 30 MB/秒で、20 MB/秒の方に先に当たり、実際は 2,000 件/秒になる。
+- **例（`MessageGroup`）:** 毎秒 9,000 件なら、グループあたり 300 件/秒なので 9,000 ÷ 300 = 30 グループ以上に均等に分ける。同じ `MessageDeduplicationId` でもグループが違えば別のメッセージとして配信される。全体の上限はリージョンのクォータに従う。
+- **例（内容ベース）:** 本文が同じで属性 `channel` だけが違う卸売向けと小売向けの 2 通は、内容ベースでは同じ ID になり、5 分以内の 2 通目が配信されない。ID を明示するか、`channel` を本文に入れる。
+
 標準トピックでも `MessageGroupId` を指定できる。これは SQS 標準キューの購読にだけ転送され、[フェアキュー](#standard-fifo) を有効にする。
 
 ## EventBridge {#eventbridge}
@@ -732,6 +940,8 @@ sns.publish(
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
 
 イベントをルールに従って振り分けるサービス。AWS のサービス、自前のアプリ、SaaS のイベントを扱える。
+
+提供単位はリージョンで、AZ は選ばない。VPC の外のサービスで、VPC 内からはインターフェイスエンドポイントか NAT を経由して呼ぶ。エンドポイントは Classic のバスと既定のバスが `events`、新しい Custom Event Bus が `eventsv2`（[EC サイトの例](resource-scope.md#ec-site-order)）。
 
 [![EventBridge によるイベントルーティング](../assets/diagrams/messaging-eventbridge.png)](../assets/diagrams/messaging-eventbridge.png)
 
@@ -765,6 +975,12 @@ if res["FailedEntryCount"] > 0:
 | ルール数 | バスごとに既定 300（一部のリージョンは 100） |
 | ターゲットの再試行 | 既定で 24 時間、最大 185 回（指数バックオフとジッター） |
 
+- **例（エントリ数）:** 25 件のイベントは 10 + 10 + 5 の 3 回に分けて送る。
+- **例（サイズ）:** 200 KB のイベント 10 個は合計 2 MB で 1 MB 未満に収まらないので、1 回では送れない。5 個だと `Detail` だけで約 1 MB になり、`Source` や `DetailType` なども合計に入るので収まらない。4 個以下に分ける。
+- **例（部分失敗）:** 3 エントリを送り、`FailedEntryCount` が 1 なら、HTTP は 200 のまま `Entries[1].ErrorCode` などに理由が入る。失敗したエントリだけ再送する。
+- **例（スロットリング）:** `PutEvents` のリージョンあたりの既定クォータは、東京で 1,200 件/秒（引き上げ可）。超えると `ThrottlingException` が返る。
+- **例（ルールの上限）:** ルールあたり 5 ターゲットなので、8 つの宛先に送るならルールを 2 つに分けるか、SNS トピックをターゲットにしてそこから広げる。
+
 !!! note "Custom Event Bus と Classic"
     このページは、ルールとターゲットで動く既定のバスと **Custom Event Bus - Classic** を説明する。新しい **Custom Event Bus** はサブスクライバーを作る方式で、イベントを選んだ期間（1〜365 日）保持する。順序はサブスクライバーの設定、重複排除は発行時の設定で、`PutEvents` は 1 回に 100 エントリまで。両方とも利用できる。
 
@@ -784,6 +1000,11 @@ if res["FailedEntryCount"] > 0:
 別アカウントからの送信はバスのリソースポリシーで `events:PutEvents` を許可する。
 
 `Detail` は JSON の **文字列** で渡す。オブジェクトのままや不正な JSON は受け付けられない。エントリのエラーは例外ではなく、`Entries` の `ErrorCode` で返る。
+
+- **例（バス名）:** `orders` バスに `{"EventBusName":"orders"}` で送ると、`default` バスのルールは動かない。`EventBusName` を省いて送ると、`orders` バスのルールは動かない。どちらも `PutEvents` は成功するので、ルールとバスの組み合わせを確認する。
+- **例（別アカウント）:** アカウント `111122223333` から別アカウントの `orders` バスに送るなら、バスのリソースポリシーで `111122223333` に `events:PutEvents` を許可する。送信側のロールにも同じ権限が要る。
+- **例（パートナーバス）:** SaaS のイベントソース名は `aws.partner/` で始まる。バスを関連付けた後は、他のバスと同じようにルールを作る。
+- **例（`Detail`）:** Python なら `"Detail": json.dumps({"orderId": "1"})`。`"Detail": {"orderId": "1"}` はパラメータの検証で失敗する。`"Detail": "{orderId: 1}"` は JSON として不正なのでエントリのエラーになる。
 
 ### ルールとイベントパターン {#eventbridge-rules}
 
@@ -842,6 +1063,10 @@ if res["FailedEntryCount"] > 0:
 
 `exists` は末端のノードだけで使える。`"detail": {"exists": true}` のように中間のノードには書けない。空文字、`null`、フィールドなしは別物として扱われる。
 
+- **例（複数の条件）:** `{"source":["aws.ec2"],"detail":{"state":["stopped","terminated"]}}` は、`source` が `aws.ec2` で **かつ**、`state` が `stopped` **または** `terminated` のときに一致する。
+- **誤ると（階層）:** イベントの `detail.state` を見るのにパターンのトップに `"state"` を書くと、どのイベントにも一致しない。エラーは出ず、ルールが動かないだけになる。
+- **誤ると（ワイルドカード）:** `wildcard` を含むルールはバスごとに 30 個まで。この上限は引き上げられない。
+
 別のフィールドとの OR は `$or` で書く。
 
 ```json
@@ -856,6 +1081,14 @@ if res["FailedEntryCount"] > 0:
 ```
 
 パターンを本番に置く前に、`aws events test-event-pattern` か `TestEventPattern` API で試せる。S3 の ACL 変更で起動する関数が ACL を変えるような再帰のルールは、無限ループと料金の増加を招く。パターンをなるべく細かく書く。
+
+```bash
+aws events test-event-pattern \
+  --event-pattern '{"source":["com.example.orders"],"detail":{"amount":[{"numeric":[">",1000]}]}}' \
+  --event '{"id":"1","account":"111122223333","source":"com.example.orders","time":"2026-10-31T00:00:00Z","region":"ap-northeast-1","resources":[],"detail-type":"OrderCreated","detail":{"amount":1500}}'
+```
+
+`amount` が 1500 なら `{"Result": true}`、800 なら `false` が返る。
 
 ### 入力トランスフォーマー {#input-transformer}
 
@@ -880,6 +1113,10 @@ if res["FailedEntryCount"] > 0:
 
 `{"detail":{"instance-id":"i-1","state":"running"}}` に対し、ターゲットは `{"id": "i-1", "message": "i-1 is running", "rule": "..."}` を受け取る。
 
+- **例（`Input`）:** 夜間バッチのルールで `"Input": "{\"job\":\"nightly\",\"dryRun\":false}"` とすると、イベントの中身に関係なく、常にこの JSON が渡る。
+- **例（`InputPath`）:** `"InputPath": "$.detail"` なら、関数の `event` は `{"instance-id":"i-1","state":"running"}` になり、`event["detail"]` と書かずに済む。
+- **誤ると:** `InputPath` を付けた後も関数が `event["detail"]` を読むと `KeyError` になる。
+
 | 予約済みの変数 | 内容 |
 | --- | --- |
 | `aws.events.rule-arn` | ルールの ARN |
@@ -890,6 +1127,10 @@ if res["FailedEntryCount"] > 0:
 **クォートの扱いが落とし穴**。文字列の値を指す変数は、そのままでも `"<state>"` のように囲んでもよく、実行時に正しい JSON に置き換えられる。一方、**オブジェクトや配列を指す変数はクォートしない**。文章の中に埋め込むときは、文章全体を `"` で囲む。
 
 `aws.events.event.json` も JSON の値の位置でだけ使える。文字列の中には入れられない。DLQ の `ERROR_CODE` の一例に `INVALID_JSON` がある。
+
+- **例（クォート）:** `<state>` が文字列なら `{"s": <state>}` も `{"s": "<state>"}` も `{"s": "running"}` になる。`<detail>` がオブジェクトなら `{"d": <detail>}` と書く。`{"d": "<detail>"}` と囲むと正しい形にならない。
+- **例（文章）:** `"Instance <instance> is <state>"` は全体を `"` で囲む。SNS やチャットの通知の本文に使う。
+- **誤ると:** 組み立てた結果が JSON として不正だと、ターゲットへ配信されず、DLQ があれば `ERROR_CODE` に理由が入る。
 
 ### ターゲットの再試行と DLQ {#target-retry-dlq}
 
@@ -913,11 +1154,18 @@ aws events put-targets --rule orders-created --targets '[{
 
 1 時間を過ぎた通知に価値がないなら、上のように縮める。既定のままだと、宛先の障害中に 24 時間前のイベントが届くことがある。
 
+- **例（どちらが先か）:** `MaximumRetryAttempts=185`、`MaximumEventAgeInSeconds=3600` なら、回数に関係なく 1 時間で打ち切る。`MaximumRetryAttempts=10`、`MaximumEventAgeInSeconds=86400` なら、10 回を使い切れば 24 時間を待たずに打ち切る。
+- **例（再試行なし）:** `MaximumRetryAttempts=0` なら最初の 1 回だけ試す。失敗はすぐ DLQ に入るので、自前で再処理するときに使う。
+- **誤ると:** `MaximumEventAgeInSeconds=30` は範囲外でエラーになる。下限は 60 秒。
+
 - DLQ は SQS の **標準キュー**。FIFO は使えない。
 - DLQ のキューポリシーで EventBridge に `sqs:SendMessage` を許可する。
 - 権限不足、リソースなし、DNS の失敗のように再試行しても無駄なエラーは、すぐ DLQ に送られる。DLQ がなければ捨てられる。
 - DLQ のメッセージには `RULE_ARN`、`TARGET_ARN`、`ERROR_CODE`、`ERROR_MESSAGE`、`EXHAUSTED_RETRY_CONDITION`、`RETRY_ATTEMPTS` の属性が付く。
 - メトリクスは `InvocationsSentToDLQ` と `InvocationsFailedToBeSentToDLQ`。
+
+- **例（DLQ の調査）:** `ERROR_CODE` が権限エラーなら、再試行されずに DLQ へ入っている。ロールや関数のポリシーを直してから、DLQ のメッセージを再処理する。
+- **誤ると:** DLQ のキューポリシーがないと、`InvocationsFailedToBeSentToDLQ` が増え、イベントは失われる。
 
 !!! note "SQS の FIFO や他のターゲット"
     SQS の FIFO キューやフェアキューをターゲットにするなら、`SqsParameters` でメッセージグループを指定する。ルールに書けるターゲットは 5 個で引き上げ不可。もっと広げるなら SNS トピックをターゲットにする。
@@ -968,6 +1216,15 @@ cron は 6 項目で、日と曜日の両方に `*` は書けない。片方を 
 
 スケジュールの数は、既定でリージョンごとに 10,000,000 個。注文ごとの 1 回限りのリマインドのように、多数の個別予約に向く。
 
+- **例（タイムゾーン）:** `cron(0 9 * * ? *)` に `Asia/Tokyo` を付けると毎日 9:00（日本時間）に動く。省くと UTC の 9:00、日本時間の 18:00 に動く。
+- **例（`at`）:** `at(2026-12-01T09:00:00)` と `Asia/Tokyo` で、2026 年 12 月 1 日の日本時間 9:00 に 1 回だけ動く。
+- **例（`rate`）:** `rate(5 minutes)` は 5 分ごと。単位は `minutes`、`hours`、`days` で、`rate(1 days)` のように 1 でも複数形で書く。`rate(1 days)` は常に 24 時間ごとなので、夏時間の切り替えで現地の時刻がずれる。
+- **例（夏時間）:** `America/Los_Angeles` の `cron(30 2 * * ? *)` は、春に 2 時台が飛ぶ日は実行されず、秋に 2 時台が 2 回ある日は 1 回だけ実行される。`Asia/Tokyo` には夏時間がないので影響しない。
+- **例（`StartDate`、`EndDate`）:** 2026 年 11 月の間だけ動かすなら、`StartDate=2026-11-01T00:00:00Z`、`EndDate=2026-12-01T00:00:00Z` にする。両方とも UTC で指定する。1 回のみのスケジュールでは両方とも無視される。
+- **例（`ActionAfterCompletion`）:** 注文ごとに 1 回のリマインドを作るなら `DELETE` にする。`NONE` のままだと、100 万件の注文で 100 万個の完了済みスケジュールが残る。
+- **例（`ClientToken`）:** 同じトークンで作成を再試行すると、二重に作られない。1〜64 文字。
+- **誤ると（ロール）:** `RoleArn` の信頼ポリシーに `scheduler.amazonaws.com` がないとターゲットを呼べない。作成は成功しても実行で失敗する。
+
 ### Pipes {#eventbridge-pipes}
 
 1つのソースと1つのターゲットをつなぐ、ポイントツーポイントの統合。バスが多対多のルーティングなのに対し、Pipes は1本の連携を少ないコードで作る。
@@ -992,6 +1249,23 @@ flowchart TD
 
 使い分けの例を示す。SQS のメッセージの一部だけを絞り、顧客情報を足してから Step Functions を起動するなら Pipes。1 つのイベントを 3 つのサービスに送るならバスとルールを使う。
 
+```bash
+aws pipes create-pipe --name paid-orders \
+  --role-arn arn:aws:iam::111122223333:role/pipe-orders \
+  --source arn:aws:sqs:ap-northeast-1:111122223333:orders \
+  --source-parameters '{
+    "SqsQueueParameters": {"BatchSize": 10, "MaximumBatchingWindowInSeconds": 30},
+    "FilterCriteria": {"Filters": [{"Pattern": "{\"body\":{\"status\":[\"paid\"]}}"}]}
+  }' \
+  --enrichment arn:aws:lambda:ap-northeast-1:111122223333:function:add-customer \
+  --target arn:aws:states:ap-northeast-1:111122223333:stateMachine:fulfill
+```
+
+- **例（`BatchSize`）:** SQS ソースの `BatchSize` は 1〜10,000、`MaximumBatchingWindowInSeconds` は 0〜300 秒。ターゲットの上限が優先され、SQS と SNS と EventBridge のバスは 10 件、Firehose と Kinesis は 500 件まで。
+- **例（フィルター）:** 1 万件のうち `paid` が 2,000 件なら、課金対象の処理はフィルターに一致した 2,000 件になる。エンリッチメントの Lambda も 2,000 件分しか呼ばれない。
+- **例（ペイロード）:** ターゲットやエンリッチメントが Lambda なら、バッチ全体が 6 MB に収まる必要がある。Step Functions なら 262,144 文字まで。
+- **誤ると:** エンリッチメントがバッチに対応しないのにソースの `BatchSize` を 10 にすると、設定できない。実行ロールにソースの読み取りとターゲットの呼び出しの両方がないと、パイプが動かない。
+
 ### アーカイブとリプレイ {#archive-replay}
 
 バスのイベントをアーカイブに保存し、後で再送できる。障害からの復旧や、新機能の検証に使う。
@@ -1015,6 +1289,24 @@ flowchart TD
 
 新しいルールだけに過去の 1 日分を流すなら、リプレイで **そのルールだけ** を選ぶ。全ルールにすると、既存の処理にも同じイベントが再び届き、二重に実行される。
 
+```bash
+aws events create-archive --archive-name orders-30d \
+  --event-source-arn arn:aws:events:ap-northeast-1:111122223333:event-bus/orders \
+  --event-pattern '{"source":["com.example.orders"]}' \
+  --retention-days 30
+
+aws events start-replay --replay-name fix-20261031 \
+  --event-source-arn arn:aws:events:ap-northeast-1:111122223333:archive/orders-30d \
+  --event-start-time 2026-10-31T01:00:00Z \
+  --event-end-time 2026-10-31T02:00:00Z \
+  --destination '{"Arn":"arn:aws:events:ap-northeast-1:111122223333:event-bus/orders","FilterArns":["arn:aws:events:ap-northeast-1:111122223333:rule/orders/new-rule"]}'
+```
+
+- **例（保持期間）:** `--retention-days 30` なら 30 日を過ぎたイベントは消える。35 日前の障害は復旧できない。既定は無期限なので、料金が増え続けないよう、必要な日数を指定する。
+- **例（待ち時間）:** 10:00 までのイベントを再送するなら、10:10 以降に実行する。すぐ実行すると、アーカイブに届いていないイベントが抜ける。
+- **例（再送の判別）:** 再送されたイベントには `replay-name` が付く。通常の処理から外すなら、ルールに `"replay-name": [{"exists": false}]` を足す。
+- **誤ると:** 再送先の処理が冪等でないと、メール送信や課金が二重に実行される。
+
 ### スキーマレジストリ {#schema-registry}
 
 イベントの構造（スキーマ）を管理する。AWS サービスのイベントのスキーマは最初から用意されている。
@@ -1025,9 +1317,14 @@ flowchart TD
 - 入力トランスフォーマーを使っていても、検出の対象は変換前の元のイベントになる。
 - IDE では AWS Toolkit から検索とダウンロードができる。
 
+- **例:** `orders` バスのスキーマ検出を有効にして `OrderCreated` を流すと、`detail` の `orderId`（文字列）と `amount`（数値）を持つスキーマが作られる。Python のコードバインディングを取得すると、辞書のキーを打ち間違えるような誤りを減らせる。
+- **例（検出の対象）:** 検出はバスごとに有効にする。入力トランスフォーマーで整形後の形にはならないので、ターゲットが受け取る形とは一致しないことがある。
+
 ## S3 イベント通知 {#s3-events}
 
 オブジェクトの作成や削除で処理を起動する。
+
+提供単位はリージョンで、バケットのあるリージョンで動く。VPC の外の機能で、Lambda、SQS、SNS の宛先はバケットと同じリージョンに置く（[リソースの提供単位](resource-scope.md#scope-regional-outside)）。
 
 | 送信先 | 備考 |
 | --- | --- |
@@ -1054,6 +1351,11 @@ def handler(event, context):
 - トリガーのバケットに書き込むと無限ループになる。別のバケットかプレフィックスに書く。
 - SQS FIFO に送りたいときは EventBridge を経由する。
 
+- **例（フィルター）:** プレフィックス `images/`、サフィックス `.jpg` なら、`images/a.jpg` で動き、`logs/a.jpg` や `images/a.png` では動かない。`images/*.jpg` のようなワイルドカードは書けない。
+- **例（複数の設定）:** `images/` を queue-A、`logs/` を queue-B に送る設定は作れる。同じイベントの種類で `images/` と `images/thumb/` のようにプレフィックスが重なる設定は作れない。
+- **誤ると（ループ）:** `uploads/` で動く関数が、変換結果を同じ `uploads/` に保存すると、新しい作成イベントで自分を呼び続ける。出力を `thumbnails/` に分ける。
+- **誤ると（順序）:** 同じキーへの 2 回の PUT のイベントが逆順で届くことがある。`sequencer` を比べ、大きい方を新しいものとして扱う。長さが違うことがあるので、短い方の左をゼロで埋めてから文字列として比べる。比べられるのは同じキーのイベントだけ。
+
 S3 自体の機能は [S3](s3.md) を参照する。
 
 ## 選び方 {#how-to-choose}
@@ -1067,6 +1369,10 @@ S3 自体の機能は [S3](s3.md) を参照する。
 | 消費者 | 通常1種類 | 多数 | ルールごとに最大 5 ターゲット |
 | 順序 | FIFO | FIFO | Classic のルールでは保証なし |
 | 連携 | AWS SDK | SMS、メール、モバイル、HTTP | SaaS、AWS のサービスイベント、スケジュール |
+
+- **例（SQS）:** 毎秒最大 2,000 件の画像処理を 50 台のワーカーで順に捌く。バッファが目的で、消費者は 1 種類。
+- **例（SNS）:** 1 通の注文イベントをメール、出荷、分析の 3 キューと担当者の SMS に広げる。低遅延で 1 対多に届ける。
+- **例（EventBridge）:** `amount` が 10,000 を超える注文だけを審査へ送り、SaaS の決済イベントも同じバスで受ける。内容による振り分けが目的。
 
 ```mermaid
 flowchart TD
@@ -1092,6 +1398,10 @@ flowchart TD
 | 失敗で詰まらないようにする | DLQ と `maxReceiveCount` |
 | 消費者を自動で増やす | SQS の滞留をメトリクスにして EC2 や ECS をスケール |
 | Lambda の処理量を調整 | `BatchSize`、バッチウィンドウ、[部分バッチレスポンス](lambda.md) |
+
+- **例（料金）:** 毎秒 100 件を 1 件ずつ送ると 1 日に 8,640,000 回の `SendMessage` になる。10 件のバッチなら 864,000 回で、10 分の 1 になる。
+- **例（フィルター）:** 購読者が必要とするのが全体の 5% なら、フィルターで残り 95% の配信と Lambda の起動をなくせる。消費者で捨てると、捨てる分の料金も払う。
+- **例（スケール）:** 滞留を消費者数で割った「1 台あたりの滞留」を追跡する。1 台が毎秒 5 件を処理し、許容遅延が 60 秒なら目標は 5 × 60 = 300 件。滞留が 3,000 件なら 3,000 ÷ 300 = 10 台に増やす。
 
 ## 既定値と上限のまとめ {#numbers}
 
@@ -1238,3 +1548,8 @@ flowchart TD
 - [S3 Event Notifications](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventNotifications.html)
 - [S3 events with EventBridge](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventBridge.html)
 - [S3 event message structure](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-content-structure.html)
+- [S3 event notification filtering](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-filtering.html)
+- [SQS StartMessageMoveTask](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_StartMessageMoveTask.html)
+- [SQS service quotas](https://docs.aws.amazon.com/general/latest/gr/sqs-service.html)
+- [Scaling for SQS event source mappings](https://docs.aws.amazon.com/lambda/latest/dg/services-sqs-scaling.html)
+- [Lambda event filtering](https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html)

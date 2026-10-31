@@ -22,6 +22,8 @@
 
 高度に接続されたデータのための、フルマネージドのグラフデータベースです。数十億の関係をミリ秒で問い合わせます。SQL の多段の結合を繰り返す問題に向きます。
 
+**提供単位**: クラスターはリージョン単位で VPC の中に置きます。インスタンスは AZ 単位で、ボリュームは 3 つの AZ に複製されます([リソースの提供単位](resource-scope.md#two-axes))。
+
 | グラフモデル | クエリ言語 | 向く場面 |
 | --- | --- | --- |
 | プロパティグラフ | Gremlin、openCypher | 不正検知、レコメンド、ネットワーク |
@@ -30,6 +32,13 @@
 プロパティグラフのデータには Gremlin と openCypher の両方で問い合わせできます。
 
 **例**: 「口座 A と同じ端末や電話番号でつながる、3 ホップ以内の口座」を探します。リレーショナルでは自己結合が増えて遅くなる問いです。
+
+```text
+// openCypher
+MATCH (a:Account {id: 'A'})-[*1..3]-(b:Account) RETURN DISTINCT b.id
+// Gremlin
+g.V('A').repeat(both()).emit().times(3).hasLabel('Account').dedup()
+```
 
 ### 構成とエンドポイント {#neptune-endpoints}
 
@@ -52,6 +61,10 @@ Aurora に似た、インスタンスとストレージを分けた構成です�
 
 **症状**: クライアントが DNS の結果をキャッシュすると、フェイルオーバー後も古いインスタンスへ接続し、リーダーの分散も効きません。接続を切って再接続します。
 
+**例**: 不正判定の API はクラスターエンドポイントへ書き、リーダーエンドポイントから読みます。夜間の分析クエリは、大きなレプリカ 2 台だけを含むカスタムエンドポイントへ送ります。こうすると分析が API のレプリカを圧迫しません。
+
+**クエリのタイムアウトの例**: `neptune_query_timeout` は 10 ミリ秒以上で、既定は 120,000 ミリ秒(2 分)です。分析に 5 分かかるなら、クラスターのパラメータを 300,000 にして、再起動します(静的パラメータです)。**誤ると**: 既定のままだと 2 分でクエリが失敗します。
+
 ### 取り込みと変更の取得 {#neptune-data}
 
 | 機能 | 内容 |
@@ -71,6 +84,23 @@ curl -X POST https://<cluster-endpoint>:8182/loader \
   }'
 ```
 
+ローダーのパラメータの例です。
+
+| パラメータ | 既定 | 値の例と動作 |
+| --- | --- | --- |
+| `mode` | `AUTO` | `RESUME` は前回の続きから。`NEW` は同じソースでも新しくロードする |
+| `failOnError` | `"TRUE"` | `"FALSE"` なら、エラーの行があっても残りを読み込む |
+| `parallelism` | `HIGH` | 本番が動いている間のロードは `LOW` や `MEDIUM` に下げる |
+| `updateSingleCardinalityProperties` | `"FALSE"` | `"TRUE"` なら、単一カーディナリティのプロパティを新しい値で置き換える |
+| `queueRequest` | `"FALSE"` | `"TRUE"` なら、実行中でも最大 64 ジョブを順に待たせる |
+| `dependencies` | なし | `["load_A_id"]` なら、そのジョブの成功後に実行する |
+
+**例**: 頂点のロードの後に辺をロードするなら、頂点のジョブ ID を辺のジョブの `dependencies` に指定し、`queueRequest` を `"TRUE"` にします。
+
+**誤ると**: `queueRequest` が既定の `"FALSE"` のままだと、別のロードの実行中に 2 つ目を投げると失敗します。IAM ロールに S3 の読み取りがないと `LOAD_S3_ACCESS_DENIED_ERROR` になり、全体の状態は `LOAD_FAILED` です。SSE-C のオブジェクトは読めません。
+
+**Neptune Streams の例**: 保持は `neptune_streams_expiry_days` で 1〜90 日、既定は 7 日です。同期先の保守で 10 日止まるなら 14 にします。**誤ると**: 既定のままだと、7 日を超えた変更が消えて同期を作り直すことになります。
+
 ### スケールと保護 {#neptune-scaling}
 
 | 機能 | 内容 |
@@ -82,6 +112,16 @@ curl -X POST https://<cluster-endpoint>:8182/loader \
 
 リージョン障害の復旧は、セカンダリの切り離しと昇格で行います。計画的な移動には、データの損失がないマネージドプランドフェイルオーバーを使います。
 
+**Serverless の値の例**: `MinCapacity` は 1.0 以上、`MaxCapacity` は 2.5〜128.0 です。
+
+```json
+{"MinCapacity": 2.5, "MaxCapacity": 32.0}
+```
+
+`MaxCapacity` 32 は 32 × 2 で約 64 GB のメモリです。**誤ると**: `MaxCapacity` が 2.5 より小さいと設定できません。上限が小さすぎると、ピークに分析が遅くなります。
+
+**IAM 認証の例**: 有効にすると、署名のない `curl https://<cluster-endpoint>:8182/status` は拒否されます。`awscurl` などの SigV4 で署名します。
+
 ### Neptune Analytics {#neptune-analytics}
 
 大きなグラフをメモリに載せて分析するエンジンです。グラフアルゴリズムとベクトル検索を使えます。
@@ -92,11 +132,17 @@ curl -X POST https://<cluster-endpoint>:8182/loader \
 | データの入力 | アプリ、バルクロード | Neptune のグラフ、スナップショット、S3 |
 | ベクトル検索 | Analytics を使う | グラフ作成時に 1 つのインデックスを作成 |
 
+**例**: 取引の読み書きは Neptune Database で受けます。週に 1 回、そのデータからグラフを作って PageRank で影響の大きい口座を探すなら Neptune Analytics です。
+
+**誤ると**: ベクトルインデックスはグラフ作成時に 1 つです。後から別の次元数のベクトルを足す設計にすると、グラフの作り直しになります。
+
 ## Amazon DocumentDB {#documentdb}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 MongoDB 互換の、フルマネージドのドキュメントデータベースです。JSON をそのまま保存し、スキーマが揃わないデータに向きます。
+
+**提供単位**: クラスターはリージョン単位で VPC の中に置きます。インスタンスは AZ 単位で、ストレージは複数の AZ に複製されます([リソースの提供単位](resource-scope.md#two-axes))。
 
 | クラスターの種類 | 特徴 | 向く場面 |
 | --- | --- | --- |
@@ -121,6 +167,21 @@ mongodb://user:password@my-cluster.cluster-xxxx.ap-northeast-1.docdb.amazonaws.c
 
 エラスティッククラスターは MongoDB 5.0 互換のプロトコルで動き、エンジン 8.0 には対応しません。
 
+設定ごとの値の例です。
+
+- **クラスターの種類**: 開発環境で夜は使わず昼に増えるならサーバーレスで、最大 8 DCU は 8 × 2 で約 16 GiB です。書き込みが 1 台のプライマリに収まらないならエラスティックにし、4 シャードで分散します。
+- **接続文字列**: `readPreference=secondaryPreferred` にすると読み取りはレプリカへ向かい、直前の書き込みが見えないことがあります。書いた直後の読み取りには `primary` を使います。
+- **`retryWrites`**: エンジン 8.0.2 より前では `retryWrites=false` が必須です。多くのドライバーは既定で有効なので、付け忘れると書き込みがエラーになります。
+- **変更ストリーム**: `change_stream_log_retention_duration` は秒で、既定は 10,800(3 時間)です。範囲は 3,600〜604,800(7 日)です。**誤ると**: 消費者が 6 時間止まると、既定の保持では変更の一部が読めません。
+- **シャードキー**: `customerId` は値が多く分散します。`status` は 3 種類しかないので、1 つのシャードに偏ります。
+- **ポイントインタイムリカバリ**: 10 時 05 分の誤更新は、新しいクラスターへ 10 時 04 分を指定して復元します。接続先を切り替えるまでアプリには反映されません。
+
+```bash
+aws docdb modify-db-cluster-parameter-group \
+  --db-cluster-parameter-group-name app \
+  --parameters ParameterName=change_stream_log_retention_duration,ParameterValue=86400,ApplyMethod=immediate
+```
+
 グローバルクラスターは 1 つのプライマリと最大 10 のセカンダリリージョンで構成します。書き込みはプライマリのみです。
 
 **ベクトル検索**: HNSW と IVFFlat のインデックスに対応します。インデックスがなければ完全な最近傍検索になります。詳しくは [ベクトルインデックス](#vector-indexes) を見てください。
@@ -132,6 +193,8 @@ mongodb://user:password@my-cluster.cluster-xxxx.ap-northeast-1.docdb.amazonaws.c
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 Apache Cassandra 互換のサーバーレスなデータベースです。既存の CQL、ドライバーのコードをそのまま使えます。
+
+**提供単位**: キースペースとテーブルはリージョン単位で VPC の外にあります。AZ は選びません。VPC からはインターフェイスエンドポイントで接続できます([リソースの提供単位](resource-scope.md#two-axes))。
 
 | 項目 | 内容 |
 | --- | --- |
@@ -156,6 +219,18 @@ Apache Cassandra 互換のサーバーレスなデータベースです。既存
 
 **症状**: 既存の Cassandra アプリが `QUORUM` を指定したままだと、例外で失敗します。`LOCAL_QUORUM` に変えます。
 
+**計算の例**:
+
+| 条件 | 計算 | 結果 |
+| --- | --- | --- |
+| 10 KB の行を `LOCAL_QUORUM` で毎秒 100 回読む | 12 KB ÷ 4 KB × 100 | 300 RCU |
+| 同じ条件で `LOCAL_ONE` | 300 × 0.5 | 150 RCU |
+| 2.5 KB の行を毎秒 100 回書く | 3 KB ÷ 1 KB × 100 | 300 WCU |
+
+```text
+cqlsh> CONSISTENCY LOCAL_QUORUM;
+```
+
 ### Keyspaces の機能と上限 {#keyspaces-features}
 
 | 機能 | 内容 |
@@ -172,6 +247,25 @@ Apache Cassandra 互換のサーバーレスなデータベースです。既存
 
 **例**: IoT の機器ごとの時系列を、機器 ID をパーティションキー、時刻をクラスタリングキーにして保存します。
 
+```sql
+CREATE TABLE iot.readings (
+  device_id text, ts timestamp, temp double,
+  PRIMARY KEY (device_id, ts)
+) WITH CUSTOM_PROPERTIES={'ttl':{'status':'enabled'}};
+-- 86,400 秒(1 日)後に期限切れにする
+INSERT INTO iot.readings (device_id, ts, temp)
+  VALUES ('d-1', '2026-10-31 00:00:00+0000', 21.5) USING TTL 86400;
+```
+
+**接続数の計算**: 毎秒 18,000 クエリを推奨の 500 クエリ/接続で割ると、36 接続です。上限の 3,000 に頼ると、余裕がなくなります。
+
+**誤ると**:
+
+- **バッチ**: ログなしバッチの 31 文目は上限を超えて失敗します。
+- **行サイズ**: 1.2 MB のペイロードを 1 行に入れると拒否されます。S3 に置いてキーを持ちます。
+- **PITR**: 無効にしてから有効にし直すと、復元できる起点がその時点まで進み、それ以前には戻せません。
+- **TTL**: テーブルでカスタム TTL を有効にしていないと `USING TTL` を使えません。作成時に有効にすると、後から無効にできません。期限切れの行はクエリに出ませんが、ストレージからの削除は通常 10 日以内です。
+
 **DynamoDB との違い**: 既存の Cassandra の資産を使うなら Keyspaces です。新規で AWS に寄せるなら DynamoDB が統合の面で有利です。
 
 ## Amazon MemoryDB {#memorydb}
@@ -179,6 +273,8 @@ Apache Cassandra 互換のサーバーレスなデータベースです。既存
 [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 耐久性のあるインメモリデータベースです。Valkey と Redis OSS に互換です。キャッシュではなく**主データベース**として使えます。
+
+**提供単位**: クラスターはリージョン単位で VPC の中に置きます。ノードは AZ 単位で、トランザクションログは複数の AZ に保存されます([リソースの提供単位](resource-scope.md#two-axes))。
 
 読み取りはマイクロ秒、書き込みは 1 桁ミリ秒です。書き込みは Multi-AZ のトランザクションログに永続化してから応答します。
 
@@ -191,6 +287,15 @@ Apache Cassandra 互換のサーバーレスなデータベースです。既存
 | スナップショット | 保存して復元に使う |
 | マルチリージョン | アクティブアクティブ。通常 1 秒未満で複製する。競合は CRDT と Last Writer Wins で解決する |
 | ベクトル検索 | Flat と HNSW |
+
+**例**:
+
+- **シャード**: 2 シャードで各シャードにレプリカ 1 台なら、2 × 2 で 4 ノードです。
+- **レプリカの読み取り**: `READONLY` の後にレプリカを読むと、直前の書き込みが見えないことがあります。在庫の確定はプライマリで読みます。
+- **データ階層化**: 500 バイトの String 値で、SSD から読むと、メモリと比べて約 450 マイクロ秒増えます。ノードのメモリのうち 19% はデータ以外に確保されます。
+- **マルチリージョン**: 東京とバージニアで同じキーを同時に `SET` すると、最後の書き込みが残ります。
+
+**誤ると**: 値よりキーが大きいデータにデータ階層化を使うと効果が薄くなります。キーは常にメモリに残るからです。
 
 ### ElastiCache との違い {#memorydb-vs-elasticache}
 
@@ -216,9 +321,15 @@ Apache Cassandra 互換のサーバーレスなデータベースです。既存
 
 サーバーレスで、メモリストアに直近のデータを、マグネティックストアに履歴を置きます。SQL で問い合わせ、ストア間の移動はポリシーで自動的に行われます。
 
+**提供単位**: データベースはリージョン単位で VPC の外にあります。
+
+**例**: 2026 年に新しいアカウントで LiveAnalytics を使おうとしても、新規の受付は終わっています。試験で「新規の IoT の時系列」と問われたら InfluxDB を選びます。
+
 ### Timestream for InfluxDB {#timestream-influxdb}
 
 マネージドの InfluxDB です。既存の InfluxDB のコード、ツールをそのまま使えます。
+
+**提供単位**: DB インスタンスは AZ 単位で、VPC のサブネットに置きます。Multi-AZ はスタンバイを別の AZ に置きます([リソースの提供単位](resource-scope.md#two-axes))。
 
 | 項目 | 内容 |
 | --- | --- |
@@ -228,6 +339,10 @@ Apache Cassandra 互換のサーバーレスなデータベースです。既存
 | アクセス | Influx API と UI。ホストへの直接アクセスは不可 |
 | ポート | 既定 8086 |
 | 収集 | Telegraf など |
+
+**例**: `db.influx.large` は 2 vCPU、16 GiB のメモリです。工場の 1,000 台のセンサーが Telegraf で送るメトリクスを保存し、5 分平均をダッシュボードに出します。ホストに SSH して設定を変えることはできません。
+
+**誤ると**: セキュリティグループで 8086 を許可していないと、Telegraf の送信がタイムアウトします。Single-AZ のインスタンスは、その AZ の障害で止まります。
 
 **選び方**:
 
@@ -243,6 +358,8 @@ Apache Cassandra 互換のサーバーレスなデータベースです。既存
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 OS とデータベースに管理者権限でアクセスできる RDS です。パッケージアプリの要件で、独自のパッチや設定が必要なときに使います。対応エンジンは Oracle と SQL Server だけです。
+
+**提供単位**: DB インスタンスは AZ 単位で、自分のアカウントの VPC に置かれます([リソースの提供単位](resource-scope.md#scope-zonal))。
 
 !!! danger "RDS Custom for Oracle はサポート終了"
     **2027 年 3 月 31 日で RDS Custom for Oracle のサポートが終了します。** 以後は利用できません。AWS は 2026 年 3 月 31 日から 2027 年 3 月 31 日の間に、EC2 上の Oracle へ移行するよう案内しています。新規の設計では選びません。RDS Custom for SQL Server は、この通知の対象ではありません。
@@ -267,6 +384,10 @@ OS とデータベースに管理者権限でアクセスできる RDS です。
 
 **選び方**: OS への権限が不要なら RDS、自由に管理したいなら EC2、中間の RDS Custom は SQL Server など要件が明確な場合に限ります。
 
+**例**: 業務パッケージが SQL Server のホストにエージェントの導入を求めるなら、RDS では導入できないので RDS Custom for SQL Server です。
+
+**誤ると**: サポート境界の外の変更(EC2 ホストの手動停止など)をすると、自動化が止まったりサポートの対象外になったりします。外部のライセンスサーバーが公開 IP を固定で許可していると、ホストの置き換えで IP が変わって通信できなくなります。
+
 ## Aurora の応用 {#aurora-advanced}
 
 基本は [Aurora](databases.md#aurora)、[Serverless v2](databases.md#aurora-serverless-v2)、[グローバルデータベース](databases.md#aurora-global-database) を参照してください。ここでは、そこで扱っていない機能を比べます。
@@ -280,6 +401,20 @@ OS とデータベースに管理者権限でアクセスできる RDS です。
 | ゼロ ETL 統合 | Redshift や SageMaker のレイクハウスへほぼリアルタイムで複製する | パイプラインなしの分析 | 対応エンジンを確認する |
 | pgvector | PostgreSQL のベクトル検索 | RAG、類似検索 | [ベクトルインデックス](#vector-indexes) |
 
+機能ごとの例です。
+
+- **クローン**: 10 TB の本番から検証環境を作るとき、作成時はデータをコピーしません。変更したページの分だけストレージが増えます。16 個目は全量のコピーになります。
+- **バックトラック**: `BacktrackWindow` は秒で指定し、上限は 72 時間です。86,400 なら 24 時間前まで戻せます。**誤ると**: クラスター全体が戻るので、1 つのテーブルだけ戻すことはできません。作成時に有効にしていないと使えません。
+
+```bash
+aws rds backtrack-db-cluster --db-cluster-identifier app \
+  --backtrack-to 2026-10-31T10:04:00Z
+```
+
+- **パラレルクエリ**: 集計に数分かかる分析クエリが対象です。主キーで 1 行を引くクエリは速くなりません。
+- **Limitless Database**: 1 つのライターの書き込みが限界に達した PostgreSQL が対象です。Standard のストレージ構成では使えません。
+- **ゼロ ETL 統合**: 毎晩の ETL ジョブをなくし、注文を分析先へほぼリアルタイムで反映します。
+
 ### グローバルデータベースの切り替え {#aurora-global-switchover}
 
 | 操作 | 用途 | RPO |
@@ -289,9 +424,15 @@ OS とデータベースに管理者権限でアクセスできる RDS です。
 
 Aurora PostgreSQL は `rds.global_db_rpo` で RPO の上限を設定、追跡できます。
 
+**例**: 東京の障害でセカンダリの遅延が数秒なら、フェイルオーバーで直近の数秒分の書き込みを失う可能性があります。`rds.global_db_rpo` を 60 にすれば(最小は 20 秒)、許容する遅れを 60 秒に定めて追跡できます。**誤ると**: すべてのセカンダリの遅れが 60 秒を超えると、プライマリのトランザクションのコミットがブロックされます。
+
 ### Aurora DSQL {#aurora-dsql}
 
 サーバーレスで分散型の、PostgreSQL 互換のリレーショナルデータベースです。アクティブアクティブ構成で、インフラの管理やフェイルオーバーの処理が不要です。
+
+**提供単位**: クラスターはリージョン単位で、VPC の中には置きません。マルチリージョンのクラスターは複数のリージョンにまたがります。
+
+**例**: 2 つのリージョンの注文 API が、それぞれ近いリージョンのエンドポイントへ `INSERT` します。Aurora グローバルデータベースなら、片方はプライマリへ書き込みを送る必要があります。
 
 | 比較 | Aurora グローバルデータベース | Aurora DSQL |
 | --- | --- | --- |
@@ -338,6 +479,14 @@ SELECT id FROM docs ORDER BY embedding <=> $1 LIMIT 5;
 | `probes`（IVFFlat） | 検索で調べるクラスターの数。上げると精度が上がる |
 
 **症状**: HNSW は削除や上書きが多いと、メモリの増加や精度の低下が起きることがあります。Aurora PostgreSQL は [Amazon Bedrock のナレッジベース](genai-apps.md)の保存先にも使えます。
+
+**値の例**:
+
+- **Flat**: 100 万件を全件比較するので、1 回の検索で 100 万回の距離計算です。1,000 件の小さな表なら Flat で十分です。
+- **`hnsw.ef_search`**: `LIMIT 5` に対し 100 にすると、候補を 100 件調べてから 5 件を返します。`LIMIT` より小さくすると、返る件数が足りないことがあります。
+- **`lists`**: pgvector の README は 100 万行まで「行数 ÷ 1,000」を目安にしています。100 万行なら `lists = 1000` です。
+- **`probes`**: 同じく `lists` の平方根が目安で、1,000 なら約 32 です。`SET ivfflat.probes = 32;` と指定します。**誤ると**: `probes = 1` では 1,000 クラスターのうち 1 つしか調べず、近いベクトルを取りこぼします。
+- **`vector(1024)`**: 埋め込みモデルの次元数に合わせます。**誤ると**: 1,536 次元のベクトルを入れるとエラーになります。
 
 ## データベースの選び方 {#choosing}
 
@@ -395,6 +544,12 @@ flowchart TD
 | Redshift と Aurora | 分析 → Redshift。トランザクション → Aurora |
 | Neptune とリレーショナル | 関係の深さが可変 → Neptune。固定の結合 → リレーショナル |
 | Timestream と CloudWatch | 自分のアプリの時系列 → Timestream。AWS の運用メトリクス → CloudWatch |
+
+**判断の例**:
+
+- Redis のソート済みセットでランキングの正本を持ち、ノードが落ちても失えないなら MemoryDB です。RDS の結果を 60 秒キャッシュするだけなら ElastiCache です。
+- 既存の MongoDB の `$lookup` や入れ子の検索を残すなら DocumentDB です。主キーで 1 件を引くだけの新規のアプリなら DynamoDB です。
+- S3 の CSV を月に 1 回調べるなら Athena です。毎日 100 人が BI ダッシュボードを見るなら Redshift です。
 
 ## 既定値と上限のまとめ {#numbers}
 

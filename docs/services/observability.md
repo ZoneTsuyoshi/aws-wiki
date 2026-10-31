@@ -16,7 +16,15 @@
 
 モニタリングは「起きると分かっている問題」の検知です。オブザーバビリティは、想定外の問題を調べられるかどうかを指します。
 
+**例:** 注文 API の `5XXError` が 5 分間で 40 件に増えたとします。
+
+- ロギングは、1 件ごとの `PaymentFailed` のメッセージを残します。
+- モニタリングは、アラームで「5 分で 10 件を超えた」と知らせます。
+- オブザーバビリティは、想定していなかった「決済の呼び出しだけが 3 秒遅い」という原因まで、トレースとログからたどれる状態です。
+
 ## CloudWatch メトリクス {#cloudwatch-metrics}
+
+**提供単位:** リージョン。VPC の外のサービスで、VPC の中からはインターフェイスエンドポイント（`monitoring`）か NAT 経由で呼びます（[提供単位の一覧](resource-scope.md#scope-regional-outside)）。
 
 ### 基本の用語 {#metrics-concepts}
 
@@ -31,6 +39,11 @@
 ディメンションの組み合わせが違えば別のメトリクスです。`userId` のような値をディメンションにすると、メトリクスが増えて料金も増えます。
 
 メトリクスはリージョンごとに存在し、削除はできません。新しいデータがなければ 15 か月で期限切れになります。
+
+- **名前空間の例:** `MyApp/Orders` は作れます。`AWS/Orders` のように `AWS/` で始めるとエラーです。
+- **ディメンションの例:** `Service=checkout` と `Service=checkout, Operation=pay` は別のメトリクスです。後者だけ送っても、前者の値は自動で集計されません。
+- **増え方の計算:** `userId` が 10,000 種類、`Operation` が 5 種類なら、組み合わせは `10,000 × 5 = 50,000` メトリクスです。`Operation` だけなら 5 個で済みます。
+- **誤ると:** 東京で動かすアプリのメトリクスを `us-east-1` で探しても出ません。リージョンが違うと見えないので、まず画面のリージョンを確認します。
 
 ### 解像度と保持期間 {#metrics-resolution}
 
@@ -47,6 +60,18 @@
 | 3,600 秒 | 455 日（15 か月） |
 
 EC2 は基本モニタリングでは多くのメトリクスが 5 分間隔で、詳細モニタリングを有効にすると 1 分間隔です。メモリ使用率のように OS の内部の値は既定では取得できず、CloudWatch エージェントが必要です。
+
+**例:** 1 分間隔で送った標準メトリクスを読むと、次のようになります。
+
+| 調べる時点 | 読める細かさ |
+|---|---|
+| 10 日前 | 1 分 |
+| 40 日前 | 5 分 |
+| 100 日前 | 1 時間 |
+| 16 か月前 | 期限切れで読めない |
+
+- **高解像度の例:** `StorageResolution: 1` で送った値を 1 秒単位で読めるのは 3 時間だけです。翌日に見ると 1 分単位になっています。
+- **誤ると:** 基本モニタリングの EC2 に `Period=60` のアラームを作ると、データが 5 分に 1 回しか来ません。1 分ごとの判定では欠落が混ざり、`INSUFFICIENT_DATA` になりやすくなります。
 
 ### PutMetricData でカスタムメトリクスを送る {#put-metric-data}
 
@@ -73,6 +98,11 @@ cloudwatch.put_metric_data(
 - 1 リクエストは 1 MB まで、異なるメトリクスは 1,000 個まで
 - 時刻は過去 2 週間から未来 2 時間まで指定可能（EMF は過去 14 日から未来 2 時間まで）
 - `Values` と `Counts` で 1 データに最大 150 個の値をまとめられる
+
+**計算例:** 2,500 種類のメトリクスを送るなら、1 回 1,000 個までなので `2,500 ÷ 1,000` を切り上げて 3 回に分けます。
+
+- **時刻の例:** 今日が 10 月 31 日なら、10 月 20 日の値は送れます。3 週間前の 10 月 10 日の値は範囲外です。
+- **誤ると:** 実行ロールに `cloudwatch:PutMetricData` がないと、呼び出しが権限エラーになります。例外を握りつぶすコードでは、メトリクスが出ないだけに見えます。
 
 ### Embedded Metric Format (EMF) {#emf}
 
@@ -104,11 +134,15 @@ def handler(event, context):
 
 `Service` と `OrderLatency` がメトリクスになり、`orderId` はログとしてだけ残ります。
 
+**例:** 上の出力で `Namespace` を `MyApp/Orders` にすると、CloudWatch には `MyApp/Orders` の `OrderLatency`（`Service=checkout`）が 1 つ増えます。`orderId` はメトリクスにならないので、注文が 100 万件あってもメトリクスは 1 つのままです。
+
 | 制限 | 値 |
 |---|---|
 | 1 イベントのサイズ | 1 MB |
 | 1 ログイベントのメトリクス定義 | 全ディレクティブの合計で 100 個。超えるとそのイベントからは何も抽出されない |
 | 1 ディメンションセットのキー | 30 個 |
+
+**例:** 1 イベントに 101 個のメトリクスを定義すると、100 個が抽出されるのではなく、そのイベントからは 1 つも抽出されません。多いときはイベントを分けます。
 
 出力は Lambda の標準出力でそのまま処理されます。公式のクライアントライブラリや Powertools for AWS Lambda を使うと、自分で JSON を組み立てずに済みます。
 
@@ -117,6 +151,8 @@ def handler(event, context):
 | `PutMetricData` | Lambda 以外も含む単純な送信 | 呼び出しの遅延と料金、スロットリング |
 | EMF | Lambda や大量の送信、ログと数値を結びつけたい | ログの料金がかかる |
 | メトリクスフィルター | コードを変えずに既存ログから数値を作る | 過去のログには適用されない |
+
+**選び方の計算:** Lambda が毎秒 600 回動き、1 回ごとに `PutMetricData` を呼ぶとします。API レートの既定は毎秒 500 件なので、`600 > 500` でスロットリングされます。EMF なら API を呼ばないので、この上限に当たりません。
 
 ### 統計とパーセンタイル {#statistics}
 
@@ -139,6 +175,21 @@ def handler(event, context):
 
 **落とし穴:** パーセンタイル系は生のデータポイントが必要です。`StatisticValues`（統計セット）で送ると、原則として `p99` などを取得できません。例外は、`SampleCount` が 1 で `Min`、`Max`、`Sum` が等しい場合と、`Min` と `Max` が等しく `Sum` が `Min × SampleCount` の場合です。また、負の値を含むメトリクスではパーセンタイルを使えない場合があります。
 
+**計算例:** 1 分間の値が `10, 20, 30, 40, 1000` のとき、次のようになります。
+
+| 統計 | 結果 | 計算 |
+|---|---|---|
+| `SampleCount` | 5 | 値の個数 |
+| `Sum` | 1,100 | 全部の合計 |
+| `Average` | 220 | `1100 / 5` |
+| `Minimum` / `Maximum` | 10 / 1,000 | 最小と最大 |
+| `TM(0%:80%)` | 25 | 上位 20% の 1,000 を除いて `100 / 4` |
+| `TC(0%:80%)` | 4 | 残った個数 |
+| `TS(0%:80%)` | 100 | 残った値の合計 |
+
+- **`PR` の例:** 1,000 件のうち 300 ms 以下が 970 件なら、`PR(:300)` は 97 です。「97% が 300 ms 以内」という SLO の確認に使えます。
+- **`WM` の例:** `WM(:300)` で値が `100, 200, 1000` なら、1,000 を 300 として `(100 + 200 + 300) / 3 = 200` です。`Average` の 433 より外れ値の影響が小さくなります。
+
 ### 期間 {#metric-period}
 
 期間は、統計を計算する時間幅です。取得時に指定し、値は秒です。
@@ -151,6 +202,8 @@ def handler(event, context):
 時間がたつと細かいデータは粗くまとめられます。たとえば 1 分のデータは 15 日間は 1 分単位で読め、その後は 5 分単位、63 日を過ぎると 1 時間単位になります。
 
 **落とし穴:** 20 日前の障害を 1 分単位で調べようとしても、もう 5 分単位にしか戻せません。保持の段階は上の[解像度と保持期間](#metrics-resolution)の表で確認します。
+
+**計算例:** 1 分ごとのエラー数が `12, 8, 10, 5, 15` なら、`Period=300` で `Sum` は 50、`Average` は 10 です。件数を見たいのに `Average` を選ぶと、50 件が 10 件に見えます。
 
 ### EC2 の既定メトリクスとエージェント {#ec2-metrics}
 
@@ -166,6 +219,12 @@ def handler(event, context):
 **具体例:** メモリ不足で落ちる EC2 を調べたいのに `AWS/EC2` にメモリのメトリクスがない、というのは正常な動作です。エージェントを導入し、`mem_used_percent` を送ります。
 
 **落とし穴:** 詳細モニタリングを有効にしても、メモリは増えません。間隔が 1 分になるだけです。
+
+```bash
+aws ec2 monitor-instances --instance-ids i-0123456789abcdef0
+```
+
+**例:** スケールアウトの判定を 5 分から 1 分に縮めたいなら、上のコマンドで詳細モニタリングを有効にします。ディスクの空きで通知したいなら、これではなくエージェントの `disk_used_percent` を使います。
 
 ### PutMetricData の全パラメータ {#put-metric-data-params}
 
@@ -187,6 +246,16 @@ aws cloudwatch put-metric-data --namespace MyApp/Orders \
 ```
 
 この 1 回で 100 件分の分布が送られ、パーセンタイルも計算できます。1 件ずつ 100 回呼ぶより速く、API 料金も抑えられます。
+
+**検算:** 件数は `90 + 9 + 1 = 100` です。合計は `100×90 + 200×9 + 300×1 = 11,100` で、`Average` は 111 ms です。
+
+パラメータごとの例です。
+
+- **`Dimensions`:** 31 個指定するとエラーです。上限は 30 個です。
+- **`Value`:** ゼロ除算で得た `NaN` をそのまま送るとエラーです。件数が 0 のときは送らないか、0 を送ります。
+- **`StatisticValues`:** `SampleCount=100, Sum=11100, Minimum=100, Maximum=300` と送ると、`Average` は読めますが `p99` は読めません。
+- **`Unit`:** 同じメトリクスに `Milliseconds` と `Seconds` を混ぜないようにします。単位を指定しないアラームは、動作が定まらなくなります。
+- **`StorageResolution`:** 既定の 60 のまま 1 秒ごとに送っても、1 秒単位では読めません。1 分にまとめられます。
 
 **動作の注意点:**
 
@@ -210,6 +279,8 @@ EMF のログは次の構造です。キーの大文字小文字は区別され�
 | ルート | 各ターゲット | ディメンションとメトリクスの値本体。ルートに置く |
 
 **具体例:** `"Dimensions": [["Service"], ["Service", "Operation"]]` と書くと、同じ値から 2 つのメトリクスができます。カスタムメトリクスの数も 2 倍になります。
+
+**最小の例:** `Dimensions` が `[["Service"]]` なら、ルートに `"Service": "checkout"` が必要です。`Metrics` の `Name` が `OrderLatency` なら、ルートに `"OrderLatency": 123` が必要です。`"Service": 1` のように数値にしないでください。
 
 **落とし穴:**
 
@@ -247,6 +318,18 @@ aws lambda update-event-source-mapping --uuid <UUID> --metrics-config Metrics=Ev
 
 **落とし穴:** スロットリングされた呼び出しは `Invocations` に数えません。呼び出し回数が平らなのに利用者がエラーを訴えるなら、`Throttles` を見ます。
 
+メトリクスごとの計算例です。
+
+- **`Errors`:** 5 分で `Invocations` が 1,000、`Errors` が 20 なら、エラー率は `20 / 1000 = 2%` です。
+- **`Throttles`:** 同じ 5 分に `Throttles` が 50 なら、届いた呼び出しは `1000 + 50 = 1,050` 件です。`Invocations` だけでは 50 件を見落とします。
+- **`ConcurrentExecutions`:** 毎秒 100 件、平均 0.5 秒なら、`100 × 0.5 = 50` です。
+- **`ClaimedAccountConcurrency`:** 予約 200、プロビジョニング済み 100、予約なしの実行 300 なら、`300 + 200 + 100 = 600` です。クォータが 1,000 なら、オンデマンドで使える残りは 400 です。
+- **`ProvisionedConcurrencySpilloverInvocations`:** プロビジョニング済み 50 に同時 80 件が来ると、30 件は通常の同時実行で動き、コールドスタートが起きます。0 より大きければ、不足のサインです。
+- **`IteratorAge`:** 値が `3,600,000` なら、最後に読んだレコードは 1 時間前のものです。Kinesis の保持期間を超えると、読む前に消えます。
+- **`OffsetLag`:** 値が 5,000 で増え続けるなら、処理が書き込みに追いついていません。
+- **`AsyncEventsDropped`:** 1 以上なら、イベントが捨てられています。送信先か DLQ がなければ、中身は失われます。
+- **`DeadLetterErrors`:** DLQ が SQS なのに、実行ロールに `sqs:SendMessage` がないと増えます。
+
 ### API Gateway の既定メトリクス {#apigw-metrics}
 
 名前空間は `AWS/ApiGateway` で、毎分送られます。次は REST API の名前です。
@@ -263,6 +346,10 @@ aws lambda update-event-source-mapping --uuid <UUID> --metrics-config Metrics=Ev
 **具体例:** `Latency` の p99 が 3,000 ms、`IntegrationLatency` が 2,950 ms なら、遅いのはバックエンドです。`IntegrationLatency` が 300 ms なら、API Gateway 側（認可やマッピング）を疑います。
 
 **落とし穴:** メソッドとリソース単位の値（`ApiName`、`Method`、`Resource`、`Stage`）は、ステージで詳細メトリクスを有効にしないと出ません。
+
+**計算例:** 5 分で `Count` の `SampleCount` が 10,000、`4XXError` の `Sum` が 200 なら、エラー率は 2% です。`4XXError` の `Average` は 0.02 になります。
+
+**キャッシュの例:** `CacheHitCount` が 900、`CacheMissCount` が 100 なら、ヒット率は `900 / (900 + 100) = 90%` です。
 
 ### メトリクス計算 {#metric-math}
 
@@ -302,6 +389,17 @@ cloudwatch.put_metric_alarm(
 
 **落とし穴:** 式を使うアラームでは、`Period` は最上位ではなく `Metrics` の各要素に書きます。`ReturnData: true` は式の 1 つだけにします。
 
+関数ごとの計算例です。
+
+- **四則演算:** `m1 = 12`、`m2 = 400` なら、`100 * m1 / m2` は 3 です。
+- **`FILL`:** `Errors` はエラーのない期間にデータがないことがあります。`FILL(m1, 0)` なら 0 として計算でき、率が欠落しません。
+- **`RATE`:** 累積の値が 5 分で 6,000 から 6,300 に増えたら、`(6300 - 6000) / 300 = 1` で毎秒 1 です。
+- **`IF`:** 夜間に `m2 = 3`、`m1 = 2` なら、率は 66% に跳ねます。`IF(m2 > 100, m1 / m2 * 100, 0)` は 0 を返すので、少数の呼び出しで鳴りません。
+- **`METRICS`:** `Id` が `errors_a`（3 件）と `errors_b`（5 件）なら、`SUM(METRICS("errors"))` は 8 です。文字列は `Id` との部分一致です。
+- **`SERVICE_QUOTA`:** `m1 = 160`、クォータが 200 なら、`m1 / SERVICE_QUOTA(m1) * 100` は 80 です。
+
+**誤ると:** `FILL` なしで `m1` が欠落すると、その期間の式の結果も欠落します。アラームは `TreatMissingData` の扱いで判定します。
+
 ## アラーム {#alarms}
 
 メトリクスがしきい値を超えると通知やアクションを実行します。
@@ -336,6 +434,11 @@ cloudwatch.put_metric_alarm(
 
 **複合アラーム**は複数のアラームの状態を AND や OR で組み合わせます。ノイズを減らしたいときに使います。
 
+**例:** 上のアラームの動きです。`orders` 関数のエラーが 1 分に 1 件以上ある分が、直近 5 分のうち 3 分に達すると `ALARM` になり、SNS に通知します。
+
+- **`TreatMissingData="notBreaching"`:** エラーがない分はデータが出ないので、正常として数えます。
+- **`AlarmActions`:** `arn:aws:sns:ap-northeast-1:111122223333:ops-alerts` のように指定します。
+
 ### 評価の仕組みと M out of N {#alarm-evaluation}
 
 | 設定 | 既定値、範囲 | 変えると何が起きるか |
@@ -353,6 +456,20 @@ cloudwatch.put_metric_alarm(
 新規作成の直後は `INSUFFICIENT_DATA` から始まります。更新すると状態は変わりませんが、設定は全部上書きされます。指定し忘れた項目は既定値に戻ります。
 
 アラームの状態とは別に、評価の状態もあります（`PARTIAL_DATA`、`IN_WARM_UP`、`EVALUATION_ERROR`、`EVALUATION_FAILURE`）。
+
+**検知までの時間の計算:**
+
+| `Period` | N | M | 最短で `ALARM` になるまで |
+|---|---|---|---|
+| 60 秒 | 1 | 1 | 1 分 |
+| 60 秒 | 5 | 3 | 3 分 |
+| 300 秒 | 3 | 3 | 15 分 |
+| 10 秒 | 3 | 3 | 30 秒（高解像度メトリクスのみ） |
+
+- **`ComparisonOperator` の例:** ディスクの空きが 10% 未満で鳴らすなら、`LessThanThreshold` でしきい値を 10 にします。`GreaterThanThreshold` のままだと、空きがある間ずっと `ALARM` です。
+- **`ActionsEnabled` の例:** メンテナンス中の 2 時間だけ通知を止めるなら `aws cloudwatch disable-alarm-actions` を使います。再開を忘れると、障害でも通知が来ません。
+- **1 日を超える例:** `Period=3600`、N=48 は 48 時間で 1 日を超えるので、評価は 1 時間に 1 回です。検知が最大で 1 時間ほど遅れます。
+- **誤ると:** `AlarmActions` を書かずに `put-metric-alarm` で更新すると、既存の通知先が消えます。更新では全項目を指定し直します。
 
 ### 欠落データの扱い {#treat-missing-data}
 
@@ -378,6 +495,10 @@ cloudwatch.put_metric_alarm(
 
 **落とし穴:** 一度だけ `ALARM` になり、その後データが止まると、状態が変わらないままに見えることがあります。また、ヘルスチェック用のハートビートに `notBreaching` を選ぶと、プロセスが止まっても `OK` のままです。
 
+**`breaching` の例:** バッチが 1 分ごとに `Heartbeat=1` を送るとします。`Period=60`、`N=3`、`M=3`、`breaching` にすると、プロセスが止まった 3 分後に `ALARM` です。
+
+**`ignore` の例:** 夜間に止まるワーカーのメトリクスで、夜の間は直前の状態を残したいときに選びます。夜に入る前が `ALARM` なら、朝まで `ALARM` のままです。
+
 ### アラームのアクション {#alarm-actions}
 
 `AlarmActions`、`OKActions`、`InsufficientDataActions` に、状態が変わったときの ARN を指定します。アクションは状態の変化で動き、同じ状態が続く間は繰り返しません。
@@ -389,6 +510,13 @@ cloudwatch.put_metric_alarm(
 | EC2 | `arn:aws:automate:<region>:ec2:stop`、`terminate`、`reboot`、`recover` | EC2 のメトリクス向け |
 | Auto Scaling | スケーリングポリシーの ARN | 異常検知のアラームでは不可 |
 | Systems Manager | OpsItem、インシデント | |
+
+例です。
+
+- **復旧:** `arn:aws:automate:ap-northeast-1:ec2:recover` を `StatusCheckFailed_System` のアラームに付けると、別のホストで復旧します。
+- **停止:** `CPUUtilization` が 1 時間ずっと 1% 未満の開発サーバーに `arn:aws:automate:ap-northeast-1:ec2:stop` を付けると、費用を抑えられます。
+- **復帰の通知:** `OKActions` にも同じ SNS トピックを指定すると、`ALARM` の 20 分後に復旧した、という流れが通知で追えます。
+- **誤ると:** `ALARM` が続く間は再通知されません。担当者が通知を見落としても、次の通知は状態が変わるまで届きません。
 
 ### 高解像度とパーセンタイルのアラーム {#percentile-alarms}
 
@@ -404,6 +532,10 @@ cloudwatch.put_metric_alarm(
 | `ignore` | 統計的に意味がなければ状態を変えない |
 
 **具体例:** 夜間に 1 時間 3 件しかない API に `p99` のアラームがあると、1 件の遅延で鳴ります。`ignore` にすると防げます。
+
+**高解像度の例:** `Period=10`、`EvaluationPeriods=3`、`DatapointsToAlarm=3` なら、最短 30 秒で `ALARM` です。元のメトリクスは `StorageResolution: 1` で送ります。
+
+**誤ると:** `Statistic="Average"` と `ExtendedStatistic="p99"` を同時に指定すると、エラーで作成できません。
 
 ### 複合アラーム {#composite-alarms}
 
@@ -425,6 +557,17 @@ aws cloudwatch put-composite-alarm --alarm-name web-degraded \
 
 **具体例:** CPU とメモリが両方高いときだけ通知したいなら、子には通知を付けず、複合アラームにだけ SNS を付けます。子にも付けると通知は減りません。
 
+上の `web-degraded` の判定です。
+
+| `cpu-high` | `disk-high` | `deploying` | 結果 |
+|---|---|---|---|
+| `ALARM` | `OK` | `OK` | `ALARM` |
+| `OK` | `ALARM` | `OK` | `ALARM` |
+| `ALARM` | `ALARM` | `ALARM` | `OK`（デプロイ中は鳴らさない） |
+| `OK` | `OK` | `OK` | `OK` |
+
+**誤ると:** 子を 101 個指定すると上限を超えます。EC2 の再起動を複合アラームのアクションに指定してもエラーです。再起動は子のメトリクスアラームに付けます。
+
 ### 異常検知 {#anomaly-detection}
 
 固定のしきい値の代わりに、過去のデータから「普通の帯」を学習します。時間、曜日の周期と傾向を考慮します。
@@ -440,6 +583,12 @@ aws cloudwatch put-composite-alarm --alarm-name web-degraded \
 
 **具体例:** 平日の昼に多く夜に少ない受注数は、固定のしきい値では夜の急減に気づけません。`LessThanLowerThreshold` の異常検知なら、夜の水準に対する急減で鳴ります。
 
+**しきい値の例:** `ANOMALY_DETECTION_BAND(m1, 2)` より `ANOMALY_DETECTION_BAND(m1, 4)` のほうが帯が太く、鳴りにくくなります。誤検知が多ければ値を上げます。
+
+**方向の例:** 急増だけ見るなら `GreaterThanUpperThreshold`、両方なら `LessThanLowerOrGreaterThanUpperThreshold` です。
+
+**除外の例:** 11 月の大型セールの 2 日間を学習から除外します。除外しないと、その水準が「普通」に近づき、モデルの精度が落ちます。
+
 ## ダッシュボードとインサイト {#dashboards}
 
 アプリケーションの健全性を一覧で確認する手段です。
@@ -453,6 +602,14 @@ aws cloudwatch put-composite-alarm --alarm-name web-degraded \
 | Application Signals | アプリケーション単位の性能と SLO |
 | Synthetics | 定期的に外部から URL や API を確認する |
 
+例です。
+
+- **Lambda Insights:** 割り当て 1,024 MB の関数で、メモリ使用量がピークで 900 MB に近いことを確認します。
+- **Container Insights:** ECS サービスのタスク単位の CPU を見て、1 タスクだけ 95% に張り付いていることを見つけます。
+- **Contributor Insights:** VPC フローログや API のアクセスログから、リクエストの多い IP の上位 10 件を出します。ログのイベントがルールに一致するたびに課金されます。
+- **Application Signals:** `orders` サービスの可用性と遅延を SLO として追います。
+- **Synthetics:** 利用者のいない深夜 3 時でも、5 分ごとに `/health` を確認します。
+
 ### ダッシュボードの設定 {#dashboard-settings}
 
 | 項目 | 内容 |
@@ -464,9 +621,15 @@ aws cloudwatch put-composite-alarm --alarm-name web-degraded \
 
 **落とし穴:** Logs Insights のウィジェットは、ダッシュボードを更新するたびにクエリが走り、スキャン料金がかかります。自動更新の間隔を短くしすぎないようにします。
 
+**例:** 東京と大阪の ALB の `RequestCount` を 1 枚に並べると、切り替え時の偏りが一目で分かります。1 グラフの 501 個目のメトリクスは載らないので、`SEARCH` の範囲を絞ります。
+
+**計算例:** スキャン量 2 GB のウィジェットが 1 分ごとに更新されると、1 時間で `2 × 60 = 120` GB をスキャンします。1 時間ごとの更新なら 2 GB です。
+
 ## CloudWatch Logs {#cloudwatch-logs}
 
 [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
+**提供単位:** リージョン。ロググループはリージョンごとに分かれます。VPC の外のサービスで、VPC の中からはインターフェイスエンドポイント（`logs`）か NAT 経由で送ります（[提供単位の一覧](resource-scope.md#scope-regional-outside)）。
 
 ### ロググループと保持期間 {#log-groups}
 
@@ -484,6 +647,8 @@ aws cloudwatch put-composite-alarm --alarm-name web-degraded \
 | リアルタイム確認 | Live Tail |
 | ログクラス | Standard と Essentials（旧 Infrequent Access） |
 
+**例:** Lambda 関数 `orders` なら、ロググループは `/aws/lambda/orders` です。実行環境が 3 つあれば、ログストリームが 3 本並びます。
+
 ### 保持期間の設定 {#log-retention}
 
 `PutRetentionPolicy` で日数を指定します。値は決まった中から選びます。
@@ -500,6 +665,8 @@ aws logs put-retention-policy --log-group-name /aws/lambda/orders --retention-in
 - Lambda が自動で作るロググループは無期限です。IaC で事前に作ると保持期間を管理できます。
 - 期限切れのログの削除には通常最大 72 時間かかりますが、削除対象になった時点で保管料金はかかりません。
 - 保持期間より古い時刻のイベントは `PutLogEvents` で拒否されます。
+
+**計算例:** 1 日 5 GB のログなら、保持 30 日で約 `5 × 30 = 150` GB、無期限で 1 年たつと `5 × 365 = 1,825` GB を保管します。保管量が 12 倍ほど違うので、料金も同じ比で増えます。
 
 ### ログクラス {#log-classes}
 
@@ -526,6 +693,12 @@ aws logs put-retention-policy --log-group-name /aws/lambda/orders --retention-in
 
 **具体例:** 調査のときにだけ検索するアプリの大量ログは Essentials にすると安くなります。しかし、そのログからアラームを作りたいなら、メトリクスフィルターのために Standard を選びます。
 
+```bash
+aws logs create-log-group --log-group-name /app/debug --log-group-class ESSENTIALS
+```
+
+**誤ると:** Essentials で作ると、`put-metric-filter` が失敗します。クラスは変えられないので、Standard のロググループを作り直し、アプリの出力先を切り替えます。古いログはそのまま残ります。
+
 ### PutLogEvents の制限 {#put-log-events}
 
 | 項目 | 値 |
@@ -538,6 +711,11 @@ aws logs put-retention-policy --log-group-name /aws/lambda/orders --retention-in
 | 並び順 | 時刻の昇順。違えば失敗する |
 
 **計算例:** 平均 200 バイトのログ 5,000 件を 1 回で送ると、サイズは `(200 + 26) × 5,000 = 1,130,000` バイトです。上限を超えるので 2 回に分けます。
+
+**件数と容量のどちらが先か:** 10,000 件を 1 回で送れるのは、平均 78 バイトまでです。`(78 + 26) × 10,000 = 1,040,000` は収まり、`(79 + 26) × 10,000 = 1,050,000` は超えます。
+
+- **時刻の例:** 今日が 10 月 31 日で、10 月 1 日のイベントが混ざると、そのイベントだけ拒否されます。応答の `rejectedLogEventsInfo` で分かります。
+- **並び順の例:** 時刻が `10:00:02, 10:00:01` の順だとバッチごと失敗します。送る前に並べ替えます。
 
 ### KMS による暗号化 {#logs-kms}
 
@@ -558,6 +736,17 @@ aws logs associate-kms-key --log-group-name /aws/lambda/orders --kms-key-id <KMS
 
 **落とし穴:** キーポリシーに `logs.<region>.amazonaws.com` がないと、関連付けが失敗します。鍵を無効化や削除すると、そのログは読めなくなります。関連付けを解除しても、過去のログはその鍵で暗号化されたままなので、鍵は残します。
 
+```json
+{
+  "Effect": "Allow",
+  "Principal": {"Service": "logs.ap-northeast-1.amazonaws.com"},
+  "Action": ["kms:Encrypt*", "kms:Decrypt*", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:Describe*"],
+  "Resource": "*"
+}
+```
+
+**例:** 東京のロググループに使うキーなら、上のようにキーポリシーへ追加します。関連付けの反映には最大 5 分かかります。
+
 ### S3 へのエクスポート {#logs-export}
 
 ```bash
@@ -577,6 +766,12 @@ aws logs create-export-task --log-group-name /aws/lambda/orders \
 
 **使い分け:** 継続的な保管にエクスポートは向きません。公式も、継続的な送信にはサブスクリプションフィルターを勧めています。
 
+**上のコマンドの範囲:** `--from 1767225600000` は 2026-01-01 00:00 UTC、`--to 1767312000000` は 2026-01-02 00:00 UTC です。値はミリ秒です。秒で渡すと 1970 年付近を指し、ログが出力されません。
+
+- **並行の例:** 東京で 1 つ実行中に 2 つ目を作るとエラーです。1 つ終わるのを待ちます。
+- **バケットの例:** 東京のロググループを `us-east-1` のバケットへは出せません。東京のバケットへ出してから、S3 のレプリケーションで移します。
+- **時間の例:** 取り込み直後のログは、エクスポートできるまで最大 12 時間かかります。また、タスクは 24 時間でタイムアウトするので、1 年分で失敗したら 1 か月ずつに分けます。
+
 ### Live Tail {#live-tail}
 
 取り込まれたログを、ほぼリアルタイムで流し見します。API は `StartLiveTail` で、セッションの使用時間で課金されます。
@@ -589,6 +784,16 @@ aws logs create-export-task --log-group-name /aws/lambda/orders \
 
 **使い分け:** 今起きている現象を見るなら Live Tail、過去を集計するなら Logs Insights です。
 
+```bash
+aws logs start-live-tail \
+  --log-group-identifiers arn:aws:logs:ap-northeast-1:111122223333:log-group:/aws/lambda/orders \
+  --log-event-filter-pattern "ERROR"
+```
+
+**例:** デプロイの直後に `ERROR` だけ流して様子を見ます。1 セッションは最長 3 時間です。一致するイベントが毎秒 500 件を超えると、表示はサンプルになります。
+
+**誤ると:** Essentials クラスのロググループは指定できません。ロググループを 11 個指定すると上限を超えます。
+
 ### データ保護ポリシー {#logs-data-protection}
 
 取り込み時に機密情報を検出してマスクします。ポリシーの詳細は [AI ページのデータ保護](ai.md#cloudwatch-data-protection)を参照してください。
@@ -599,6 +804,10 @@ aws logs create-export-task --log-group-name /aws/lambda/orders \
 | マスクの解除 | `logs:Unmask` 権限と、Logs Insights の `unmask(@message)` |
 | 検知のメトリクス | `AWS/Logs` の `LogEventsWithFindings` |
 | 範囲 | 適用後に取り込むログのみ |
+
+**例:** `{"email": "user@example.com"}` というログは、検索結果では `email` の値が `*` の並びに置き換わります。`logs:Unmask` を持つ担当者だけが、Logs Insights の `fields unmask(@message)` で元の値を読めます。
+
+**誤ると:** 適用より前に取り込んだログはマスクされないので、機微な値が残ります。古いログには保持期間で対処します。
 
 ### メトリクスフィルター {#metric-filters}
 
@@ -614,6 +823,8 @@ aws logs put-metric-filter \
 ```
 
 ### メトリクスフィルターの設定 {#metric-filter-settings}
+
+上のコマンドの動きです。JSON のログ `{"level":"ERROR","errorType":"PaymentFailed"}` が 1 分に 7 件届くと、`MyApp/Orders` の `PaymentErrors` はその 1 分に `Sum=7` になります。
 
 | 項目 | 内容 | 既定値、上限 |
 |---|---|---|
@@ -636,11 +847,23 @@ aws logs put-metric-filter \
 
 **具体例:** 平常時も 0 を出したいなら `defaultValue=0` にします。一致がない期間も値が出るので、`Average` でエラー率を計算できます。指定しないとデータが欠落し、アラームの扱いに注意が必要です。
 
+**`metricValue` の例:** ログが `{"latency": 250}` なら、`metricValue=$.latency` で値は 250 です。`metricValue=1` なら、件数を数えるだけです。
+
+**`dimensions` の例:** `dimensions={Operation=$.operation}` で、操作ごとに分けます。`operation` が 5 種類なら 5 メトリクスです。4 個目のディメンションは指定できません。
+
+**パターンの例:**
+
+- `?ERROR ?WARN` は、`WARN disk 85%` に一致します。`INFO ok` には一致しません。
+- `{ $.status >= 500 }` は、`{"status": 503}` に一致します。`{"status": 200}` には一致しません。
+- `[w1=ERROR, w2]` は、スペースで 2 列に分かれる `ERROR timeout` に一致します。
+
 **落とし穴:**
 
 - `requestId` や IP をディメンションにしてはいけません。値ごとにカスタムメトリクスとして課金され、1,000 種類を超えると、そのフィルターは無効化されます。
 - ディメンションを付けたメトリクスには `defaultValue` を指定できません。
 - 負の値を発行するとパーセンタイルは使えなくなります。
+
+**誤ると:** ログのレベルが `"level":"error"` と小文字なのに `$.level = "ERROR"` と書くと、一致せず 0 件のままです。コンソールの「パターンをテスト」で実際のログを試します。
 
 ### サブスクリプションフィルター {#subscription-filters}
 
@@ -656,6 +879,17 @@ aws logs put-metric-filter \
 | ログを別のサービスで処理したい | サブスクリプションフィルター |
 | 必要なときに調べたい | Logs Insights |
 
+**例:** 全ログを Firehose で S3 へ送り、別に `ERROR` だけ Lambda へ送ると、フィルターを 2 個使います。6 個目を作ろうとするとエラーです。
+
+```python
+import base64, gzip, json
+
+def handler(event, context):
+    payload = gzip.decompress(base64.b64decode(event["awslogs"]["data"]))
+    for log_event in json.loads(payload)["logEvents"]:
+        print(log_event["message"])
+```
+
 ### サブスクリプションフィルターの設定 {#subscription-settings}
 
 | 項目 | 内容 |
@@ -670,6 +904,22 @@ Lambda を宛先にするときは、`lambda:AddPermission` で CloudWatch Logs 
 **具体例:** ログストリームの少ないロググループを Kinesis へ送ると、特定のシャードに偏って `DeliveryThrottling` が増えます。`distribution=Random` にするか、オンデマンドのストリームを使います。
 
 **落とし穴:** スロットリングされた配信は最大 24 時間再試行され、その後は破棄されます。受け取る側は Base64 をデコードしてから gzip を展開します。Essentials クラスでは使えません。
+
+設定ごとの例です。
+
+```bash
+aws logs put-subscription-filter \
+  --log-group-name /aws/lambda/orders \
+  --filter-name to-firehose \
+  --filter-pattern "" \
+  --destination-arn arn:aws:firehose:ap-northeast-1:111122223333:deliverystream/logs-to-s3 \
+  --role-arn arn:aws:iam::111122223333:role/CWLtoFirehose
+```
+
+- **`filterPattern`:** `""` なら全件、`ERROR` なら `ERROR` を含む行だけです。
+- **`roleArn`:** Firehose では、上のようにロールが必要です。Lambda を宛先にするときに指定する必要はありません。
+- **別アカウントへ:** ログ集約アカウントの `PutDestination` で宛先を作り、送信元のアカウント `111122223333` を宛先ポリシーで許可します。
+- **誤ると:** Lambda の権限を足し忘れると、フィルターの作成が失敗します。
 
 ## Logs Insights でログを検索する {#logs-insights}
 
@@ -741,6 +991,8 @@ filter @type = "REPORT" and ispresent(@initDuration)
 
 API では `StartQuery` で開始し、`GetQueryResults` で結果を取得します（非同期）。Logs Insights の独自言語のほか、OpenSearch PPL や SQL でも書けます。
 
+**料金の計算例:** 1 日 5 GB のロググループで、30 日分を検索するとスキャン量は `5 × 30 = 150` GB です。障害の前後 1 時間に絞れば、約 `5 × 2 / 24 = 0.42` GB で済みます。
+
 ### 自動で使えるフィールド {#insights-fields}
 
 | フィールド | 内容 |
@@ -752,6 +1004,10 @@ API では `StartQuery` で開始し、`GetQueryResults` で結果を取得し�
 | `@log` | `<アカウント ID>:<ロググループ名>` |
 
 Lambda の `REPORT` 行には、さらに `@type`、`@duration`、`@billedDuration`、`@memorySize`、`@maxMemoryUsed`、`@initDuration`、`@requestId` などがあります。
+
+**例:** `@log` の値は `111122223333:/aws/lambda/orders` の形です。複数のロググループを 1 回で検索するとき、どのグループの行かを判別できます。
+
+**例:** 取り込みの遅れは、`fields (@ingestionTime - @timestamp) / 1000 as delaySec` で秒にできます。値が 300 なら、発生から 5 分遅れて届いています。
 
 ### コマンドの詳細 {#insights-commands}
 
@@ -800,6 +1056,8 @@ fields strcontains(@message, "ERROR") as isError
 
 **落とし穴:** コンソールを閉じてもクエリは止まらず、最後まで課金されます。`sort @timestamp` の前に `filter` を置くと分かりやすく、時間範囲とロググループを絞ることが料金の節約になります。
 
+**誤ると:** ロググループを 51 個指定するとエラーです。同時に 100 クエリを超えると、ダッシュボードの更新も巻き込んで制限に当たります。
+
 ## 構造化ログ {#structured-logging}
 
 ### ロギング戦略 {#logging-strategy}
@@ -813,6 +1071,14 @@ fields strcontains(@message, "ERROR") as isError
 | 決まった項目で出す | `service`、`operation`、`userId` など。キー名を統一する |
 | 機微情報を出さない | パスワード、トークン、個人情報は記録しない |
 | コストを管理する | 保持期間を設定し、大きなペイロードを丸ごと出さない |
+
+**例:** 1 行が次の形なら、方針をすべて満たします。
+
+```json
+{"level":"INFO","service":"orders","operation":"createOrder","requestId":"c6af9ac6-7b61-11e6-9a41-93e8deadbeef","userId":"u-42","durationMs":123}
+```
+
+**誤ると:** `password` をログに出すと、保持期間の分だけ残り、ログを読める全員に見えます。100 KB のペイロードを毎秒 100 回出すと、`100 × 100 = 10,000` KB、毎秒約 10 MB のログが増えます。
 
 ### アプリケーションイベントとユーザー操作の構造化ログ {#structured-events}
 
@@ -848,9 +1114,22 @@ LoggingConfig:
 
 Powertools for AWS Lambda の Logger を使うと、相関 ID などの共通項目を自動で付けられます。
 
+設定の値ごとの動きです。アプリのログレベルは `LogFormat: JSON` のときに効きます。
+
+| 設定 | 既定 | 値 |
+|---|---|---|
+| `LogFormat` | `Text` | `Text`、`JSON` |
+| `ApplicationLogLevel` | `INFO` | `DEBUG`、`INFO`、`WARN`、`ERROR`、`FATAL` など |
+| `SystemLogLevel` | `INFO` | `DEBUG`、`INFO`、`WARN` |
+
+- **例:** `ApplicationLogLevel: WARN` なら、`logger.info` の行は CloudWatch に送られません。障害の調査中だけ `DEBUG` に変えると、再デプロイなしで詳細を見られます。
+- **誤ると:** `SystemLogLevel: WARN` にすると `start` と `report` の行が送られません。上で紹介した `filter @type = "REPORT"` のクエリが 0 件になります。
+
 ## X-Ray によるトレース {#xray}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
+**提供単位:** リージョン。VPC の外のサービスで、VPC の中からはエンドポイントか NAT 経由で送ります。トレースは送ったリージョンに保存されます（[提供単位の考え方](resource-scope.md#two-axes)）。
 
 分散アプリケーションで 1 つのリクエストの経路と、各区間の時間を可視化します。
 
@@ -882,6 +1161,8 @@ sequenceDiagram
 
 X-Ray の分類は、クライアントエラー（4xx）が **Error**、サーバーエラー（5xx）が **Fault**、429 が **Throttle** です。
 
+**例:** `404` は Error、`503` は Fault、`429` は Throttle です。サービスマップで Fault が多いノードは、そのサービス自身の問題を疑います。Error が多いなら、呼び出し側の問題かもしれません。
+
 ### アノテーションとメタデータ {#annotations-metadata}
 
 | | アノテーション | メタデータ |
@@ -911,6 +1192,8 @@ annotation.customer_tier = "gold" AND responsetime > 2
 
 API の `GetTraceSummaries` で ID を探し、`BatchGetTraces` で詳細を取得します。
 
+**例:** `customer_tier` を `put_metadata` で入れると、上の検索では 0 件です。検索に使うキーはアノテーションにします。
+
 ### サンプリング {#xray-sampling}
 
 全リクエストは記録しません。既定のルールは**毎秒最初の 1 件と、それ以降の 5%** です。
@@ -923,6 +1206,8 @@ API の `GetTraceSummaries` で ID を探し、`BatchGetTraces` で詳細を取�
 | 条件 | サービス名、HTTP メソッド、URL パスなど |
 
 コンソールでルールを変更すれば、コードの修正や再デプロイは不要です。サンプリングの判定は最初のサービスで 1 度だけ行われ、下流はそれに従います。
+
+**例:** 毎秒 10 リクエストの API なら、既定のルールで `1 + (10 - 1) × 0.05 = 1.45` 件です。1 分で約 87 件を記録します。1 件のエラーが記録される保証はないので、エラーの有無はメトリクスで見ます。
 
 ### サンプリングルールの全項目 {#xray-sampling-rule}
 
@@ -966,6 +1251,10 @@ SDK からのデータを **UDP 2000 番**で受け取り、X-Ray API へ送る�
 
 必要な権限は `xray:PutTraceSegments` と `xray:PutTelemetryRecords` で、管理ポリシー `AWSXRayDaemonWriteAccess` に含まれます。
 
+**例:** ECS では、アプリのコンテナと同じタスク定義に X-Ray デーモンのコンテナを足し、`2000/udp` を受けます。
+
+**誤ると:** タスクロールに `AWSXRayDaemonWriteAccess` がないと、アプリは UDP に投げるだけなのでエラーになりません。デーモンのログに権限エラーが出て、トレースだけが届きません。
+
 ### SDK と OpenTelemetry（現在の推奨） {#xray-opentelemetry}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
@@ -980,6 +1269,8 @@ SDK からのデータを **UDP 2000 番**で受け取り、X-Ray API へ送る�
 | Lambda | X-Ray SDK | ADOT の Lambda レイヤー |
 
 トレースの保存先としての X-Ray や、CloudWatch コンソールでの表示は引き続き使えます。
+
+**例:** 新しい Lambda は ADOT の Lambda レイヤーで計装します。EC2 の新しいアプリは OpenTelemetry SDK で計装し、デーモンの代わりに CloudWatch エージェントで送ります。既存の X-Ray SDK のアプリは動き続けますが、新機能は入りません。
 
 ### Lambda のアクティブトレース {#lambda-active-tracing}
 
@@ -999,6 +1290,10 @@ Tracing: Active
 - Lambda のサンプリングは毎秒 1 件と、それ以降の 5%
 - Kafka や Amazon MQ、DocumentDB のイベントソースマッピングでは非対応
 
+**例:** 毎秒 100 件の関数を `Active` にすると、`1 + 99 × 0.05 = 5.95` で毎秒約 6 件を記録します。全件は記録されません。
+
+**誤ると:** 実行ロールに権限がないと、`Active` にしてもトレースが届きません。`AWSXRayDaemonWriteAccess` を付けます。
+
 ### API Gateway での有効化 {#xray-apigateway}
 
 REST API のステージで有効にします。
@@ -1011,6 +1306,8 @@ aws apigateway update-stage --rest-api-id <ID> --stage-name prod \
 サンプリングルールは `ServiceName=<API 名>/<ステージ>`、`ServiceType=AWS::APIGateway::Stage` で指定します。
 
 すでにトレース中のサービスから呼ばれた場合、API Gateway は無効の設定でもトレースを引き継ぎます。
+
+**例:** API 名が `orders`、ステージが `prod` なら、`ServiceName=orders/prod` です。`ServiceName=orders` と書くとルールが一致せず、既定のルールが適用されます。
 
 ### セグメントのフィールド {#xray-segment-fields}
 
@@ -1032,6 +1329,18 @@ aws apigateway update-stage --rest-api-id <ID> --stage-name prod \
 
 1 ドキュメントは 64 KB までです。**大きいセグメントはサブセグメントを別送**して分割します。長いリクエストは `in_progress` で先に送ると、処理中でも見えます。
 
+```json
+{
+  "name": "orders",
+  "id": "70de5b6f19ff9a0a",
+  "trace_id": "1-581cf771-a006649127e371903a2de979",
+  "start_time": 1478293361.271,
+  "end_time": 1478293361.449
+}
+```
+
+**例:** 上は最小のセグメントです。処理時間は `361.449 - 361.271 = 0.178` 秒です。`end_time` を省くなら `"in_progress": true` を入れます。どちらもないと拒否されます。
+
 ### アノテーションとメタデータの細かい違い {#annotation-limits}
 
 | | アノテーション | メタデータ |
@@ -1042,6 +1351,8 @@ aws apigateway update-stage --rest-api-id <ID> --stage-name prod \
 | API | `put_annotation` | `put_metadata`（名前空間を指定できる） |
 
 **具体例:** `orderId` を検索したいならアノテーションにします。注文の JSON 全体はメタデータにします。逆にすると検索できず、型の制約にも引っかかります。
+
+**誤ると:** アノテーションを 60 個入れると、インデックスされるのは 50 個までです。残りの 10 個は検索できません。
 
 ### トレースヘッダーとトレース ID {#xray-trace-header}
 
@@ -1060,6 +1371,10 @@ X-Amzn-Trace-Id: Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad
 
 **落とし穴:** クライアントがヘッダーを送れば、それがそのまま使われます。不正な値や `Sampled=1` の大量送信を防ぎたいなら、入口で取り除きます。トレースの保持は 30 日です。
 
+**時刻の例:** `58406520` を 10 進数にすると `1480615200` で、2016-12-01 18:00 UTC です。
+
+**保持の例:** 40 日前の障害のトレースは残っていません。長く残すなら、ログにトレース ID を入れて CloudWatch Logs の保持期間で管理します。
+
 ### 環境変数 {#xray-env-vars}
 
 | 変数 | 内容 | 既定値、例 |
@@ -1075,6 +1390,14 @@ X-Amzn-Trace-Id: Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad
 **落とし穴:** バックグラウンド処理でセグメントを開かずに記録すると、`RUNTIME_ERROR` では例外になり処理が止まります。`LOG_ERROR` なら処理は続きます。
 
 デーモンの起動オプションには、`--region`（`-n`）、`--bind`（`-b`、UDP ポートの変更）、`--bind-tcp`（`-t`）、`--buffer-memory`（`-m`、最小 3 MB）、`--local-mode`（`-o`）、`--role-arn`（`-r`、別アカウントへ送信）があります。環境変数 `AWS_REGION` と `HTTPS_PROXY` も読みます。
+
+```bash
+./xray -o -n ap-northeast-1 -m 50 --bind "127.0.0.1:3000"
+```
+
+**例:** 上は EC2 の外で動かす設定です。`-o` でメタデータの確認を省き、東京へ送り、バッファを 50 MB にして UDP 3000 番で受けます。`-m` の既定はメモリの 1% です。ポートを変えたら、SDK 側も `AWS_XRAY_DAEMON_ADDRESS=127.0.0.1:3000` にします。
+
+**他の変数の例:** 単体テストでは `AWS_XRAY_SDK_ENABLED=false` にすると、デーモンがなくても動きます。`AWS_XRAY_TRACING_NAME=orders-api` にすると、コードの指定より優先されてサービスマップに `orders-api` と出ます。
 
 Elastic Beanstalk では `XRayEnabled` オプションでデーモンを有効にします。
 
@@ -1094,6 +1417,15 @@ Elastic Beanstalk では `XRayEnabled` オプションでデーモンを有効�
 | `edge()` | `edge("A", "B")` | 2 サービス間の呼び出し |
 | `rootcause.*` | `rootcause.fault.service { name = "orders" }` | 根本原因の条件 |
 
+**組み合わせの例:** 3 秒より遅い `gold` 会員の失敗だけを探します。
+
+```text
+annotation.tier = "gold" AND fault = true AND responsetime > 3
+```
+
+- **`responsetime` と `duration` の例:** サーバーは 0.2 秒で応答し、非同期の処理が続いて 5 秒で終わると、`responsetime` は 0.2、`duration` は 5 です。
+- **`edge` の例:** `edge("checkout", "payment") { responsetime > 3 }` は、その 2 つの間の呼び出しだけが遅いトレースを探します。
+
 ### グループ {#xray-groups}
 
 フィルター式で定義したトレースの集まりです。
@@ -1106,6 +1438,8 @@ Elastic Beanstalk では `XRayEnabled` オプションでデーモンを有効�
 | API | `CreateGroup`、`UpdateGroup`、`GetGroups` |
 
 **具体例:** 有料会員だけのエラー率を監視したいなら、`annotation.tier = "paid"` のグループを作り、発行されるメトリクスにアラームを設定します。
+
+**誤ると:** 上の式を `annotation.tier = "premium"` に更新しても、過去のトレースはそのままです。グラフに新旧が混ざるので、きれいに分けるならグループを作り直します。
 
 ### API {#xray-api}
 
@@ -1127,6 +1461,8 @@ Elastic Beanstalk では `XRayEnabled` オプションでデーモンを有効�
 | `AWSXRayDaemonWriteAccess` | 書き込み。`PutTraceSegments`、`PutTelemetryRecords`、サンプリングの読み取り |
 | `AWSXRayReadOnlyAccess` | 読み取り |
 
+**調査の流れの例:** `GetTraceSummaries` に `fault = true` を渡して ID を 5 件得ます。その ID を `BatchGetTraces` に渡し、遅いサブセグメントを確認します。
+
 !!! note "Transaction Search を使う場合"
     `BatchGetTraces` の API リファレンスには、Transaction Search を有効にするとトレースが X-Ray にインデックスされず、この API で見つからないとの注記があります。
 
@@ -1137,6 +1473,8 @@ Elastic Beanstalk では `XRayEnabled` オプションでデーモンを有効�
 - 遅いノード → そのノードを含むトレースを開き、時間のかかるサブセグメントを探す
 - Fault が多いノード → セグメントの例外を確認する
 - Throttle が多いノード → 下流サービスの上限を確認する
+
+**例:** `checkout` の平均応答時間が 2.5 秒で、下流の `payment` が 2.4 秒なら、遅さの大半は `payment` です。`payment` に Fault が 5% あれば、そのトレースを開いて例外を確認します。
 
 ## CloudWatch と CloudTrail の違い {#cloudtrail-vs-cloudwatch}
 
@@ -1149,9 +1487,13 @@ Elastic Beanstalk では `XRayEnabled` オプションでデーモンを有効�
 
 CloudTrail のデータイベント（S3 オブジェクトや Lambda 呼び出しなど）は既定では記録されず、証跡やイベントデータストアで有効にします。CloudTrail のログを CloudWatch Logs に送ると、特定の操作でアラームを出せます。
 
+**例:** 14:00 に EC2 の CPU が 100% になったのは CloudWatch で分かります。13:58 に誰かが `ModifyInstanceAttribute` でインスタンスタイプを変えたことは CloudTrail で分かります。
+
 ## CloudTrail の設定 {#cloudtrail}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+**提供単位:** リージョン。証跡は全リージョン向けにも、組織全体向けにも作れます。VPC の外のサービスです（[提供単位の一覧](resource-scope.md#scope-regional-outside)）。
 
 ### イベントの種類 {#cloudtrail-events}
 
@@ -1165,6 +1507,23 @@ CloudTrail のデータイベント（S3 オブジェクトや Lambda 呼び出�
 管理イベントは、読み取り、書き込み、両方を選べます。
 
 **具体例:** 「S3 のオブジェクトを誰が削除したか」を調べたいのに記録がないのは、データイベントが無効だからです。後から有効にしても過去の分は残りません。
+
+データイベントは多くなりやすいので、対象を絞ります。次は 1 つのバケットの `DeleteObject` だけを記録する例です。
+
+```bash
+aws cloudtrail put-event-selectors --trail-name main-trail \
+  --advanced-event-selectors '[{
+    "Name": "S3 delete only",
+    "FieldSelectors": [
+      {"Field": "eventCategory", "Equals": ["Data"]},
+      {"Field": "resources.type", "Equals": ["AWS::S3::Object"]},
+      {"Field": "eventName", "Equals": ["DeleteObject"]},
+      {"Field": "resources.ARN", "StartsWith": ["arn:aws:s3:::my-bucket/"]}
+    ]
+  }]'
+```
+
+**読み取りと書き込みの例:** `DescribeSubnets` は読み取り、`CreateSubnet` は書き込みです。書き込みだけ記録すると、誰がサブネットを一覧したかは証跡に残りません。
 
 ### 証跡とイベント履歴 {#cloudtrail-trails}
 
@@ -1185,7 +1544,23 @@ CloudTrail のデータイベント（S3 オブジェクトや Lambda 呼び出�
 
 **落とし穴:** API を呼んだ直後に CloudTrail のログを探しても、数分は届きません。即時に反応したい処理は EventBridge を検討します。
 
+```bash
+aws cloudtrail create-trail --name main-trail --s3-bucket-name my-trail-logs \
+  --is-multi-region-trail --enable-log-file-validation
+aws cloudtrail start-logging --name main-trail
+```
+
+- **`start-logging` の例:** `create-trail` だけでは記録が始まりません。CLI では `start-logging` まで実行します。
+- **検証の例:** ダイジェストファイルは 1 時間に 1 つ届きます。`aws cloudtrail validate-logs --trail-arn arn:aws:cloudtrail:ap-northeast-1:111122223333:trail/main-trail --start-time 2026-10-01T00:00:00Z` で改ざんを確認します。ログを 1 つ消すと、検証で見つかります。
+- **誤ると:** 配信先のバケットポリシーに `cloudtrail.amazonaws.com` の許可がないと、証跡は作れません。
+
 CloudWatch Logs へ送ると、メトリクスフィルターで特定の操作にアラームを作れます。送るには IAM ロールが必要で、証跡の設定と一致するイベントだけが届きます。
+
+**例:** 証跡の停止を検知するフィルターです。一致したらメトリクスを 1 増やし、アラームから SNS へ通知します。
+
+```text
+{ ($.eventName = "StopLogging") || ($.eventName = "DeleteTrail") }
+```
 
 ### CloudTrail Lake {#cloudtrail-lake}
 
@@ -1193,8 +1568,16 @@ CloudWatch Logs へ送ると、メトリクスフィルターで特定の操作�
 
 イベントを ORC 形式でイベントデータストアに集め、SQL で検索する機能です。
 
+**例:** 既存の顧客なら、次のクエリで「誰がバケットを消したか」を S3 のファイルを読まずに検索できます。
+
+```sql
+SELECT eventTime, userIdentity.arn, requestParameters
+FROM <イベントデータストア ID>
+WHERE eventName = 'DeleteBucket'
+```
+
 !!! warning "新規受付の終了"
-    CloudTrail Lake は 2026 年 5 月 31 日で新規顧客の受付を終了しました。既存の顧客は引き続き使えます。古い教材の「長期の検索には Lake」という答えは、新規アカウントでは取れない場合があるので注意します。
+    CloudTrail Lake は 2026 年 5 月 31 日で新規顧客の受付を終了しました。既存の顧客は引き続き使えます。AWS が勧める移行先は Amazon CloudWatch です。古い教材の「長期の検索には Lake」という答えは、新規アカウントでは取れない場合があるので注意します。
 
 ### CloudTrail Insights {#cloudtrail-insights}
 
@@ -1206,6 +1589,10 @@ CloudWatch Logs へ送ると、メトリクスフィルターで特定の操作�
 | API エラー率（管理イベント） | Insights と、読み取りか書き込みの管理イベントの記録 |
 | データイベントの呼び出し率、エラー率 | Insights と、データイベントの記録 |
 
+**例:** 普段は毎分 10 回の `RunInstances` が毎分 300 回に増えると、呼び出し率の Insights イベントが記録されます。流出した認証情報の悪用に気づくきっかけになります。
+
+**誤ると:** 読み取りの管理イベントだけを記録した証跡では、呼び出し率の Insights は使えません。有効にした直後は、最初のイベントの配信まで最大 36 時間かかることがあります。
+
 ## Application Signals {#application-signals}
 
 CloudWatch Application Signals は、EC2、ECS、Lambda などのアプリから、メトリクスとトレースを自動で集めるアプリケーション性能監視（APM）の機能です。
@@ -1215,6 +1602,14 @@ CloudWatch Application Signals は、EC2、ECS、Lambda などのアプリから
 - アプリケーションの依存関係を自動で図示
 
 計装は OpenTelemetry に基づきます。
+
+**提供単位:** リージョン。アプリは VPC の中でも動きますが、Application Signals は VPC の外のサービスです。
+
+**期間ベースの SLO の計算:** 30 日、1 分単位、目標 99% とします。全体は `30 × 24 × 60 = 43,200` 分で、99% は 42,768 分です。許容できる不健全な時間（エラーバジェット）は `43,200 - 42,768 = 432` 分です。すでに 130 分使っていれば、残りは 302 分です。
+
+**リクエストベースの SLO の計算:** 月 100 万リクエスト、目標 99.9% なら、失敗してよいのは `1,000,000 × 0.001 = 1,000` 件です。
+
+**間隔の選び方:** 月次の契約の報告ならカレンダー間隔、直近の体験を見るならローリング間隔を選びます。
 
 ## 通知アラートの実装 {#alerts}
 
@@ -1238,6 +1633,8 @@ m1 / SERVICE_QUOTA(m1) * 100
 ```
 
 Lambda の `ConcurrentExecutions` のように、サービス自身のメトリクスにアラームを設定する方法もあります。
+
+**計算例:** `m1 = 160`、クォータが 200 なら使用率は 80% です。しきい値 80 の `GreaterThanOrEqualToThreshold` で `ALARM` になります。引き上げの申請に数日かかるなら、余裕を持って 70% にします。
 
 ### デプロイが完了したとき {#deployment-alerts}
 
@@ -1266,6 +1663,19 @@ CodePipeline の場合です。
 ```
 
 SNS トピックのアクセスポリシーで、EventBridge（`events.amazonaws.com`）からの発行を許可します。CodeDeploy はデプロイグループのトリガーで直接 SNS へ通知することもできます。
+
+```json
+{
+  "Effect": "Allow",
+  "Principal": {"Service": "events.amazonaws.com"},
+  "Action": "sns:Publish",
+  "Resource": "arn:aws:sns:ap-northeast-1:111122223333:deploy-events"
+}
+```
+
+**例:** `"state": ["FAILURE"]` だけにすると、失敗のときだけ通知します。
+
+**誤ると:** 上の許可がないと、ルールは一致しても通知が届きません。ルールの `FailedInvocations` が増えます。CodePipeline の成功の値は `SUCCEEDED`、CodeDeploy は `SUCCESS` です。取り違えると一致しません。
 
 ## ヘルスチェックとプローブ {#health-checks}
 
@@ -1302,6 +1712,28 @@ livenessProbe:
 
 ECS の `healthCheck` は、`interval` の既定が 30 秒、`retries` の既定が 3 回です。`startPeriod` で起動中の猶予を設定できます。
 
+```json
+"healthCheck": {
+  "command": ["CMD-SHELL", "curl -f http://localhost:8080/healthz || exit 1"],
+  "interval": 30,
+  "timeout": 5,
+  "retries": 3,
+  "startPeriod": 60
+}
+```
+
+| 項目 | 既定 | 範囲 |
+|---|---|---|
+| `interval` | 30 秒 | 5〜300 秒 |
+| `timeout` | 5 秒 | 2〜60 秒 |
+| `retries` | 3 回 | 1〜10 回 |
+| `startPeriod` | なし | 0〜300 秒 |
+
+- **検知の計算:** 既定なら、`30 × 3 = 90` 秒ほどで異常とみなされます。`interval=10`、`retries=2` なら約 20 秒です。
+- **猶予の例:** 起動に 45 秒かかるアプリは `startPeriod` を 60 にします。この間の失敗は回数に数えません。
+- **誤ると:** `startPeriod` がないと、起動の遅いコンテナは準備中に異常とされ、タスクの置き換えを繰り返します。
+- **プローブの計算:** Kubernetes の `failureThreshold` が既定の 3、`periodSeconds` が 10 なら、Liveness は約 30 秒で再起動します。Startup を `failureThreshold: 30`、`periodSeconds: 10` にすると、起動に最大 300 秒使えます。
+
 !!! tip "エンドポイントの設計"
     Liveness は依存先を確認せず、プロセスだけを見ます。データベース障害で全コンテナが再起動すると、問題が悪化するためです。Readiness では、依存先を含めて通信を受けられるかを確認します。
 
@@ -1318,6 +1750,8 @@ ECS の `healthCheck` は、`interval` の既定が 30 秒、`retries` の既定
 | 3. コード内を調べる | サブセグメント、言語のプロファイラー | どの処理に時間がかかるか |
 | 4. 実行環境を調べる | Lambda Insights、Container Insights | CPU やメモリの逼迫 |
 
+**例:** 14:05 に `p99` が 300 ms から 3 秒に増えたとします。トレースを見ると DynamoDB の呼び出しが 2.6 秒です。ログに `ProvisionedThroughputExceededException` の再試行が並ぶので、容量の不足と分かります。
+
 ### ログからボトルネックを見つける {#logs-bottlenecks}
 
 Lambda の `REPORT` 行、処理時間を含むアプリのログを Logs Insights で集計します。
@@ -1331,6 +1765,8 @@ filter event = "db_query"
 
 遅いものを探すだけでなく、呼び出し回数も見ます。1 回は速くても大量に呼ばれる処理（N+1 問題など）もボトルネックになります。
 
+**計算例:** 1 回 5 ms のクエリでも、1 リクエストで 200 回呼ぶと `5 × 200 = 1,000` ms です。`p99` が 50 ms のクエリを 1 回だけ呼ぶより、ずっと遅くなります。
+
 ### 代表的なメトリクスと原因 {#bottleneck-metrics}
 
 | サービス | メトリクス | 示すこと |
@@ -1341,6 +1777,13 @@ filter event = "db_query"
 | ALB | `TargetResponseTime`、`HTTPCode_Target_5XX_Count`、`UnHealthyHostCount` | ターゲットの遅れや異常 |
 | DynamoDB | `ThrottledRequests`、`ConsumedReadCapacityUnits` | 容量の不足 |
 | SQS | `ApproximateAgeOfOldestMessage` | 処理が追いついていない |
+
+例です。
+
+- **API Gateway:** `Latency` が 1,000 ms、`IntegrationLatency` が 950 ms なら、差は 50 ms で統合先が遅いです。
+- **ALB:** `UnHealthyHostCount` が 2 で全 2 台なら、`HTTPCode_Target_5XX_Count` ではなく、ヘルスチェックを先に調べます。
+- **DynamoDB:** `ConsumedReadCapacityUnits` が毎秒 100 に対し、割り当てが 100 なら、`ThrottledRequests` が増えます。
+- **SQS:** 可視性タイムアウトが 60 秒のキューで `ApproximateAgeOfOldestMessage` が 3,600 秒なら、1 時間前のメッセージが残っています。ワーカーを増やします。
 
 ### リソース使用量の最適化 {#resource-optimization}
 
@@ -1353,6 +1796,8 @@ filter event = "db_query"
 | 同じデータを何度も読む | キャッシュの導入（[DynamoDB](dynamodb.md)、[ネットワーク](networking.md)） |
 | ログの料金が高い | ログレベル、保持期間、サンプリングの見直し |
 
+**メモリの計算例:** 1,024 MB で 1 秒かかる関数は 1 GB 秒です。`maxMemoryUsed` が 180 MB なので 512 MB に減らし、CPU も減って 1.3 秒になったとすると、`0.5 × 1.3 = 0.65` GB 秒です。2 秒で 1 GB 秒と同じになり、それより遅くなると逆に高くなります。
+
 ## デバッグとエラー診断 {#debugging}
 
 ### コードの欠陥を特定する {#debug-code}
@@ -1364,6 +1809,12 @@ filter event = "db_query"
 
 Lambda を同期的に呼び出すと、関数内のエラーでも API の HTTP ステータスは 200 で、レスポンスの `FunctionError` にエラーが示されます。呼び出し側はこの項目を確認します。
 
+**例:** `aws lambda invoke --function-name orders out.json` の結果が次の形なら、関数は失敗しています。`StatusCode` だけを見ると成功に見えます。
+
+```json
+{"StatusCode": 200, "FunctionError": "Unhandled", "ExecutedVersion": "$LATEST"}
+```
+
 ### メトリクス、ログ、トレースの読み解き {#interpret-signals}
 
 | 順 | 見るもの | 答えられる問い |
@@ -1374,6 +1825,8 @@ Lambda を同期的に呼び出すと、関数内のエラーでも API の HTTP
 | 4 | CloudTrail | 同じ時刻に設定変更はなかったか |
 
 トレース ID やリクエスト ID をログに含めると、3 つのデータを行き来できます。デプロイの時刻と悪化の時刻を比べることも有効です。
+
+**例:** 10:02 からエラーが増え（メトリクス）、`payment` の呼び出しで失敗し（トレース）、メッセージは `AccessDenied` です（ログ）。10:00 に `PutRolePolicy` の記録があれば（CloudTrail）、変更が原因です。
 
 ### サービス統合の問題を調べる {#debug-integration}
 
@@ -1388,6 +1841,12 @@ Lambda を同期的に呼び出すと、関数内のエラーでも API の HTTP
 | 外部 API の呼び出しが失敗する | X-Ray の例外、アプリのログ | タイムアウト、認証情報の期限切れ |
 
 統合の入口と出口のどちらでイベントが止まったかを順に確認すると、切り分けが速くなります。
+
+例です。
+
+- **SQS の重複:** 関数が 60 秒かかるのに可視性タイムアウトが 30 秒なら、処理中に再配信されます。関数のタイムアウトの 6 倍の 360 秒にします。
+- **S3 イベント:** 通知のプレフィックスが `upload/` で、実際のキーが `uploads/a.png` なら一致せず、関数は動きません。
+- **EventBridge:** `Invocations` が増えず `FailedInvocations` も 0 なら、パターンが一致していません。`aws events test-event-pattern` で試します。`FailedInvocations` が増えるなら、ターゲット側の権限を見ます。
 
 ### 代表的なエラーコード {#error-codes}
 
@@ -1413,6 +1872,13 @@ Lambda を同期的に呼び出すと、関数内のエラーでも API の HTTP
 | 504 | ALB | ターゲットがアイドルタイムアウト内に応答しない、接続できない |
 
 原則として **4xx はリクエストの修正、429 と 5xx はバックオフ付きの再試行**です。再試行の実装は [SDK と耐障害性](sdk-resilience.md)を参照してください。
+
+例です。
+
+- **バックオフ:** `429` には 1 秒、2 秒、4 秒、8 秒と待ち時間を倍にし、ジッターを加えます。一斉に再試行すると、同じ時刻に再び制限されます。
+- **`Missing Authentication Token`:** ステージ `prod` の API に `/orders` で呼ぶと、この 403 です。`/prod/orders` が正しいパスです。
+- **502:** Lambda プロキシが `{"statusCode": 200, "body": {"id": 1}}` を返すと、`body` が文字列でないので 502 です。`"body": "{\"id\": 1}"` にします。
+- **504:** REST API の統合タイムアウトが 29 秒で、関数が 60 秒かかると 504 です。関数は動き続けるので、処理自体は完了する場合があります。
 
 ## 既定値と上限のまとめ {#numbers}
 

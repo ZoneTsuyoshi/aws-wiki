@@ -34,9 +34,18 @@ flowchart TD
     E -- "いいえ" --> DDB["DynamoDB"]
 ```
 
+**選び方の例**:
+
+- 商品 500 万件を商品 ID で引き、毎秒 2 万件まで増える可能性があるなら DynamoDB です。
+- 「注文、顧客、商品を結合して月次の売上を出す」なら RDS か Aurora です。
+- 集計済みのランキングを毎秒 5 万回読み、消えても計算し直せるなら ElastiCache です。
+- 1 件 2 GB の動画なら S3 です。DynamoDB の項目は 400 KB までなので入りません。
+
 ### OpenSearch Service {#opensearch}
 
 OpenSearch クラスターを管理してくれるサービスです。AWS ではクラスターのことをドメインと呼びます。
+
+**提供単位**: ドメインはリージョン単位で、ノードは 2 つか 3 つの AZ に分けられます。VPC の中に置くか、パブリックエンドポイントにするかを選べます。
 
 - **向いている用途**: 全文検索、ログ分析、アプリケーションのリアルタイム監視、クリックストリーム分析。
 - **データの投入**: S3、Kinesis、Data Firehose、DynamoDB、CloudWatch Logs などと連携できます。
@@ -44,11 +53,19 @@ OpenSearch クラスターを管理してくれるサービスです。AWS で�
 
 OpenSearch を主データストアと考えるのではなく、検索用の副データとして扱うのが基本です。
 
+**計算の例**: 1 KB の商品 100 万件を、DynamoDB の `Scan` と `contains(name, :q)` で検索します。1,000,000 KB ÷ 4 KB × 0.5 で、検索 1 回に 125,000 RCU かかります。OpenSearch へ同期すれば、この読み取りは DynamoDB から消えます。
+
+**誤ると**: Streams からの同期処理が失敗したまま放置すると、検索結果とテーブルの内容がずれます。Streams の保持は 24 時間なので、それを超えると再同期が必要です。
+
 ## RDS {#rds}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 MySQL、PostgreSQL、MariaDB、Oracle、SQL Server、Db2 を実行するマネージドのリレーショナルデータベースです。
+
+**提供単位**: DB インスタンスは AZ 単位で、DB サブネットグループを通じて VPC の中に置きます。Multi-AZ はスタンバイを別の AZ に置きます([リソースの提供単位](resource-scope.md#scope-zonal))。
+
+**保存時の暗号化**: 未暗号化の DB インスタンスは、ブルー/グリーンデプロイの作成時に `TargetKmsKeyId` を指定して暗号化されたグリーン環境を作り、切り替えることで暗号化できます。
 
 ### リードレプリカと Multi-AZ {#read-replicas}
 
@@ -87,6 +104,21 @@ Multi-AZ には 2 つの形態があります。「スタンバイは読めな�
 
 **例**: 毎朝のレポートで本番が重いなら、リードレプリカを作りレポートをそちらに向けます。アプリの接続先を指定し直す必要があります。Multi-AZ に変更しても、読み取りの負荷は減りません。
 
+```bash
+aws rds create-db-instance-read-replica \
+  --db-instance-identifier app-report \
+  --source-db-instance-identifier app
+aws rds modify-db-instance --db-instance-identifier app --multi-az --apply-immediately
+```
+
+設定ごとの値の例です。
+
+- **`ReplicaLag`**: 30 なら、レプリカは約 30 秒前の状態です。注文の直後にレプリカを読むと、その注文がまだ見えません。
+- **バックアップの保持**: `--backup-retention-period 0` のインスタンスでは、レプリカの作成に失敗します。1 以上にしてから作ります。
+- **JVM の DNS キャッシュ**: `networkaddress.cache.ttl=60` にします。**誤ると**: 無期限にキャッシュすると、フェイルオーバーの後も古い IP に接続して失敗し続けます。
+- **フェイルオーバー**: 60〜120 秒の間、書き込みは失敗します。アプリは再接続と再試行を入れます。**誤ると**: 接続プールが壊れた接続を持ち続け、DB は復旧したのにエラーが続きます。
+- **Multi-AZ の形態**: DB クラスターならリーダー 2 台を読めるので、1 台のライターと 2 台の読み取りを同じ構成で賄えます。DB インスタンス配置では、スタンバイに接続できません。
+
 ### IAM データベース認証 {#rds-iam-auth}
 
 パスワードの代わりに、AWS 署名バージョン 4 で作る認証トークンで接続します。MariaDB、MySQL、PostgreSQL で使えます。
@@ -114,6 +146,28 @@ mysql -h mydb.example.ap-northeast-1.rds.amazonaws.com -u app_user \
 - PostgreSQL では `rds_iam` を付けたユーザーは、パスワードで入れなくなります。
 - CloudWatch と CloudTrail は IAM 認証を記録しません。
 
+**トークンの寿命の例**: 10 時 00 分に作ったトークンで 10 時 14 分に接続すると成功し、その接続は 10 時 15 分を過ぎても使えます。10 時 16 分に同じトークンで新しい接続を開くと失敗します。接続ごとにトークンを作り直します。
+
+**権限と DB ユーザーの例**:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "rds-db:connect",
+  "Resource": "arn:aws:rds-db:ap-northeast-1:111122223333:dbuser:db-ABCDEFGHIJKL01234/app_user"
+}
+```
+
+```sql
+-- MySQL
+CREATE USER app_user IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS';
+-- PostgreSQL
+CREATE USER app_user;
+GRANT rds_iam TO app_user;
+```
+
+**誤ると**: `Action` を `rds:Connect` と書いたり、リソースに DB 識別子の `app` を書いたりすると、接続が拒否されます。必要なのはリソース ID(`db-` で始まる値)です。
+
 ### Secrets Manager との統合 {#rds-secrets-manager}
 
 `--manage-master-user-password` を指定すると、RDS がマスターユーザーのパスワードを生成し、Secrets Manager で管理します。
@@ -127,6 +181,15 @@ mysql -h mydb.example.ap-northeast-1.rds.amazonaws.com -u app_user \
 
 **例**: Lambda の環境変数にパスワードを書く代わりに、シークレットを読むようにします。ローテーションで値が変わるので、長時間キャッシュすると認証エラーになります。ローテーションの詳細は [Secrets Manager と Parameter Store](secrets.md) を参照してください。
 
+```bash
+aws rds modify-db-instance --db-instance-identifier app \
+  --manage-master-user-password \
+  --master-user-secret-kms-key-id alias/rds-secrets \
+  --apply-immediately
+```
+
+**例**: 既定の 7 日ごとのローテーションで、アプリがパスワードを 30 日キャッシュすると、更新の後に新しい接続が認証エラーになります。認証エラーのときにシークレットを読み直すか、キャッシュを 1 時間程度にします。
+
 ### SSL/TLS {#rds-ssl}
 
 | エンジン | 強制する設定 | デフォルト |
@@ -138,11 +201,22 @@ mysql -h mydb.example.ap-northeast-1.rds.amazonaws.com -u app_user \
 
 クライアントは AWS の CA バンドル(`global-bundle.pem`)でサーバーを検証します。PostgreSQL の `sslmode=verify-full` はサーバー証明書とホスト名の両方を確認します。
 
+```bash
+psql "host=mydb.example.ap-northeast-1.rds.amazonaws.com dbname=app user=app_user \
+  sslmode=verify-full sslrootcert=global-bundle.pem"
+```
+
+**例**: `rds.force_ssl=1` の PostgreSQL に `sslmode=disable` で接続すると拒否されます。`sslmode=require` なら暗号化はされますが、証明書を検証しないので接続先のなりすましは防げません。
+
+**誤ると**: Route 53 の別名で接続して `verify-full` を使うと、証明書のホスト名と一致せず失敗します。
+
 ## Aurora {#aurora}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 MySQL、PostgreSQL 互換のマネージドデータベースです。データは DB インスタンスから独立したクラスターボリュームに保存され、ライターとレプリカが共有します。
+
+**提供単位**: クラスターはリージョン単位で、ストレージは複数の AZ にまたがります。インスタンスは AZ 単位で、DB サブネットグループを通じて VPC の中に置きます([リソースの提供単位](resource-scope.md#scope-regional-vpc))。
 
 | エンドポイント | 接続先 | 用途 |
 | --- | --- | --- |
@@ -158,6 +232,10 @@ MySQL、PostgreSQL 互換のマネージドデータベースです。データ�
 
 !!! tip "リーダーエンドポイントの分散"
     リーダーエンドポイントは接続を分散します。分散の単位はクエリではなく接続です。接続プールを使う場合は接続を作り直すタイミングも考慮します。
+
+**例**: アプリの書き込みは `app.cluster-xxxx.ap-northeast-1.rds.amazonaws.com`、読み取りは `app.cluster-ro-xxxx.ap-northeast-1.rds.amazonaws.com` に接続します。
+
+**誤ると**: レプリカを 2 台から 4 台に増やしても、既存の接続プールは前の 2 台に接続したままです。新しい接続が作られるまで、増やした 2 台に負荷が移りません。
 
 ### エンドポイントの動作 {#aurora-endpoints}
 
@@ -177,6 +255,22 @@ MySQL、PostgreSQL 互換のマネージドデータベースです。データ�
 
 データは 3 つの AZ にまたがる 6 つのストレージノードに同期して書き込まれます。
 
+**例**: 次の構成でライターが落ちると、`r2` が昇格します。優先度 0 の 2 台のうち、サイズが大きいからです。
+
+| レプリカ | 優先度 | サイズ |
+| --- | --- | --- |
+| `r1` | 0 | `db.r6g.large` |
+| `r2` | 0 | `db.r6g.xlarge` |
+| `r3` | 15 | `db.r6g.4xlarge` |
+
+`r3` はレポート用なので、優先度を 15 にして昇格の候補の後ろへ回します。
+
+```bash
+aws rds modify-db-instance --db-instance-identifier r3 --promotion-tier 15
+```
+
+**誤ると**: ライターより小さい `db.r6g.large` だけを優先度 0 にすると、そのインスタンスが昇格して、書き込みの性能が足りなくなることがあります。レプリカがあれば復旧は通常 60 秒未満ですが、レプリカがないとインスタンスの作り直しになり、より長く止まります。
+
 ### Aurora Serverless v2 {#aurora-serverless-v2}
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
@@ -186,7 +280,7 @@ MySQL、PostgreSQL 互換のマネージドデータベースです。データ�
 | 設定 | 値 | 動作 |
 | --- | --- | --- |
 | `MinCapacity` | 0 以上(0 は自動一時停止対応のバージョンのみ) | アイドル時の費用を決める。インスタンス数 × 最小 ACU が目安 |
-| `MaxCapacity` | 最大 256(プラットフォームのバージョンで異なる) | ピークの上限 |
+| `MaxCapacity` | Aurora MySQL は最大 256、Aurora PostgreSQL は最大 384(エンジンのバージョンで異なる) | ピークの上限 |
 | `SecondsUntilAutoPause` | 300〜86,400 秒、デフォルト 300 | 最小 0 のとき、接続がないまま経過すると一時停止する |
 | スケーリング単位 | 0.5 ACU | インスタンスの追加なしで増減する |
 
@@ -198,9 +292,21 @@ aws rds modify-db-cluster --db-cluster-identifier my-cluster \
 
 **例**: 開発環境は夜間に接続がないので `MinCapacity=0` にします。朝の最初の接続は再開を待つため遅くなります。本番の Web アプリで同じ設定にすると、最初のリクエストがタイムアウトすることがあります。
 
+**計算の例**:
+
+- `MaxCapacity=8` は 8 × 2 GiB で約 16 GiB のメモリが上限です。
+- ライターとリーダーの 2 台で `MinCapacity=2` なら、アイドルでも 2 × 2 で 4 ACU 分の課金が続きます。
+- `SecondsUntilAutoPause=600` なら、接続がないまま 10 分で一時停止します。
+
+**再開の例**: 再開は通常約 15 秒です。JDBC の `connectTimeout` が 5 秒だと、再開を待てずに接続が失敗します。15 秒より長くします。24 時間を超えて止まっていると、さらに時間がかかることがあります。
+
+**誤ると**: `MinCapacity` を 0.5 のように小さくすると、バッファプールのキャッシュも小さくなり、負荷が来た直後の遅延が増えます。`MaxCapacity` が小さいと、ピークに CPU とメモリが張り付きます。優先度 0 と 1 のリーダーはライターと一緒に一時停止するので、リーダーに接続が残っていると全体が止まりません。
+
 ### Aurora グローバルデータベース {#aurora-global-database}
 
 1 つのプライマリリージョンと、最大 10 の読み取り専用セカンダリリージョンで構成します。
+
+**提供単位**: 複数のリージョンのクラスターをまとめる機能です。各クラスターは、それぞれのリージョンの VPC の中に置きます。
 
 | 項目 | 内容 |
 | --- | --- |
@@ -213,6 +319,12 @@ aws rds modify-db-cluster --db-cluster-identifier my-cluster \
 
 DynamoDB のグローバルテーブルと違い、どのリージョンにも書き込めるわけではありません。
 
+**例**: 東京をプライマリ、バージニアをセカンダリにします。米国のユーザーの読み取りはバージニアの読み取りインスタンスへ、書き込みはグローバルデータベースのライターエンドポイントへ送ります。書き込み転送を有効にすれば、バージニアへ来た `UPDATE` は東京に転送されます。
+
+**例**: 年 2 回のリージョン切り替えの訓練はスイッチオーバーで行い、データを失いません。東京の障害ではフェイルオーバーを使い、未複製の分を失う可能性があります。
+
+**誤ると**: 東京とバージニアのマイナーバージョンが違うと、マネージドの切り替えを実行できません。セカンダリのバージョンを先にそろえます。
+
 ## 接続プーリングと RDS Proxy {#connection-pooling}
 
 DB への接続の確立は CPU とメモリを消費します。接続を使い回す仕組みが接続プールです。
@@ -224,11 +336,19 @@ DB への接続の確立は CPU とメモリを消費します。接続を使い
 
 **プールサイズの考え方**: プールの最大接続数 × アプリのインスタンス数が、DB の最大接続数を超えないようにします。Auto Scaling でインスタンスが増えると合計が増える点に注意します。
 
+**計算の例**: `max_connections` が 1,000 の DB に、プール 20 接続のコンテナが 30 台なら、20 × 30 で 600 接続です。Auto Scaling で 60 台になると 1,200 接続になり、DB の上限を超えます。プールを 15 に下げると、15 × 60 で 900 接続に収まります。
+
+**誤ると**: ピーク時にだけ `Too many connections` が出て、新しいコンテナの起動やヘルスチェックに失敗します。
+
 ### RDS Proxy {#rds-proxy}
 
 [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate }
 
 アプリと DB の間に入り、接続を共有します。
+
+**提供単位**: プロキシはリージョン単位で、DB と同じ VPC の中に置きます。既定のエンドポイントは 2 つの AZ に配置されます。
+
+**例**: Lambda の同時実行が 1,000 に増えると、関数ごとに 1 接続で 1,000 接続を開こうとします。`max_connections` が 500 の DB では枯渇します。RDS Proxy を挟めば、クライアントが 1,000 でも、DB 側はトランザクションの間だけ接続を使います。
 
 | 機能 | 内容 |
 | --- | --- |
@@ -253,6 +373,8 @@ DB への接続の確立は CPU とメモリを消費します。接続を使い
 
 CloudWatch の `DatabaseConnectionsCurrentlySessionPinned` で発生頻度を確認します。接続ごとに同じ `SET` を実行しているなら、プロキシの初期化クエリに移します。
 
+**例**: PostgreSQL のアプリが接続のたびに `SET TIME ZONE 'Asia/Tokyo'` を実行すると、200 のクライアント接続が 200 の DB 接続に固定され、多重化が効きません。この `SET` を `InitQuery` に移します。MySQL の `time_zone` は RDS Proxy が追跡する変数なので固定されず、同じ値の接続だけが再利用されます。20 KB の `INSERT` も 16 KB を超えるのでピン留めになります。文を分割します。
+
 ### RDS Proxy の設定 {#rds-proxy-settings}
 
 | 設定 | デフォルト | 範囲 | 動作 |
@@ -268,6 +390,24 @@ CloudWatch の `DatabaseConnectionsCurrentlySessionPinned` で発生頻度を確
 | `DebugLogging` | - | true / false | 詳細ログ。費用と性能に影響するので常用しない |
 
 **例**: `max_connections` が 1,000 の DB に、同じ DB を使うプロキシを 2 つ付けるなら、`MaxConnectionsPercent` をそれぞれ 40 にして、合計 800 接続にします。残りを管理者とほかの接続に残します。
+
+```bash
+aws rds modify-db-proxy-target-group --target-group-name default \
+  --db-proxy-name app-proxy \
+  --connection-pool-config \
+  MaxConnectionsPercent=40,MaxIdleConnectionsPercent=5,ConnectionBorrowTimeout=5
+```
+
+設定ごとの値の例です。
+
+- **`MaxIdleConnectionsPercent`**: 上の設定なら、1,000 × 5% で 50 接続までをアイドルで残します。指定しなければ 40 の半分の 20% で、200 接続です。夜間に DB の接続を減らしたいなら低くします。
+- **`ConnectionBorrowTimeout`**: 5 秒なら、空きがなければ 5 秒でエラーを返します。既定の 120 秒のまま Lambda のタイムアウトが 30 秒だと、関数が先にタイムアウトしてエラーの原因が見えません。
+- **`IdleClientTimeout`**: 300 なら、5 分使わないクライアント接続を閉じます。アプリのプールが接続を長く持つ設計なら、切られた接続でエラーになるので、プロキシより短い時間でアプリ側が閉じるようにします。
+- **`InitQuery`**: `SET time_zone = '+09:00'` です。
+- **`SessionPinningFilters`**: `EXCLUDE_VARIABLE_SETS` にすると、`SET` があっても接続を固定しません。**誤ると**: クライアント A の `SET` が同じ DB 接続を使うクライアント B に影響します。
+- **`RequireTLS`**: `true` なら、TLS なしのクライアントは接続できません。
+- **`DefaultAuthScheme`**: `IAM_AUTH` なら Secrets Manager のシークレットなしで DB まで IAM で認証します。
+- **`DebugLogging`**: 問題の調査中だけ `true` にして、終わったら `false` に戻します。
 
 **症状と対処**:
 
@@ -310,10 +450,14 @@ def handler(event, context):
 
 インメモリのキャッシュとデータストアです。運用形態は 2 つあります。
 
+**提供単位**: ノードベースのノードは AZ 単位で、サブネットグループを通じて VPC の中に置きます。レプリカを別の AZ に置いて冗長化します([リソースの提供単位](resource-scope.md#scope-zonal))。
+
 | 形態 | 特徴 |
 | --- | --- |
 | サーバーレス | 名前を指定するだけで作成でき、容量は自動で調整 |
 | ノードベース | ノードタイプ、数、配置を自分で決める。細かい制御が可能 |
+
+**例**: 負荷の増減が読めない新しいサービスならサーバーレスで始めます。パラメータグループで `maxmemory-policy` を調整したい、ノードタイプを固定して費用を見積もりたいならノードベースです。
 
 ### Redis OSS、Valkey と Memcached {#engines}
 
@@ -336,6 +480,16 @@ def handler(event, context):
 
 一度作ったキャッシュのエンジンバージョンは、上げることはできますが、下げることはできません。
 
+**例**: ゲームのランキングはソート済みセットで作ります。Memcached にはこの型がありません。
+
+```text
+ZADD ranking 1200 user:42
+ZADD ranking 980 user:7
+ZREVRANGE ranking 0 9 WITHSCORES
+```
+
+**誤ると**: セッションを Memcached のノードに置くと、そのノードが落ちたときにセッションが消え、該当するユーザーがログアウトします。
+
 ### クラスターモード {#cluster-mode}
 
 | 観点 | 無効 | 有効 |
@@ -350,6 +504,8 @@ def handler(event, context):
 
 **例**: データが 1 ノードのメモリに収まらない、または書き込みが 1 ノードの限界を超えるならクラスターモードを有効にします。読み取りだけが足りないなら、無効のままレプリカを増やします。
 
+**計算の例**: データが 300 GiB で、メモリ 100 GiB のノードを `reserved-memory-percent` 25 で使います。1 ノードに置けるのは 100 × 0.75 で 75 GiB です。300 ÷ 75 で 4 シャードが必要です。各シャードにレプリカを 1 台付けると、4 × 2 で 8 ノードです。
+
 **落とし穴**: クラスターモードで使うクライアントは、クラスターに対応したものにします。クラスターモードを無効のまま読み取りをノードのエンドポイントに固定すると、ノードの増減で接続先を直す必要があります。リーダーエンドポイントはロードバランサーではなく、接続単位で DNS が振り分けるだけです。
 
 ### レプリケーションと Multi-AZ {#elasticache-replication}
@@ -363,6 +519,18 @@ def handler(event, context):
 | Memcached | レプリケーションがない。ノードが落ちるとそのノードのデータは消える |
 
 Memcached のノードベースのクラスターでは、自動検出対応のクライアントが設定エンドポイントからノード一覧を取得します。
+
+**例**: プライマリ 1 台とレプリカ 2 台を別の AZ に置き、Multi-AZ を有効にします。切り替えは `TestFailover` で試せます。
+
+```bash
+aws elasticache create-replication-group --replication-group-id app-cache \
+  --replication-group-description "app" --engine valkey \
+  --cache-node-type cache.r7g.large --num-cache-clusters 3 \
+  --automatic-failover-enabled --multi-az-enabled
+aws elasticache test-failover --replication-group-id app-cache --node-group-id 0001
+```
+
+**誤ると**: アプリがノードのエンドポイントに接続していると、昇格の後も古いノードへ書こうとして失敗します。プライマリエンドポイントを使います。
 
 ### 認証と暗号化 {#elasticache-security}
 
@@ -389,6 +557,19 @@ aws elasticache modify-replication-group --replication-group-id app-cache \
   --auth-token "$NEW_TOKEN" --auth-token-update-strategy SET --apply-immediately
 ```
 
+設定ごとの例です。
+
+- **転送中の暗号化**: `TransitEncryptionEnabled=true` のクラスターに `redis-cli` を `--tls` なしで接続すると、応答が返らず接続が切れます。
+- **保存時の暗号化**: 既存のノードベースのクラスターを暗号化するなら、バックアップを取り、`AtRestEncryptionEnabled=true` の新しいクラスターへ復元します。
+- **AUTH トークン**: 15 文字は短すぎ、`@` を含むトークンは使えない記号なので、どちらも拒否されます。
+- **RBAC**: アプリ用のユーザーに、`app:` で始まるキーの読み書きだけを許可します。
+
+```bash
+aws elasticache create-user --user-id app-user --user-name app-user \
+  --engine valkey --access-string "on ~app:* +@read +@write" \
+  --authentication-mode Type=iam
+```
+
 ### 追い出しとメモリ {#eviction}
 
 メモリが一杯になったときの動作は `maxmemory-policy` で決まります。デフォルトは `volatile-lru` です。
@@ -410,6 +591,20 @@ aws elasticache modify-replication-group --replication-group-id app-cache \
 | `CacheHitRate` | 低いなら TTL やキーの設計を見直す |
 | `DatabaseMemoryUsagePercentage` | 使用メモリの割合 |
 | `reserved-memory-percent` | データ以外に確保するメモリの割合。デフォルト 25 |
+
+**例**:
+
+- **`allkeys-lru`**: 全キーがキャッシュで、DB から作り直せるならこれにします。TTL のないキーも古い順に消えます。
+- **`volatile-ttl`**: TTL 30 秒の在庫と TTL 3,600 秒の説明文が混在すると、残り時間の短い在庫から消えます。
+- **`noeviction`**: カートのように消せないデータなら、メモリが一杯のときに書き込みを失敗させ、アラームで気づきます。
+- **`CacheHitRate`**: 1,000 回の読み取りのうち 950 回がヒットなら 95% です。
+- **`reserved-memory-percent`**: メモリ 100 GiB のノードで 25 なら、データに使えるのは 75 GiB です。0 にするとバックアップやフェイルオーバーの時にメモリが足りなくなることがあります。
+
+```bash
+aws elasticache modify-cache-parameter-group \
+  --cache-parameter-group-name app-valkey \
+  --parameter-name-values ParameterName=maxmemory-policy,ParameterValue=allkeys-lru
+```
 
 ## キャッシュ戦略 {#caching-strategies}
 
@@ -467,6 +662,10 @@ TTL は秒数です。Valkey と Redis OSS はミリ秒でも指定できます�
 
 ここでの秒数は説明のための例です。どこまで古くても許せるかで決めます。
 
+**ヒット率の計算**: キャッシュの往復が 1 ミリ秒、DB が 20 ミリ秒だとします。遅延読み込みのミスは、キャッシュ確認、DB、キャッシュ書き込みで 22 ミリ秒です。ヒット率 90% の平均は、0.9 × 1 + 0.1 × 22 で 3.1 ミリ秒です。
+
+**DB の負荷の計算**: 毎秒 10,000 回の読み取りでヒット率 90% なら、DB へは毎秒 1,000 回です。キャッシュのノードが全滅すると、DB へは 10 倍の毎秒 10,000 回が届きます。DB の容量は、この場合も考えて決めます。
+
 **落とし穴**:
 
 - 遅延読み込みだけだと、DB を更新しても TTL まで古い値を返します。
@@ -494,6 +693,10 @@ TTL は秒数です。Valkey と Redis OSS はミリ秒でも指定できます�
 | ランキングを実装したい | ElastiCache の Valkey / Redis OSS(ソート済みセット) |
 | 世界中のユーザーに画像を速く配信したい | CloudFront |
 | API の GET レスポンスをエッジでキャッシュしたい | CloudFront |
+
+**例**: 商品ページの画像は CloudFront で 1 日、価格の API は ElastiCache で 30 秒、DynamoDB の商品項目は DAX で 5 分のように、層ごとに古さの許容を変えて組み合わせます。
+
+**誤ると**: DAX を RDS の前に置こうとしても動きません。CloudFront に認証付きの API をキーの設計なしでキャッシュさせると、別のユーザーの応答を返します。
 
 ## アプリケーションレベルのキャッシュ {#application-caching}
 
@@ -526,6 +729,12 @@ def get_config():
 - **一斉失効**: 同じ TTL のキーが同時に切れると DB に負荷が集中します。TTL にばらつきを持たせます。
 - **障害時**: キャッシュが落ちても DB を読んで動くようにします。ただし DB が受けられる負荷かどうかも確認します。
 
+**例**:
+
+- **プロセス内**: 上のコードは 60 秒ごとに読み直します。10 台のコンテナがそれぞれ別の時刻に読むので、設定を変えた後の最大 60 秒は、台によって値が違います。
+- **キーの設計**: `price:123` というキーをテナント間で共有すると、テナント A の価格がテナント B に返ります。`tenant:7:price:123` にします。
+- **一斉失効**: 10 万キーを同じ `ex=300` で入れると、5 分後に同時に切れます。`300 + random.randint(0, 60)` なら、切れる時刻が 60 秒に分散します。
+
 ## マルチテナントのデータアクセス {#multi-tenant}
 
 1 つのアプリで複数の顧客(テナント)を扱う場合の分離方法です。認証と認可だけでは分離になりません。データアクセスの層でもテナントの境界を強制します。
@@ -552,6 +761,28 @@ def get_config():
 3. その認証情報でデータにアクセスします。IAM の条件で他のテナントのキーへのアクセスを拒否できます。
 
 DynamoDB のプールモデルでは、テナント ID をパーティションキーの先頭に置きます。テナントごとのアクセスが自然に分散しますが、大きなテナントがホットキーになる場合はシャーディングを検討します。
+
+**DynamoDB のプールの例**: セッションタグ `tenant` が `123` のロールは、`TENANT#123` のキーだけを読み書きできます。
+
+```json
+{
+  "ForAllValues:StringEquals": {
+    "dynamodb:LeadingKeys": ["TENANT#${aws:PrincipalTag/tenant}"]
+  }
+}
+```
+
+**PostgreSQL の例**: 行レベルセキュリティで、接続ごとに設定したテナントの行だけを見せます。
+
+```sql
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_only ON orders
+  USING (tenant_id = current_setting('app.tenant_id')::bigint);
+```
+
+**ノイジーネイバーの例**: 1,000 WCU のテーブルで、テナント A が 900 WCU を使うと、他のテナントは 100 WCU を奪い合います。サイロへ移すか、API のレート制限をテナントごとに付けます。
+
+**誤ると**: アプリの `WHERE tenant_id = ?` だけに頼ると、1 つのクエリの書き忘れで全テナントのデータが返ります。
 
 ## 既定値と上限のまとめ {#numbers}
 

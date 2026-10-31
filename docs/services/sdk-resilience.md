@@ -10,6 +10,10 @@ AWS SDK でサービスを呼ぶコードの書き方と、失敗しても動き
 
 コードの例は Python の boto3 を使う。考え方は他の言語の SDK でも同じ。
 
+SDK は実行環境に入れるライブラリで、AWS のリソースではないので提供単位はない。クライアントはリージョンごとに作る。呼び先の単位と VPC の内外は [リソースの提供単位](resource-scope.md) を参照する。
+
+- **例:** 東京のテーブルを読むのに `region_name="us-east-1"` のクライアントを使うと、テーブルが見つからず `ResourceNotFoundException` になる。テーブルの有無ではなく、まずリージョンを確認する。
+
 ### 認証情報 {#credentials}
 
 SDK は **認証情報プロバイダーチェーン** を順に探し、最初に見つかったものを使う。コードにアクセスキーを書かない。
@@ -38,9 +42,17 @@ boto3 が探す順番は次の通り。先に見つかったものが使われ�
 
 順番が効く例を示す。EC2 にインスタンスプロファイルを付けたのに権限エラーになるとき、環境変数や `~/.aws/credentials` に古いキーがあると、そちらが優先されている。`aws sts get-caller-identity` で実際の ID を確認する。
 
+- **例（`AWS_PROFILE`）:** `AWS_PROFILE=dev aws sts get-caller-identity` で、`[profile dev]` の設定を使う。`get-caller-identity` の `Arn` に出たロールが、実際に使われている ID である。
+- **例（引数）:** `boto3.client("s3", aws_access_key_id=...)` と書くと、インスタンスのロールより優先される。コードに書かない理由の 1 つで、ロールを直しても効かない。
+- **例（Web ID）:** EKS の IRSA では、`AWS_ROLE_ARN` と `AWS_WEB_IDENTITY_TOKEN_FILE` が Pod に入り、4 番目で解決される。同じ Pod に `AWS_ACCESS_KEY_ID` を入れると、2 番目が先に使われる。
+
 一時的な認証情報には `AWS_SESSION_TOKEN` も必要で、これがないと認証エラーになる。チェーンのプロバイダーは、期限が切れる前に自動で更新する。別のアカウントの処理には STS の `AssumeRole` を使う。
 
+- **例（トークンの付け忘れ）:** `AssumeRole` の結果からキーとシークレットだけを環境変数に入れると、`The security token included in the request is invalid` というエラーになる。`AWS_SESSION_TOKEN` も入れる。
+
 リージョンは `AWS_REGION` か設定ファイルの `region`、クライアントの `region_name` で指定する。未指定なら `NoRegionError` が出る。
+
+- **例:** `AWS_REGION=ap-northeast-1` のマシンで `boto3.client("s3", region_name="us-east-1")` と書くと、コードの指定が勝って `us-east-1` になる。
 
 ### クライアントの設定と優先順位 {#client-config}
 
@@ -62,6 +74,11 @@ defaults_mode = in-region
 
 `AWS_RETRY_MODE=adaptive` を環境に設定し、設定ファイルが `standard` なら、`adaptive` になる。コードで `Config(retries={"mode": "standard"})` と書けば、環境変数より優先される。
 
+- **例（`connect_timeout`）:** `connect_timeout=3` なら、到達できない相手には 3 秒で諦める。既定の 60 秒のままだと、10 秒の Lambda は先に止まる。
+- **例（`read_timeout`）:** `GetItem` が普段 20 ms なら `read_timeout=2` で十分。ロングポーリングの SQS なら 25 秒、大きな S3 の取得なら長めにする。
+- **例（`max_pool_connections`）:** 50 スレッドで呼ぶなら 50 にする。既定の 10 のままだと、余った分は接続を作り直す。
+- **例（`tcp_keepalive`）:** 関数の中で 3 分間応答を待つ API を呼ぶと、途中のネットワーク機器が接続を切ることがある。`tcp_keepalive=True` で防げる場合がある。
+
 | `botocore.config.Config` の項目 | 既定 | 内容 |
 | --- | --- | --- |
 | `retries` | | `mode`、`max_attempts`、`total_max_attempts` |
@@ -79,6 +96,10 @@ defaults_mode = in-region
 | `in-region` | 同じリージョンのサービスを呼ぶ | 1,100 |
 | `cross-region` | 別のリージョンのサービスを呼ぶ | 3,100 |
 | `mobile` | モバイルアプリ | 30,000 |
+
+
+- **例:** 東京の Lambda が東京の DynamoDB を呼ぶなら `in-region` で、接続の確立は 1.1 秒で打ち切る。バージニアの S3 も呼ぶなら `cross-region` にする。
+- **誤ると:** 海を越える呼び出しに `in-region` を使うと、1,100 ms の接続タイムアウトに当たりやすくなる。遅さではなく接続エラーとして現れる。
 
 ### クライアントとリソース {#clients}
 
@@ -113,6 +134,11 @@ except ClientError as e:
 | 新機能 | 追加される | AWS は新しい機能を追加しない方針 |
 | スレッド | 一般に安全 | 安全ではない。スレッドごとに作る |
 
+
+- **例（書き方の違い）:** クライアントは `put_item(TableName="orders", Item={"id": {"S": "1"}})` で、リソースは `Table("orders").put_item(Item={"id": "1"})`。
+- **例（新機能）:** 新しい機能を使うならクライアントを選ぶ。リソースには追加されないので、該当のメソッドがない。
+- **誤ると:** 1 つのリソースを 20 スレッドで共有すると、まれに例外や予期しない動作になる。スレッドごとに `Session` からリソースを作る。
+
 ### 接続の再利用 {#connection-reuse}
 
 接続を毎回作ると、TCP と TLS のハンドシェイクの分だけ遅くなる。特に Lambda ではハンドラーの外でクライアントを作り、実行環境の再利用で接続も使い回す。
@@ -141,6 +167,10 @@ Lambda は使われていない接続を時間とともに切る。切れた接�
 
 複数のプロセスで動かすときは、プロセスごとにクライアントを作る。
 
+- **例（時間）:** 接続の確立に 50 ms かかる環境で、呼び出しごとに作ると 1,000 回で 50 秒が無駄になる。使い回せば最初の 1 回だけで済む。
+- **例（JavaScript）:** クライアントの設定に `requestHandler: { httpsAgent: { maxSockets: 100 } }` を渡すと、同時の接続を 100 にできる（v3.521.0 以降の短い書き方）。AWS への呼び出しは HTTPS なので `httpAgent` では効かない。
+- **誤ると（Lambda）:** ハンドラーの中で `boto3.client()` を作ると、毎回の実行で 100 ms 以上遅くなることがある。プロビジョニングした同時実行でも減らない遅さになる。
+
 ### コードでのエラー処理 {#error-handling}
 
 boto3 のエラーは大きく 2 種類に分かれる。
@@ -168,6 +198,9 @@ except botocore.exceptions.ReadTimeoutError:
 ```
 
 `ClientError` が届いた時点で、SDK の再試行はすでに終わっている。ここでさらに同じ回数を再試行すると、回数が掛け算になる。
+
+- **例（`ClientError` の中身）:** `Code` が `ThrottlingException`、`HTTPStatusCode` が 400、`RequestId` が `...` のように取れる。`status == 400` だけで分岐すると、再試行できるエラーも諦めてしまう。
+- **例（タイムアウト後の確認）:** `PutItem` が `ReadTimeoutError` になった場合、実際には書けていることがある。`attribute_not_exists(id)` を付けて再試行し、`ConditionalCheckFailedException` が返れば、前の書き込みが成功していたと判断できる。
 
 !!! warning "5XX やタイムアウトの書き込みは、成功している可能性がある"
     DynamoDB は、書き込みの 500 について、成功か失敗か分からないと説明している。`TransactWriteItems` なら再試行してよい。`PutItem`、`UpdateItem`、`DeleteItem` は、アイテムの状態を読んで確認するか、条件式を付けて再試行する。
@@ -199,6 +232,8 @@ DynamoDB の `Query` と `Scan` も同じで、1回の応答は 1 MB までに�
 
 `PageSize` はサービスによって、指定より多く返したり少なく返したりする。
 
+- **例（`StartingToken`）:** `paginate(Bucket="b", PaginationConfig={"MaxItems": 100}).build_full_result()` の結果の `NextToken` を保存する。次回は `StartingToken` に渡して 101 件目から読む。
+
 具体例を示す。5,000 件のオブジェクトに `MaxItems=10` を指定すると、10 件で止まる。`PageSize=100` だけなら全 5,000 件を返し、API を約 50 回呼ぶ。`PageSize` を小さくすると、1 回の呼び出しのタイムアウトは避けられるが回数は増える。
 
 ```python
@@ -228,6 +263,10 @@ waiter.wait(
 
 Lambda の中で既定のまま待つと、関数のタイムアウトのほうが先に切れる。長い待ちは [Step Functions](step-functions.md) の待機に移す。
 
+- **例（`WaiterConfig`）:** 上の `Delay=5`、`MaxAttempts=20` なら、5 × 20 = 100 秒で諦める。既定なら 500 秒まで待つ。
+- **例（Lambda）:** 関数のタイムアウトが 60 秒なら、既定の 500 秒には届かない。`Delay=5`、`MaxAttempts=10` で 50 秒にして、残りの 10 秒でエラー処理を行う。
+- **例（名前）:** `dynamodb.waiter_names` には `table_exists` などが入る。存在しない名前で `get_waiter` を呼ぶと `ValueError` になる。
+
 ### 部分的な失敗 {#partial-failures}
 
 バッチ API は、呼び出しが成功しても一部のアイテムが失敗していることがある。応答を必ず確認する。
@@ -254,6 +293,10 @@ while items:
 
 boto3 の `Table.batch_writer()` は、バッファと未処理アイテムの再送を自動で行う。
 
+- **例（`BatchWriteItem`）:** 25 件を書き、`UnprocessedItems` に 3 件が残った。例外は出ないので、そのまま進めると 3 件が欠ける。3 件だけを、待ってから再送する。
+- **例（`PutRecords`）:** 500 件中 `FailedRecordCount` が 12 なら、`Records` のうち `ErrorCode` がある 12 件だけを再送する。全部を再送すると、488 件が重複する。
+- **誤ると:** バックオフなしで `while` を回すと、スロットリング中に同じ負荷をかけ続け、未処理が減らない。
+
 ## リトライ {#retries}
 
 一時的なエラー（スロットリング、ネットワーク、5XX）は再試行で回復することが多い。4XX の認証エラーや検証エラーは何度試しても失敗するので、すぐ諦める。
@@ -272,6 +315,9 @@ HTTP ステータスだけで判定しない。SDK はまずエラーコード�
 - HTTP 400 の `RequestTimeout` は一時的なエラーとして再試行する。
 - 同じ HTTP 400 でも `ValidationException` は再試行しない。
 - 5XX でもスロットリングのコードならスロットリングとして扱う。
+
+- **例（判定）:** `{"Code": "ValidationException"}` が 400 で返ったら、値を直さない限り毎回失敗する。3 回試すだけ時間の無駄で、すぐ呼び出し元にエラーを返す。
+- **例（`ConditionalCheckFailedException`）:** 在庫の条件付き更新で返ったら、在庫切れの処理に進む。再試行しても結果は変わらない。
 
 ### 指数バックオフとジッター {#backoff-jitter}
 
@@ -314,6 +360,18 @@ sequenceDiagram
 
 ### SDK の再試行モード {#retry-modes}
 
+上のコードの `base=0.1`、`cap=5.0`、`max_attempts=5` なら、待ち時間の上限は次のようになる。
+
+| 再試行の前 | 上限（`min(cap, base × 2^n)`） |
+| --- | --- |
+| 1 回目 | 0.1 秒 |
+| 2 回目 | 0.2 秒 |
+| 3 回目 | 0.4 秒 |
+| 4 回目 | 0.8 秒 |
+
+- **例（合計）:** 待ち時間の合計は最大 0.1 + 0.2 + 0.4 + 0.8 = 1.5 秒。`cap` の 5 秒に届くのは `base × 2^n` が 5 を超える `n=6`（6.4 秒）からで、この回数では届かない。
+- **例（ジッターの効果）:** 1,000 のクライアントが同時に 429 を受けると、ジッターなしなら全員が 0.1 秒後にそろって再試行する。フルジッターなら 0〜0.1 秒に散らばり、波が小さくなる。
+
 SDK は自動で再試行する。自前で実装する前に、まず設定を確認する。多重に再試行すると回数が掛け算で増えるので注意する。
 
 | モード | 動き | 向いている場面 |
@@ -326,6 +384,10 @@ SDK は自動で再試行する。自前で実装する前に、まず設定を�
 - `AWS_MAX_ATTEMPTS` と設定ファイルの `max_attempts` は、最初のリクエストを含む総数。1 で再試行なしになる。
 - boto3 の `Config` の `max_attempts` だけは再試行の回数で、最初のリクエストを含まない。総数で書くなら `total_max_attempts` を使う。
 - `adaptive` は、1クライアントで複数のリソースや複数テナントを扱うと、無関係なリクエストまで遅くなる。boto3 では実験的な機能と記載されている。
+
+- **例（環境変数）:** `AWS_RETRY_MODE=standard AWS_MAX_ATTEMPTS=5 python app.py` なら、最大 5 回呼ぶ。
+- **例（`adaptive`）:** 1 つのテーブルへ毎秒 5,000 件を書くバッチで 429 が続くなら、`Config(retries={"mode": "adaptive"})` でクライアントの送信を自動で抑える。
+- **誤ると:** 同じクライアントで `orders` と `users` のテーブルを呼び、`orders` だけが 429 を返すと、`users` への呼び出しも待たされる。テーブルごとにクライアントを分ける。
 
 !!! note "2026 年の新しい再試行動作"
     SDK の新しい再試行動作は、現在 `AWS_NEW_RETRIES_2026=true` でオプトインする形で提供されている。バックオフの時間、リトライ枠の消費、サービスごとの既定値が変わる。たとえば DynamoDB の既定は 4 回になる。
@@ -371,6 +433,9 @@ SDK は自動で再試行する。自前で実装する前に、まず設定を�
 429 が続く場合: 1 回目の再試行の前に 0〜1,000 ms、2 回目の前に 0〜2,000 ms
 ```
 
+- **例（上限 20 秒）:** スロットリングでは `1 秒 × 2^再試行番号` が再試行番号 5 で 32 秒になり、`min(20, 32)` で 20 秒に抑えられる。
+
+
 #### リトライ枠（トークンバケット）
 
 `standard` と `adaptive` には再試行の予算があり、障害が広がると SDK は再試行をやめてすぐエラーを返す。
@@ -384,6 +449,9 @@ SDK は自動で再試行する。自前で実装する前に、まず設定を�
 | 最初の 1 回で成功 | 1 トークン戻す |
 
 一時的なエラーが続けば、500 ÷ 14 で約 35 回の再試行で枯渇する。すると「回数が残っているのに再試行されない」という動きになるが、これは障害時に負荷を増やさないための正常な動作である。
+
+- **例（スロットリング）:** スロットリングだけが続くなら、500 ÷ 5 = 100 回の再試行で枯渇する。一時的なエラーより長く続けられる。
+- **例（回復）:** 再試行で成功すると消費した分が戻り、最初の 1 回での成功でも 1 トークン戻る。障害が収まれば、自然に再試行できる状態に戻る。
 
 サービスが `x-amz-retry-after` ヘッダーを返したら、SDK はその値を参考に待つ（計算した待ち時間から +5,000 ms の範囲）。
 
@@ -399,6 +467,9 @@ SDK: 3 回 × アプリの再試行: 3 回 × Step Functions の Retry: 3 回 = 
 
 再試行は 1 つの層に寄せる。通常は SDK に任せ、アプリでの再試行を重ねない。
 
+- **例（Step Functions）:** Lambda のステートに `"MaxAttempts": 2` を付けると、ステートは最大 3 回実行される。中の SDK が 3 回なら、3 × 3 = 9 回呼ばれる。SDK を `total_max_attempts=1` にすれば 3 回で済む。
+- **誤ると:** 障害中の相手に 27 倍の呼び出しが届き、回復を遅らせる。
+
 ## タイムアウト {#timeouts}
 
 タイムアウトがないと、遅い相手につられて自分のリソースが枯渇する。接続と読み取りの両方を設定する。
@@ -411,6 +482,9 @@ SDK: 3 回 × アプリの再試行: 3 回 × Step Functions の Retry: 3 回 = 
 - 既定値は短時間の API には長すぎる。呼び出し元の時間制限より短くする。
 - **内側のタイムアウトを外側より短くする**。例: API Gateway の 29 秒 > Lambda のタイムアウト > SDK のタイムアウト。こうしないと、内側の処理が続いているのに外側がエラーを返してしまう。
 - Lambda では `context.get_remaining_time_in_millis()` で残り時間を確認する。
+
+- **例（層の順番）:** API Gateway 29 秒 > Lambda 25 秒 > SDK は `(1 + 2) × 3 = 9` 秒。Lambda が先に切れるので、API Gateway が 504 を返す前に、自分の形式でエラーを返せる。
+- **例（残り時間）:** `get_remaining_time_in_millis()` が 2,000 未満なら、新しい呼び出しを始めず、途中経過を保存して終わる。
 
 #### 予算の計算 {#timeout-budget}
 
@@ -429,6 +503,8 @@ SDK: 3 回 × アプリの再試行: 3 回 × Step Functions の Retry: 3 回 = 
 症状は Lambda の `Task timed out`。呼び先が遅いときでもコードの `except` に入らず、フォールバックもログも動かない。
 
 逆に短すぎると、成功するはずの呼び出しまで失敗して再試行が増える。読み取りタイムアウトは、その API の遅い場合の応答時間より長くする。SQS のロングポーリングなら 20 秒より長くする。
+
+- **例（短すぎ）:** 応答の 99% が 1.5 秒で返る API に `read_timeout=1` を設定すると、遅い呼び出しのたびに再試行が走り、3 回とも失敗することが増える。2〜3 秒にする。
 
 ## 冪等性 {#idempotency}
 
@@ -463,7 +539,12 @@ dynamodb.transact_write_items(
 
 `uuid4()` を再試行のたびに生成すると、毎回別のトークンになって冪等にならない。トークンは **業務の操作ごとに 1 つ** 作り、再試行では使い回す。
 
+- **例（期限）:** `ClientRequestToken="order-1-pay"` で送り、9 分後に再試行すると、同じ結果が返り二重には実行されない。11 分後の再試行は 10 分を過ぎているので、別のトランザクションとして実行される。
+- **例（EC2）:** `run_instances(ClientToken="batch-20261031-a", MinCount=1, MaxCount=1, ...)` を 2 回呼んでも、インスタンスは 1 台だけで、同じインスタンスの情報が返る。別の `InstanceType` に変えて同じトークンで呼ぶと `IdempotentParameterMismatch` になる。
+
 Step Functions の `StartExecution` は、実行中の同じ名前、同じ入力なら成功して同じ応答を返す。実行が閉じているか、入力が違うと `ExecutionAlreadyExists` になる。Express ワークフローは冪等ではない。
+
+- **例:** `start_execution(stateMachineArn=arn, name="order-123", input=body)` を実行中に再送すると、同じ実行の応答が返る。`order-123` が完了した後に呼ぶと `ExecutionAlreadyExists` になり、注文が二重に処理されない。
 
 ```python
 from botocore.exceptions import ClientError
@@ -483,7 +564,13 @@ do_business_logic()
 
 上の例は処理の前に印を付ける。処理の失敗時の扱いまで考えるなら、状態（処理中、完了）を持つテーブルにする。Powertools はこれを実装している。
 
+- **例（印の保持期間）:** SQS の保持期間が 4 日なら、`processed-events` の項目の TTL は 7 日にする。TTL が 1 日だと、3 日後に届いた再配信を処理済みと判定できない。
+- **例（途中の失敗）:** 上のコードは、印を付けた後で `do_business_logic()` が失敗すると、再試行で「処理済み」と判断され、処理されないままになる。`status` を `IN_PROGRESS` と `COMPLETED` に分け、完了後に更新する。
+- **例（Powertools）:** `@idempotent(config=IdempotencyConfig(expires_after_seconds=3600), persistence_store=DynamoDBPersistenceLayer(table_name="idempotency"))` を関数に付ける。同じ入力は 1 時間の間、保存された結果を返す。
+
 `UpdateItem` のカウンター加算のように、そのままでは冪等でない操作に注意する。
+
+- **例（カウンター）:** `SET stock = stock - :n` は 2 回実行すると 2 個減る。`ConditionExpression="version = :v"` を付けて `version` も更新すれば、2 回目は `ConditionalCheckFailedException` で止まる。
 
 ## サーキットブレーカー {#circuit-breaker}
 
@@ -525,6 +612,10 @@ class CircuitBreaker:
 
 Lambda のように実行環境が複数ある場合、メモリの状態は共有されない。状態を共有するには DynamoDB や ElastiCache を使う。AWS のパターンでは、Step Functions の Express ワークフローと DynamoDB で実装する例が紹介されている。
 
+- **例（上のコードの効果）:** `threshold=5`、`reset_seconds=30` なら、5 回続けて失敗すると 30 秒は呼ばない。毎秒 100 件なら 3,000 件が相手に届かず、1 件 5 秒のタイムアウトを待つ必要もなくなる。
+- **例（Lambda の実行環境）:** 実行環境が 50 個あると、それぞれが 5 回ずつ失敗してから開くので、計 250 回は呼ぶ。全体で一度に止めたいなら、状態を DynamoDB に置く。
+- **誤ると:** 閾値が 1 だと、一時的な失敗 1 回で 30 秒止まる。再試行と組み合わせ、再試行の後の失敗だけを数える。
+
 ## グレースフルデグラデーション {#graceful-degradation}
 
 依存先が止まっても、機能を縮小して動き続けること。必須の依存を任意の依存に変える。
@@ -537,6 +628,9 @@ Lambda のように実行環境が複数ある場合、メモリの状態は共�
 | 検索サービスが停止 | 検索だけ無効にして他は動かす |
 
 障害は通常の動作として設計する。フォールバックは定期的にテストする。[ヘルスチェック](observability.md) で浅い確認と依存先まで見る確認を分けると、依存先の不調でインスタンスが全部外される事態を防げる。
+
+- **例（おすすめ）:** おすすめ API の呼び出しを `timeout=(0.2, 0.3)` にし、超えたら人気商品の固定リストを返す。商品ページの表示は止まらない。
+- **例（ヘルスチェック）:** ALB のヘルスチェックは DB を呼ばない `/health` にする。DB を確認する `/health/deep` は監視だけに使う。全インスタンスが DB の不調で同時に外れると、DB に関係ないページも止まる。
 
 ## サードパーティ連携の耐障害性 {#third-party}
 
@@ -572,6 +666,12 @@ def call_partner(payload, idempotency_key):
 
 `requests` はサードパーティのライブラリで、Lambda の Python ランタイムには含まれない。パッケージに含める。
 
+- **例（`Retry-After`）:** 429 に `Retry-After: 30` が付いて返ったら、30 秒より前に再試行しない。指数バックオフの計算より、この値を優先する。
+- **例（レート制限をキューで守る）:** 相手の上限が 1 分に 100 回（毎秒約 1.67 回）で、1 回に 1.2 秒かかるなら、SQS と Lambda の `MaximumConcurrency=2` で 2 ÷ 1.2 ≈ 1.67 回/秒に抑えられる。
+- **例（冪等性キー）:** `idempotency_key=f"order-{order_id}"` にする。読み取りタイムアウトの後で再送しても、対応している相手なら同じ注文として扱う。
+- **例（Webhook）:** 受信した `event_id` を DynamoDB に `attribute_not_exists` で書き、失敗したら 200 を返して処理しない。5XX を返すと、相手がまた送ってくる。
+- **誤ると:** 再試行できない 400 まで再試行すると、相手のレート制限を無駄に消費する。
+
 ## ステートフルとステートレス {#stateful-stateless}
 
 | | ステートレス | ステートフル |
@@ -591,6 +691,10 @@ AWS では、状態を外部に出してステートレスにするのが基本�
 | WebSocket の接続 ID | DynamoDB |
 
 Lambda の `/tmp` やグローバル変数はキャッシュとしてだけ使う。
+
+- **例（セッション）:** ALB の裏の 2 台のメモリにセッションを置くと、1 台が落ちたとき半分の利用者がログアウトされる。DynamoDB か ElastiCache に TTL 30 分で置けば、残りの 1 台で続けられる。
+- **例（スティッキーセッションの限界）:** ALB で同じ台へ固定しても、その台が落ちれば状態は失われる。スケールインでも同じことが起きる。
+- **例（`/tmp`）:** 関数が `/tmp/result.json` に書いても、次の呼び出しは別の実行環境に当たるかもしれない。あれば使う、なければ作り直す、という使い方にする。
 
 ## アーキテクチャパターン {#architectural-patterns}
 
@@ -615,6 +719,10 @@ AWS の代表的な実現方法は次の通り。
 | コレオグラフィー | EventBridge、SNS |
 
 最初から細かく分ける必要はない。チームや変更頻度、スケールの要件の違いが出てきたら、境界の明確な部分から切り出す。
+
+- **例（モノリス）:** 開発者 5 人、月 1 回のリリースなら、1 つのアプリを Elastic Beanstalk で動かすほうが単純。
+- **例（切り出し）:** 画像変換だけが月末に 10 倍の CPU を使うなら、ここを SQS と Lambda に切り出す。他の機能はそのままにできる。
+- **例（オーケストレーションとコレオグラフィー）:** 「決済 → 在庫 → 出荷」の順と補償が必要なら Step Functions。「注文後にメールと分析へ通知」のように互いに独立なら EventBridge。
 
 ## シリアライズとデシリアライズ {#serialization}
 
@@ -648,6 +756,13 @@ def default(o):
 body = json.dumps(item, default=default, ensure_ascii=False)
 ```
 
+- **例（変換の結果）:** `Decimal("1200")` は `1200`、`Decimal("12.5")` は `12.5`、`datetime(2026, 10, 31, tzinfo=timezone.utc)` は `"2026-10-31T00:00:00+00:00"` になる。
+- **例（float）:** `0.1 + 0.2` は `0.30000000000000004`。金額は円の整数か、`Decimal("0.30")` で持つ。
+- **例（日本語）:** `json.dumps({"s": "注文"})` は `{"s": "\u6ce8\u6587"}` になり、`ensure_ascii=False` なら `{"s": "注文"}` になる。
+- **例（大きな整数）:** `9007199254740993` は JavaScript の `Number` で正確に表せず、`9007199254740992` に丸められる。注文 ID は文字列で渡す。
+- **例（Base64）:** Base64 にするとサイズは 4/3 倍になる。Lambda の同期のペイロード 6 MB には、元のデータで 4.5 MB までしか入らない。
+
+
 ### サービスごとの形式 {#service-formats}
 
 | サービス | 形式 | 注意点 |
@@ -661,6 +776,12 @@ body = json.dumps(item, default=default, ensure_ascii=False)
 | S3 | バイト列 | `Body` は `read()` してデコード |
 | S3 イベント | キーは URL エンコード | `unquote_plus` でデコード |
 | API Gateway のバイナリ | Base64 | `isBase64Encoded` を設定 |
+
+
+- **例（プロキシ統合）:** `return {"statusCode": 200, "body": json.dumps({"ok": True})}` が正しい形。`"body": {"ok": True}` と辞書のまま返すと、API Gateway は 502 を返す。
+- **例（Kinesis）:** `json.loads(base64.b64decode(record["kinesis"]["data"]))` の順に戻す。`b64decode` を忘れると、`JSONDecodeError` になる。
+- **例（S3）:** `s3.get_object(...)["Body"].read().decode("utf-8")` のように読む。`Body` のままでは文字列ではない。
+- **例（S3 イベント）:** `red flower.jpg` のキーは `red+flower.jpg` で届く。そのまま `get_object` すると `NoSuchKey` になる。
 
 ### DynamoDB のシリアライズ {#dynamodb-serialization}
 
@@ -677,6 +798,8 @@ DynamoDB の低レベル API は、値に型の記述子を付けた形式を使
 ```
 
 数値も文字列として送る。boto3 の変換の方法は3通りある。
+
+- **例:** `"amount": {"N": 1200}` と数値のまま送ると、パラメータの検証で失敗する。`{"N": "1200"}` と文字列にする。
 
 | 方法 | 型の扱い |
 | --- | --- |
@@ -711,6 +834,12 @@ item = {k: deserializer.deserialize(v) for k, v in record["dynamodb"]["NewImage"
 | JSON で float を読み込む | `json.loads` の結果を直接渡すと float が残る | `json.loads(s, parse_float=Decimal)` |
 | 日付の型がない | ISO 8601 の文字列か、エポック秒の数値 | TTL はエポック秒の数値 |
 
+
+- **例（float）:** `table.put_item(Item={"id": "1", "price": 12.5})` は `TypeError: Float types are not supported`。`Decimal("12.5")` にする。
+- **例（空の Set）:** `{"tags": set()}` は保存できない。`tags` の属性ごと省く。
+- **例（TTL）:** 24 時間後に消すなら `{"expires_at": int(time.time()) + 86400}`。`time.time() * 1000` のミリ秒を入れると、遠い未来と判定され、消えない。
+- **例（キーの型）:** パーティションキーを `BOOL` の `paid` で作ることはできない。文字列の `"PAID"` にする。
+
 #### Decimal の扱い {#decimal}
 
 ```python
@@ -740,6 +869,8 @@ Python の型と DynamoDB の型は次のように対応する。
 | `dict` | Map（`M`） |
 
 空文字はキー以外の属性なら保存できる。空の Set は保存できない。
+
+- **例:** `{"note": ""}` は保存できる。キーの `id` に `""` を入れると `ValidationException` になる。`{"id": "1", "nickname": None}` は Null 型として保存され、属性がない状態とは別物になる。
 
 データ設計は [DynamoDB](dynamodb.md) を参照する。
 
@@ -836,6 +967,11 @@ def test_save_order():
 ```
 
 Lambda のテストイベントは [Lambda](lambda.md)、外部依存のモック API は [API Gateway](api-gateway.md)、テストのテンプレート管理は [IaC](iac.md) を参照する。
+
+- **例（Stubber の検証）:** `add_response` の第 3 引数に書いたパラメータと実際の呼び出しが違うと、`StubAssertionError` でテストが失敗する。テーブル名の打ち間違いも見つかる。
+- **例（moto）:** `@mock_aws` を付けると、テストの中で本当にテーブルを作り、`put_item` と `get_item` のつながりを確かめられる。実際の AWS は呼ばれない。
+- **例（`sam local`）:** `sam local generate-event s3 put > event.json` の後、`sam local invoke OrdersFunction -e event.json` で関数を 1 回実行する。`sam local start-api` は既定で `http://127.0.0.1:3000` で待ち受ける。
+- **誤ると:** `moto` や `Stubber` は本物の IAM を確認しない。権限の不足はこのテストでは見つからないので、実環境の統合テストも行う。
 
 ## 既定値と上限のまとめ {#numbers}
 

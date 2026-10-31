@@ -29,6 +29,9 @@ AWS を使う前提になる考え方と、設計の指針、インフラの構�
 | データセンターの運用をやめる | ラックや電源の管理から解放される | 開発に人員を回せる |
 | 数分で世界展開 | 複数リージョンに配置できる | 海外の利用者の近くに置く |
 
+- **固定費と変動費の例:** 3 年で 900 万円のサーバーを買うと、使用率が 20% でも 900 万円です。クラウドなら、ピークの 2 か月だけ台数を増やし、残りの 10 か月は小さく動かせます。
+- **容量の推測の例:** 年末に 10 倍のアクセスが来るなら、オンプレミスはその 10 倍を常に持ちます。クラウドなら年末の間だけ 10 倍にします。
+
 ### 高可用性、弾力性、俊敏性 {#ha-elasticity-agility}
 
 3 つは混同しやすいので区別します。
@@ -39,6 +42,10 @@ AWS を使う前提になる考え方と、設計の指針、インフラの構�
 | 弾力性 | 負荷に合わせて自動で増減する | Auto Scaling |
 | 俊敏性 | 新しいことを短時間で試せる | 数分で環境を作成 |
 
+- **高可用性の例:** 3 AZ に 2 台ずつ置くと、1 つの AZ が止まっても 4 台が残ります。
+- **弾力性の例:** 昼は 10 台、深夜は 2 台に自動で増減します。
+- **俊敏性の例:** 新機能の検証環境を午前中に作り、結果が悪ければ午後に捨てます。
+
 ### デプロイモデルとサービスモデル {#deployment-models}
 
 | デプロイモデル | 内容 |
@@ -47,6 +54,8 @@ AWS を使う前提になる考え方と、設計の指針、インフラの構�
 | ハイブリッド | オンプレミスとクラウドを接続して併用する |
 | オンプレミス | 自社施設で動かす |
 
+- **例:** 公開のサイトは AWS だけで動かし（クラウド）、基幹の DB を社内に残して Direct Connect でつなぐ（ハイブリッド）構成があります。
+
 サービスモデルは、利用者が管理する範囲で分かれます。
 
 | モデル | 利用者が管理するもの | 例 |
@@ -54,6 +63,8 @@ AWS を使う前提になる考え方と、設計の指針、インフラの構�
 | IaaS | OS より上 | EC2 |
 | PaaS | アプリとデータ | Elastic Beanstalk |
 | SaaS | 使い方とデータ | 完成したソフトウェア |
+
+- **例:** EC2 に自分で MySQL を入れると、OS のパッチも自分で当てます。Elastic Beanstalk ならアプリのコードを上げるだけです。
 
 ### クラウドの経済性 {#cloud-economics}
 
@@ -65,6 +76,10 @@ AWS を使う前提になる考え方と、設計の指針、インフラの構�
 | 自動化の効果 | 手作業の削減、ミスの減少、繰り返しの容易さ |
 
 オンプレミスでは、機器、施設、電力、保守、運用の人員が費用になります。クラウドとの比較では、これらを含めて見積もります。
+
+- **TCO の例:** サーバー代が年 300 万円でも、施設と電力 100 万円、保守 50 万円、運用の人件費 150 万円を足すと年 600 万円です。機器代だけで比べると、クラウドが割高に見えます。
+- **適正サイズの例:** CPU のピークが 15% の `m7i.2xlarge` を `m7i.large` にすると、vCPU は 8 から 2 になります。ピークは約 60% で、まだ余裕があります。
+- **BYOL の例:** ライセンス込みの料金と、手持ちのライセンスの費用を比べ、ソケット単位の契約なら [Dedicated Hosts](cost-management.md#purchase-options) を検討します。
 
 具体的な費用の道具は [コスト管理](cost-management.md) を、移行の戦略は [移行サービス](migration.md) を参照してください。
 
@@ -83,9 +98,20 @@ AWS 上のシステムを評価するための設計指針です。6 つの柱�
 
 試験では、要件からどの柱の話かを判断させます。「復旧手順を試す」は信頼性、「使用率を上げて消費電力を減らす」はサステナビリティ、「人が直接データに触らない」はセキュリティです。
 
+数字を入れた場面です。
+
+- **運用上の優秀性の例:** 月 1 回の大きなリリースを、週 5 回の小さなリリースへ変えます。
+- **セキュリティの例:** 全 200 ロールの権限を Access Analyzer で見直し、未使用の権限を外します。
+- **信頼性の例:** 四半期に 1 回、別リージョンへの切り替えを試し、RTO 30 分を満たすか測ります。
+- **パフォーマンス効率の例:** レイテンシーが 200 ms の読み取りに DAX を入れて、ミリ秒未満にします。
+- **コスト最適化の例:** 平日の 8 時間だけ使う開発環境を夜間と週末に止めると、168 時間中 40 時間の稼働で、76% 減ります。
+- **サステナビリティの例:** 使用率 10% のサーバー 10 台を、使用率 50% の 2 台にまとめます。
+
 ### Well-Architected Tool {#wa-tool}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+[提供単位](resource-scope.md#two-axes): リージョン。ワークロードはリージョンごとに作り、VPC の外です。
 
 ワークロードを質問形式でレビューするコンソールのツールです。追加料金はかかりません。
 
@@ -99,6 +125,9 @@ AWS 上のシステムを評価するための設計指針です。6 つの柱�
 | 改善計画 | 高リスク項目などを受けた改善の一覧 |
 
 ツールは指摘と記録を行うものです。リソースを自動で修正はしません。
+
+- **マイルストーンの例:** 最初のレビューで高リスクが 12 件なら、`2026-Q4-baseline` を保存します。改善後に 3 件になったら別のマイルストーンを保存し、前後を比べます。
+- **誤ると:** マイルストーンを保存せずに回答を更新すると、改善前の状態を後から示せません。
 
 AWS Well-Architected Agent というエージェント機能もありますが、2026 年 10 月時点でプレビューです。
 
@@ -119,6 +148,8 @@ AWS CAF は、組織がクラウドに移行するための準備を整理した
 
 前半の 3 つは事業寄り、後半の 3 つは技術寄りと覚えると整理できます。
 
+- **例:** 「社員のクラウドの研修計画を作る」は人材、「監査ログの要件を決める」はセキュリティ、「監視とインシデント対応を整える」はオペレーションです。
+
 変革の進め方は、次の 4 フェーズです。
 
 ```mermaid
@@ -134,6 +165,8 @@ Cloud Practitioner の試験ガイドは、CAF で得られる成果の例とし
 - 環境、社会、ガバナンス（ESG）の改善
 - 収益の増加
 - 運用効率の向上
+
+- **フェーズの例:** Envision で「データセンターの契約が切れる 18 か月後までに 60% を移す」と目標を決めます。Align で不足するスキルを洗い出します。Launch で小さな 3 つのアプリを移します。Scale で残りを本番へ広げます。
 
 ## 責任共有モデル {#shared-responsibility}
 
@@ -162,6 +195,9 @@ Cloud Practitioner の試験ガイドは、CAF で得られる成果の例とし
 
 症状の例として、S3 バケットを公開設定にして漏えいした場合、責任は利用者にあります。AWS がバケットの設定を代わりに判断することはありません。
 
+- **共有の例:** パッチ管理は共有です。EC2 の場合、ハイパーバイザーは AWS、ゲスト OS は利用者です。OS のパッチを 6 か月当てずに侵入されたら、利用者の責任です。
+- **RDS の例:** OS のパッチは AWS ですが、`auto_minor_version_upgrade` やメンテナンスの時間帯は利用者が決めます。セキュリティグループで `0.0.0.0/0` の 3306 番を開けたなら、利用者の責任です。
+
 コンプライアンスの資料も、AWS は自社のインフラについて提供します。自社のシステムを証明する資料は利用者が用意します（[Artifact](#artifact)）。
 
 ## グローバルインフラストラクチャ {#global-infrastructure}
@@ -177,6 +213,8 @@ Cloud Practitioner の試験ガイドは、CAF で得られる成果の例とし
 | Outposts | 自社のデータセンターなど | オンプレミスで AWS と同じ API | 機器を設置 |
 | エッジロケーション | 世界の多数の拠点 | コンテンツ配信、DNS | CloudFront などを使えば自動で利用 |
 
+[提供単位](resource-scope.md#two-axes) の考え方と、リソースごとの一覧は別のページにまとめています。
+
 ### リージョン {#regions}
 
 すべてのリージョンに 3 つ以上の AZ があります。
@@ -190,6 +228,12 @@ aws account list-regions --region-opt-status-contains ENABLED_BY_DEFAULT ENABLED
 
 無効なリージョンを指定すると、リソースを作成できません。
 
+```bash
+aws account enable-region --region-name ap-southeast-5
+```
+
+- **例:** 2019 年 3 月 20 日より後のリージョンは、有効にしないと `InvalidClientTokenId` などの認証エラーになります。
+
 リージョンは次の観点で選びます。
 
 | 観点 | 例 |
@@ -201,6 +245,8 @@ aws account list-regions --region-opt-status-contains ENABLED_BY_DEFAULT ENABLED
 
 複数リージョンを使う主な理由は、災害復旧、事業継続、利用者への低遅延、データ主権です。
 
+- **選び方の例:** 主な利用者が日本で、新しい GPU のインスタンスが東京にないなら、推論だけ別のリージョンに置き、遅延と費用を比べます。
+
 ### アベイラビリティーゾーン {#availability-zones}
 
 AZ は、1 つのリージョン内にある独立した区画です。互いに単一障害点を共有しないように設計されています。複数の AZ に配置すれば、1 つの AZ の障害でも動き続けられます。
@@ -209,25 +255,50 @@ AZ 名（`ap-northeast-1a` など）は、古いリージョンの一部で、20
 
 症状の例として、アカウントをまたいで同じ AZ に配置したいのに名前で揃えると、別の場所になって AZ 間の通信料が発生することがあります。AZ ID で揃えます。
 
+```bash
+aws ec2 describe-availability-zones \
+  --query 'AvailabilityZones[].[ZoneName,ZoneId]' --output text
+```
+
+- **例:** アカウント A の `ap-northeast-1a` が `apne1-az4`、アカウント B の `ap-northeast-1a` が `apne1-az1` なら、別の場所です。B は `apne1-az4` に当たる名前を使います。
+
 ### Local Zones {#local-zones}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): AZ に似た単位です。親リージョンの VPC のサブネットとして使うので、VPC の中です。
 
 リージョンを大都市の近くに拡張する場所です。リアルタイムのゲーム、ライブ配信、AR/VR、仮想ワークステーションのほか、データの所在地の要件にも使います。
 
 オプトインしてから、親リージョンの VPC に Local Zone を指定したサブネットを作ります。
 
+```bash
+aws ec2 modify-availability-zone-group \
+  --group-name us-west-2-lax-1 --opt-in-status opted-in
+aws ec2 create-subnet --vpc-id vpc-0abc1234 \
+  --cidr-block 10.0.80.0/24 --availability-zone us-west-2-lax-1a
+```
+
+- **例:** ロサンゼルスの映像制作の端末に数ミリ秒で応答したいなら、`us-west-2-lax-1a` に EC2 を置きます。
+- **誤ると:** オプトインせずにサブネットを作ると、Zone が使えないというエラーになります。
+
 ### Wavelength {#wavelength}
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): 通信事業者のゾーンに置くサブネットで、親リージョンの VPC を拡張します。VPC の中です。
 
 通信事業者のネットワークのエッジに、AWS のコンピューティングとストレージを置きます。VPC を Wavelength Zone に拡張し、キャリアゲートウェイで通信事業者のネットワークにつなぎます。
 
 5G 端末向けに低遅延を求める場合に選びます。作成や管理には親リージョンを使います。
 
+- **例:** 工場の 5G カメラの映像を、数十ミリ秒で判定します。キャリアゲートウェイ `cagw-` をルートに足すと、端末からの通信が届きます。通常のインターネットゲートウェイとは別です。
+
 ### Outposts {#outposts}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): 親リージョンの AZ に結び付きます。Outpost のサブネットは VPC を拡張したもので、VPC の中です。機器は自社の施設にあります。
 
 AWS が管理する機器を自社の施設に置き、リージョンと同じ API やツールを使えるサービスです。EC2、EBS、ECS、RDS などを Outpost のサブネットに作れます。
 
@@ -239,6 +310,9 @@ AWS が管理する機器を自社の施設に置き、リージョンと同じ 
 施設の電力、ネットワークの要件は利用者が満たします。親リージョンとの接続も必要です。低遅延やデータの所在地のために、オンプレミスに置く場合に選びます。
 
 Local Zones との違いは、機器の置き場所です。Local Zones は AWS の施設で、Outposts は自社の施設です。
+
+- **ラック数の例:** コンピュートラックが 3 台なら ACE ラックは不要です（将来 4 台以上にするなら早めの導入を推奨）。4 台以上では必須です。
+- **選び方の例:** 工場の中の機器と 5 ミリ秒未満で通信し、データを社外に出せないなら Outposts です。都市の近くで足りるなら Local Zones です。
 
 ### エッジロケーション {#edge-locations}
 
@@ -267,6 +341,19 @@ CloudFront のキャッシュや Route 53 の応答などに使う拠点です�
 | 本番システムのダウン | `urgent` | 1 時間 |
 | 事業に重大なシステムのダウン | `critical` | 上の表のとおり |
 
+```bash
+aws support create-case --region us-east-1 \
+  --subject "EC2 が起動しない" \
+  --communication-body "東京の本番で起動に失敗" \
+  --severity-code urgent \
+  --service-code amazon-elastic-compute-cloud-linux \
+  --category-code other
+```
+
+- **重大度の例:** 開発の質問は `low`、検証環境の不具合は `normal`、本番の機能の一部が低下は `high`、本番が停止は `urgent` です。売上に直結する全停止で、Business Support+ なら `critical` を選ぶと 30 分未満の対応です。
+- **料金の例:** Business Support+ を 3 アカウントで使うと、最低 29 USD × 3 = 月 87 USD です（2026 年 10 月時点の公式の料金。変わることがあります）。
+- **誤ると:** Basic のアカウントでは技術的なケースを作れません。本番で必要になってからでは遅いので、事前にプランを選びます。
+
 ### サポートの情報源 {#support-resources}
 
 | 情報源 | 使いどころ |
@@ -281,9 +368,13 @@ CloudFront のキャッシュや Route 53 の応答などに使う拠点です�
 | ソリューションアーキテクト | 設計の相談 |
 | AWS Partner Network | 独立系ソフトウェアベンダーやシステムインテグレーターのパートナー。研修、イベントなどの特典がある |
 
+- **例:** 自社の AWS の IP からスパムが届くと第三者から言われたなら Trust & Safety、設定の手順なら Knowledge Center、大規模な移行の実作業を頼むなら Professional Services です。
+
 ## Trusted Advisor {#trusted-advisor}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+[提供単位](resource-scope.md#two-axes): グローバル。アカウント単位の点検で、VPC の外です。
 
 環境を点検し、費用の節約、可用性と性能の改善、セキュリティの弱点に関する推奨を出すサービスです。
 
@@ -318,9 +409,16 @@ Trusted Advisor Priority は Enterprise 以上の機能で、AWS のアカウン
 
 Trusted Advisor は助言するサービスで、自動では修正しません。Compute Optimizer との違いは [コスト管理](cost-management.md#compute-optimizer) を参照してください。
 
+- **例:** 「EBS の公開スナップショット」が赤なら、自分で共有を解除します。Trusted Advisor は直しません。
+- **サービスの制限の例:** VPC の数が上限の 5 個に対して 4 個なら、使用率 80% で警告になります。先にクォータの引き上げを申請します。
+- **EventBridge の例:** `aws.trustedadvisor` のイベントで `WARN` や `ERROR` になったら SNS に通知します。
+- **誤ると:** Basic では API で取得できないので、定期の取得スクリプトは失敗します。
+
 ## AWS Health Dashboard {#health}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
+
+[提供単位](resource-scope.md#two-axes): グローバル。アカウント単位のサービスで、VPC の外です。
 
 AWS のサービス障害や予定されたメンテナンスが自分にどう影響するかを示します。
 
@@ -336,9 +434,22 @@ AWS のサービス障害や予定されたメンテナンスが自分にどう�
 
 「自分のアカウントのどのリソースが影響を受けるか」を聞かれたら Health Dashboard です。CloudWatch は自分のリソースのメトリクスを見るもので、AWS 側の障害情報は分かりません。
 
+```json
+{
+  "source": ["aws.health"],
+  "detail-type": ["AWS Health Event"],
+  "detail": {"service": ["EC2"], "eventTypeCategory": ["scheduledChange"]}
+}
+```
+
+- **例:** 2 週間後の EC2 の予定メンテナンスがイベントになり、上のパターンから SNS に届きます。担当はその前に対象のインスタンスを入れ替えます。
+- **API の例:** `aws health describe-events` は Business Support+ 以上で使えます。Basic では `SubscriptionRequiredException` です。
+
 ## AWS Artifact {#artifact}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+[提供単位](resource-scope.md#two-axes): 資料を受け取るサービスで、VPC の中にも外にもリソースを置きません。
 
 AWS のセキュリティとコンプライアンスの文書をオンデマンドでダウンロードするサービスです。
 
@@ -353,9 +464,13 @@ AWS のセキュリティとコンプライアンスの文書をオンデマン�
 
 サービスごとの準拠状況は、公式の「コンプライアンスプログラム対象のサービス」のページで確認できます。要件はサービスごとに異なります。また、規制は国や業種で異なるので、選ぶリージョンと要件を合わせます。
 
+- **BAA の例:** PHI を扱う組織は、Artifact で組織全体の BAA を受諾します。さらに、使うサービスが HIPAA の対象かをページで確かめます。契約を結んだだけで準拠にはなりません。
+
 ## AWS Marketplace {#marketplace}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIB](../courses/aib/services.md){ .exam-badge .exam-foundational }
+
+[提供単位](resource-scope.md#two-axes): 製品ごとに異なります。AMI の製品はリージョンの VPC で動き、SaaS は VPC の外です。
 
 サードパーティのソフトウェア、データ、サービスを探して購入し、デプロイできるカタログです。
 
@@ -368,6 +483,9 @@ AWS のセキュリティとコンプライアンスの文書をオンデマン�
 | ライセンス | License Manager と連携して権利を管理 |
 
 セキュリティ製品などを、自分で調達や契約をせずに導入したいときに選びます。
+
+- **例:** 次世代ファイアウォールの AMI を時間課金で 30 日試し、続けるなら年間契約にします。請求は AWS の請求書にまとまります。
+- **費用の注意:** Marketplace の製品は [Cost Anomaly Detection](cost-management.md#cost-anomaly-detection) の対象外です（Bedrock のサードパーティモデルを除く）。Budgets で監視します。
 
 ## マネジメントコンソールとアクセス方法 {#access-methods}
 
@@ -383,11 +501,16 @@ AWS のセキュリティとコンプライアンスの文書をオンデマン�
 
 一度きりならコンソール、繰り返すなら CLI や IaC を選びます。
 
+- **例:** 1 回の設定の確認はコンソール、50 個のバケットにタグを付けるのは CLI のスクリプト、同じ環境を 3 リージョンに作るのは CloudFormation です。
+- **CloudShell の例:** ファイルはホームディレクトリの 1 GB に残ります。`/tmp` の内容はセッションの終了で消えます。
+
 ルートユーザーは日常の作業に使いません。MFA を設定し、アクセスキーを作らないようにします。詳細は [IAM](iam.md) を参照してください。
 
 ## Amazon Lightsail {#lightsail}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): リージョン。インスタンスは AZ を選んで作り、AWS が管理する Lightsail 用の VPC に入ります。自分の VPC とはピアリングでつなぎます。
 
 Web サイトや Web アプリを簡単に始めるためのサービスです。インスタンス、コンテナ、マネージドデータベース、ロードバランサー、コンテンツ配信をまとめて提供します。
 
@@ -398,6 +521,9 @@ Web サイトや Web アプリを簡単に始めるためのサービスです�
 | 料金の形 | 割り当てがセットになったプラン | 利用した分の従量制 |
 
 「最小限の知識で WordPress をすぐ公開したい」なら Lightsail です。細かいネットワーク制御や Auto Scaling が必要なら EC2 を選びます。
+
+- **例:** 月 1 万アクセスのブログなら Lightsail のプランで足ります。負荷に応じて自動で台数を増やすなら EC2 と Auto Scaling です。
+- **誤ると:** 自分の VPC の RDS に直接つなごうとしても、ピアリングが有効でないと届きません。
 
 研究者向けに、アプリを事前導入した Lightsail for Research もあります。
 

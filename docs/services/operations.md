@@ -36,9 +36,13 @@ CloudWatch の基本は [オブザーバビリティ](observability.md)、Auto S
 
 DevOps Guru の終了日は、サービスのガイドでは 2027 年 9 月 30 日、AWS General Reference の一覧では 2027 年 9 月 29 日です。
 
+**例:** 今日が 2026 年 10 月 31 日なら、DevOps Guru を初めて使うアカウントでは有効にできません。問題文の「新規に導入する」では選ばず、CloudWatch や AWS DevOps Agent を検討します。
+
 ## AWS Systems Manager {#systems-manager}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+**提供単位:** リージョン。設定と実行履歴はリージョンごとに分かれます。Systems Manager は VPC の外のサービスで、ノードは VPC の中やオンプレミスにあります（[提供単位の考え方](resource-scope.md#two-axes)）。
 
 EC2、オンプレミス、他クラウドのノードをまとめて運用するサービスです。多くの機能は、ノードが「マネージドノード」になっていることが前提です。
 
@@ -64,6 +68,15 @@ com.amazonaws.ap-northeast-1.ec2messages
 
 **診断:** 管理対象にならない原因の調査には、診断と修復のランブックや `ssm-cli`、`AWSSupport-TroubleshootManagedInstance` を使えます。
 
+```bash
+aws ssm describe-instance-information \
+  --filters Key=InstanceIds,Values=i-0123456789abcdef0
+```
+
+- **確認の例:** 結果の `PingStatus` が `Online` なら管理対象です。結果が空なら、上の 3 つの条件のどれかが欠けています。
+- **DHMC の例:** 1 回設定すれば、そのリージョンのインスタンスにプロファイルがなくても管理できます。ただし IMDSv2 が必須です。IMDSv1 だけのインスタンスは対象になりません。
+- **エンドポイントの誤り:** サブネットが `10.0.1.0/24` なら、エンドポイントのセキュリティグループで `10.0.1.0/24` からの 443 を許可します。許可がないと接続できず、ノードが一覧に出ません。
+
 #### オンプレミスと他クラウド {#hybrid-nodes}
 
 EC2 以外のノードを登録する方法は 2 つです。
@@ -76,6 +89,17 @@ EC2 以外のノードを登録する方法は 2 つです。
 - macOS の非 EC2 マシンは対象外です。
 - アドバンストインスタンス層は 2026 年 6 月 30 日に廃止されました。ハイブリッドノードの 1,000 台の上限はなくなりました。
 - 2026 年 9 月 30 日から、ハイブリッドノードの Session Manager と Run Command は従量課金です。古い教材の「アドバンスト層が必要」は当てはまりません。
+
+```bash
+aws ssm create-activation \
+  --default-instance-name onprem-web \
+  --iam-role SSMServiceRole \
+  --registration-limit 10
+```
+
+**例:** 上のコマンドで得たコードと ID で、オンプレミスの 10 台を登録できます。`--registration-limit` の既定は 1 台です。
+
+**誤ると:** 有効期限の既定は 24 時間で、最長 30 日です。期限が切れると、増やす分のノードを登録できません。新しいアクティベーションを作ります。登録済みのノードには影響しません。
 
 ### Run Command {#run-command}
 
@@ -110,6 +134,13 @@ aws ssm send-command \
 
 ノードが止まっているときは `DeliveryTimedOut` になります。
 
+**計算例:** 対象が 200 台で `--max-concurrency "10%"` なら、同時に `200 × 0.1 = 20` 台です。上のコマンドは `--max-errors "2"` なので、3 回目のエラーで新しい送信を止めます。実行中の 20 台は最後まで動くので、失敗は 3 台を超えることがあります。
+
+- **`--targets` の例:** `Key=tag:Env,Values=prod` は `Env=prod` の全ノードです。タグの付け間違いで `Env=Prod` のノードは対象外になります。
+- **`--timeout-seconds` の例:** `600` にすると、10 分のうちに始まらないノードは `DeliveryTimedOut` です。止まっているノードを長く待ちません。
+- **出力の例:** S3 の `my-ops-logs` に書くには、ノードのロールに `s3:PutObject` が必要です。実行者の権限では足りません。
+- **割合のエラーの例:** `--max-errors "5%"` で 200 台なら、上限は `200 × 0.05 = 10` 台分です。
+
 ### Session Manager {#session-manager}
 
 ブラウザや CLI から、インバウンドのポートを開けずにノードへ接続します。SSH 鍵と踏み台を不要にでき、接続の操作は IAM で制御します。
@@ -140,6 +171,45 @@ aws ssm start-session \
 
 **監査:** セッションの開始と終了は CloudTrail に記録されます。コマンドの中身まで残すには、上のログの設定が必要です。
 
+設定は、ドキュメント `SSM-SessionManagerRunShell` の中身です。
+
+```json
+{
+  "schemaVersion": "1.0",
+  "description": "Session Manager の設定",
+  "sessionType": "Standard_Stream",
+  "inputs": {
+    "idleSessionTimeout": "30",
+    "maxSessionDuration": "240",
+    "s3BucketName": "my-session-logs",
+    "cloudWatchLogGroupName": "/ssm/sessions"
+  }
+}
+```
+
+**例:** 上の設定は、30 分操作がないと切断し、操作中でも 240 分（4 時間）で切断します。設定はリージョンごとなので、大阪でも同じものを作ります。
+
+**権限の例:** 開発者には `Env=dev` のノードだけを許可します。
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "ssm:StartSession",
+  "Resource": "arn:aws:ec2:ap-northeast-1:111122223333:instance/*",
+  "Condition": {"StringEquals": {"ssm:resourceTag/Env": "dev"}}
+}
+```
+
+**転送の例:** ローカルの 13306 番から、ノードの先の DB の 3306 番へ転送します。
+
+```bash
+aws ssm start-session --target i-0123456789abcdef0 \
+  --document-name AWS-StartPortForwardingSessionToRemoteHost \
+  --parameters '{"host":["mydb.example.com"],"portNumber":["3306"],"localPortNumber":["13306"]}'
+```
+
+**誤ると:** アイドルタイムアウトを既定の 20 分のままにすると、長いビルドを眺めていても入力がなければ切断されます。
+
 ### Patch Manager {#patch-manager}
 
 OS のパッチの準拠確認と適用を自動化します。実体は `AWS-RunPatchBaseline` という SSM ドキュメントです。
@@ -156,6 +226,18 @@ OS のパッチの準拠確認と適用を自動化します。実体は `AWS-Ru
 
 `InstallOverrideList` で適用しても、準拠レポートはベースラインに基づきます。
 
+```bash
+aws ssm send-command --document-name AWS-RunPatchBaseline \
+  --targets "Key=tag:PatchTarget,Values=web" \
+  --parameters 'Operation=Scan' \
+  --max-concurrency "20%" --max-errors "5%"
+```
+
+- **`Scan` の例:** 平日の昼に実行しても、パッチの適用も再起動もありません。上のコマンドは不足の一覧だけを作ります。
+- **`Install` の例:** `Operation=Install` にすると適用します。`RebootOption` を省くと必要に応じて再起動するので、昼に実行するとサービスが止まります。
+- **`NoReboot` の例:** 日曜 2 時にパッチだけ当て、再起動は別のウィンドウで順に行います。その間はパッチが保留中として残り、古いカーネルで動き続けます。
+- **`InstallOverrideList` の例:** `s3://my-patches/hotfix.yaml` に 1 件だけ書き、その 1 件を緊急で当てます。
+
 #### 実行の設定方法 {#patch-methods}
 
 | 方法 | 範囲 | 特徴 |
@@ -164,6 +246,12 @@ OS のパッチの準拠確認と適用を自動化します。実体は `AWS-Ru
 | Maintenance Windows のタスク | 1 アカウント、1 リージョン | 前後の処理と組み合わせられる |
 | State Manager の関連付け | 1 アカウント、1 リージョン | 定期スキャンに向く |
 | Patch now | 1 アカウント、1 リージョン | 即時の適用 |
+
+**選び方の例:**
+
+- 30 アカウント、3 リージョンの週次スキャンと月次適用なら、パッチポリシーを 1 つ作ります。
+- 1 アカウントで「適用の前に LB から外す、後で戻す」なら、Maintenance Windows の優先度で順に並べます。
+- 今朝公開された修正を今すぐ 3 台に当てるなら、Patch now です。
 
 #### パッチベースライン {#patch-baselines}
 
@@ -195,6 +283,10 @@ aws ssm create-patch-baseline \
     "ComplianceLevel":"CRITICAL"}]}'
 ```
 
+**日付の例:** 上の `ApproveAfterDays:3` の範囲は 0〜360 です。10 月 1 日に出たパッチは 10 月 4 日に承認されます。定義済みのベースラインなら 10 月 8 日です。10 月 3 日にスキャンしても、まだ不足と報告されません。
+
+**誤ると:** `ComplianceLevel` を指定しないと、不足していても準拠レベルは `Unspecified` のままです。レポートで Critical の件数を見ても 0 件です。
+
 #### パッチグループ {#patch-groups}
 
 ノードのタグ `Patch Group` または `PatchGroup` の値で、使うベースラインを切り替える従来の方法です。値が同じならキーが違っても同じグループになります。
@@ -202,6 +294,13 @@ aws ssm create-patch-baseline \
 パッチポリシーでは使いません。2022 年 12 月 22 日より前にパッチグループを使っていないアカウントとリージョンの組では、コンソールで使えません。新しい構成ではパッチポリシーを選びます。
 
 **タグを付け忘れた場合:** パッチグループが定義されていないノードには、その OS の既定のベースラインが適用されます。
+
+```bash
+aws ssm register-patch-baseline-for-patch-group \
+  --baseline-id pb-0123456789abcdef0 --patch-group web-prod
+```
+
+**例:** 上の登録の後は、タグ `PatchGroup=web-prod` のノードがこのベースラインを使います。`PatchGroup=web-Prod` と書くと別の値なので、既定のベースラインが使われます。カスタムの規則が当たらないまま、準拠に見えます。
 
 ### Automation {#automation}
 
@@ -249,6 +348,33 @@ mainSteps:
 | `aws:approve` | 人の承認を待つ |
 | `aws:executeAutomation` | 別のランブックを呼ぶ（入れ子は 5 段まで） |
 
+**`aws:branch` の例:** 前の手順の出力が `running` のときだけ停止へ進みます。
+
+```yaml
+- name: checkState
+  action: aws:branch
+  inputs:
+    Choices:
+      - NextStep: stop
+        Variable: "{{ getState.State }}"
+        StringEquals: running
+    Default: finish
+```
+
+**`aws:waitForAwsResourceProperty` の例:** インスタンスのステータスチェックが `ok` になるまで、最大 600 秒待ちます。
+
+```yaml
+- name: waitOk
+  action: aws:waitForAwsResourceProperty
+  timeoutSeconds: 600
+  inputs:
+    Service: ec2
+    Api: DescribeInstanceStatus
+    InstanceIds: ["{{ InstanceId }}"]
+    PropertySelector: "$.InstanceStatuses[0].InstanceStatus.Status"
+    DesiredValues: ["ok"]
+```
+
 **定義済みランブックの例:**
 
 | ランブック | 用途 |
@@ -258,6 +384,29 @@ mainSteps:
 | `AWS-DisableS3BucketPublicReadWrite` | S3 バケットの公開を止める |
 | `AWSSupport-TroubleshootSSH`、`AWSSupport-TroubleshootRDP` | 接続の問題を調べる |
 | `AWSSupport-ExecuteEC2Rescue` | EC2Rescue で OS の問題を調べる |
+
+**実行の例:**
+
+```bash
+aws ssm start-automation-execution \
+  --document-name AWS-RestartEC2Instance \
+  --parameters "InstanceId=i-0123456789abcdef0,AutomationAssumeRole=arn:aws:iam::111122223333:role/AutomationRole"
+```
+
+**`aws:executeAwsApi` の例:** インスタンスの状態を取り出して、次の手順に渡します。
+
+```yaml
+- name: getState
+  action: aws:executeAwsApi
+  inputs:
+    Service: ec2
+    Api: DescribeInstances
+    InstanceIds: ["{{ InstanceId }}"]
+  outputs:
+    - Name: State
+      Selector: "$.Reservations[0].Instances[0].State.Name"
+      Type: String
+```
 
 **権限の落とし穴:** `AutomationAssumeRole` を指定しないと、実行した主体の権限で動きます。その場合の実行時間は最大 12 時間です。修復を自動で動かすときは、必要な権限だけのロールを指定します。
 
@@ -276,6 +425,8 @@ mainSteps:
 
 タイムアウトの既定は 7 日、最大は 30 日です。このアクションは複数アカウント、複数リージョンの実行では使えません。
 
+**例:** 上の `timeoutSeconds: 3600` は 1 時間です。省くと 604,800 秒（7 日）で、上限は 2,592,000 秒（30 日）です。`Approvers` は 10 人までです。担当者が通知を見逃すと、上の例では 1 時間で失敗します。
+
 #### 複数アカウント、複数リージョンの実行 {#automation-multi-account}
 
 中央のアカウントから実行します。OU を対象にするには、管理アカウントか委任管理者のアカウントが必要です。
@@ -287,11 +438,26 @@ mainSteps:
 
 カスタムランブックは、対象のアカウントすべてに共有します。共有を忘れると対象のアカウントで失敗します。
 
+```bash
+aws ssm start-automation-execution \
+  --document-name AWS-RestartEC2Instance \
+  --parameters AutomationAssumeRole=arn:aws:iam::111122223333:role/AWS-SystemsManager-AutomationAdministrationRole \
+  --target-parameter-name InstanceId \
+  --targets Key=tag:Env,Values=dev \
+  --target-locations '[{"Accounts":["ou-abcd-11111111"],"Regions":["ap-northeast-1","ap-northeast-3"],"ExecutionRoleName":"AWS-SystemsManager-AutomationExecutionRole","TargetLocationMaxConcurrency":"2","TargetLocationMaxErrors":"1"}]'
+```
+
+**例:** OU に 20 アカウントあるなら、対象は `20 × 2 リージョン = 40` か所です。`TargetLocationMaxConcurrency` が 2 なので、同時に 2 か所ずつ進みます。
+
+**誤ると:** 対象のアカウントに `AWS-SystemsManager-AutomationExecutionRole` がないと、そのアカウントだけ失敗します。StackSets で全アカウントに配ります。
+
 #### レート制御 {#automation-rate-control}
 
 タグなどで多数のリソースを対象にするときは、同時実行数とエラーしきい値を指定します。1 台で始めてから、徐々に同時実行数を増やす動きをします。
 
 `3` を指定すると 4 回目のエラーで止まり、`0` なら最初のエラーで止まります。
+
+**計算例:** 50 台に `--max-errors 10%` なら、5 回目のエラーで止まります。`--max-concurrency 20` なら、`1 → 2 → 4 → 8 → 16 → 20` のように増えます。最初の 1 台で失敗に気づけるので、全台を同時に壊しません。
 
 ### State Manager {#state-manager}
 
@@ -306,6 +472,19 @@ mainSteps:
 | 安全策 | 最大同時実行数と最大エラー数 |
 
 **例:** `Env=prod` のノードに 30 分ごとに CloudWatch エージェントの導入を確認し、別の手順で止められても元に戻します。スクリプトを State Manager で定期実行すれば、OpsWorks の後継としての構成管理にも使えます。Ansible プレイブックや Chef レシピも実行できます。
+
+```bash
+aws ssm create-association \
+  --name AWS-ConfigureAWSPackage \
+  --targets "Key=tag:Env,Values=prod" \
+  --parameters "action=Install,name=AmazonCloudWatchAgent" \
+  --schedule-expression "rate(30 minutes)" \
+  --max-concurrency "10%" --max-errors "5%"
+```
+
+**誤ると:** 間隔の下限は 30 分です。`rate(15 minutes)` では作れません。`rate(1 hours)` のように単数と複数を取り違えても無効で、正しくは `rate(1 hour)` です。
+
+**新しいノードの例:** 上の関連付けがあれば、Auto Scaling で増えた `Env=prod` のノードにも、起動後に自動で適用されます。
 
 ### Inventory {#inventory}
 
@@ -322,6 +501,20 @@ mainSteps:
 
 Inventory は何が入っているかの記録です。パッチの判定は Patch Manager、望ましい状態の維持は State Manager が担当します。
 
+**カスタムの例:** ラックの情報を、次の形でノードに置きます。
+
+```json
+{
+  "SchemaVersion": "1.0",
+  "TypeName": "Custom:RackInformation",
+  "Content": {"Location": "US-EAST-02.CMH.RACK1"}
+}
+```
+
+**集約の例:** 30 アカウント、3 リージョンのノードなら `30 × 3 = 90` か所にデータが分かれています。1 つの S3 に同期すれば、Athena の 1 回のクエリで「`openssl` のバージョンごとの台数」を出せます。
+
+**誤ると:** 収集を 30 分未満には設定できません。今入れたパッケージを次のスケジュールまで見つけられないのは正常です。
+
 ### OpsCenter {#opscenter}
 
 運用の課題を OpsItem として一か所に集めます。関連する Config の変更、CloudTrail ログ、CloudWatch アラームの情報を一緒に確認でき、ランブックで対処できます。
@@ -333,6 +526,12 @@ Inventory は何が入っているかの記録です。パッチの判定は Pat
 | 手動 | コンソールや API |
 
 人が調査して対応する課題なら OpsCenter、人の判断が不要な定型の修復なら Automation を直接呼びます。
+
+**アラームからの例:** `AlarmActions` に次の ARN を指定します。重要度 `3`、カテゴリ `Availability` の OpsItem が作られます。
+
+```text
+arn:aws:ssm:ap-northeast-1:111122223333:opsitem:3#CATEGORY=Availability
+```
 
 ### Maintenance Windows {#maintenance-windows}
 
@@ -361,6 +560,23 @@ aws ssm create-maintenance-window \
 - 優先度の高いタスクが失敗しても、低いタスクは実行されます。条件で止める分岐はありません。分岐が必要なら Automation を呼びます。
 - パッチの範囲は 1 アカウント、1 リージョンです。組織全体ならパッチポリシーを使います。
 
+**上のコマンドの計算:** `cron(0 2 ? * SUN *)` と `Asia/Tokyo` で、毎週日曜 2:00 に始まります。`--duration 4` で 6:00 に終わり、`--cutoff 1` で 5:00 以降は新しいタスクを始めません。4:50 に始めた 40 分のタスクは 5:30 に終わります。5:10 に順番が来るタスクは始まりません。
+
+**誤ると:** `--schedule-timezone` を省くと cron は UTC です。日本時間の日曜 2:00 のつもりが、日本時間の日曜 11:00 に始まり、営業中の変更になることがあります。
+
+**オフセットの例:** `cron(30 23 ? * TUE#3 *)` に `--schedule-offset 2` を付けると、第 3 火曜の 2 日後の 23:30 に動きます。月例のパッチの公開を待ってから当てるときに使えます。
+
+**タスクの例:**
+
+```bash
+aws ssm register-target-with-maintenance-window \
+  --window-id mw-0123456789abcdef0 \
+  --resource-type INSTANCE \
+  --targets "Key=tag:Env,Values=prod"
+```
+
+優先度 1 で LB から外す、優先度 2 でパッチ、優先度 3 で LB に戻す、と登録します。優先度 2 の失敗で優先度 3 も止まるわけではありません。
+
 ### State Manager と Maintenance Windows の違い {#state-vs-maintenance}
 
 | 観点 | State Manager | Maintenance Windows |
@@ -371,12 +587,16 @@ aws ssm create-maintenance-window \
 | 複数タスクの順序 | なし | 優先度で指定 |
 | 時間帯の制御 | スケジュールのみ | 長さとカットオフ |
 
+**例:** 「全ノードで SSM Agent が最新であること」を保ち、外れたら報告するなら State Manager です。「土曜 2 時から 4 時間だけ、順番に再起動する」なら Maintenance Windows です。
+
 ### Fleet Manager {#fleet-manager}
 
 ノードを一覧し、ログインせずにコンソールで調査する画面です。
 
 - ファイル、ログ、プロセス、OS のユーザーとグループ、EBS ボリュームの確認
 - Windows Server 2012 RTM 以降への、ブラウザからのリモートデスクトップ（API は Systems Manager GUI Connect）
+
+**例:** ディスク使用率 95% の警告を受けて、ログインせずに Fleet Manager のファイル画面から `/var/log` の大きいファイルを探します。
 
 ### Distributor {#distributor}
 
@@ -385,6 +605,8 @@ aws ssm create-maintenance-window \
 - パッケージは SSM ドキュメントと zip ファイルで構成され、複数の OS に対応できます。
 - 1 回限りの導入は Run Command、定期的な導入は State Manager で行います。
 - `AmazonCloudWatchAgent` のように AWS が提供するパッケージもあります。
+
+**例:** Run Command の `AWS-ConfigureAWSPackage` に `action=Install,name=AmazonCloudWatchAgent` を渡すと、1 回で導入します。同じものを State Manager の関連付けにすれば、新しいノードにも導入します。
 
 ### Incident Manager と Change Manager の状況 {#incident-manager}
 
@@ -396,9 +618,13 @@ aws ssm create-maintenance-window \
 
 新しい構成でこれらを選ぶ根拠はありません。AWS のガイドにある移行先や、パートナーの ITSM を確認します。
 
+**例:** 問題文に「2026 年に新しいアカウントで、インシデントの対応計画を作る」とあれば、Incident Manager は選べません。2025 年以前から有効にしているアカウントなら、そのまま使い続けられます。
+
 ## EC2 の運用 {#ec2-operations}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+**提供単位:** インスタンスは AZ で、VPC の中のサブネットに置きます。AMI はリージョンです（[AZ のリソース](resource-scope.md#scope-zonal)）。
 
 インスタンスプロファイル、IMDS、ユーザーデータ、インスタンスタイプは [EC2 と Beanstalk](ec2-beanstalk.md) にあります。
 
@@ -437,9 +663,33 @@ aws ssm get-parameter \
 
 CloudFormation では、パラメータの型を `AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>` にすると解決できます。
 
+操作ごとの例です。
+
+```bash
+# 整合性より停止を避けたい例。ファイルシステムの整合性は保証されない
+aws ec2 create-image --instance-id i-0123456789abcdef0 --name web-20261031 --no-reboot
+
+# 東京の AMI を大阪へコピーする
+aws ec2 copy-image --source-region ap-northeast-1 --source-image-id ami-0abcdef1234567890 \
+  --region ap-northeast-3 --name web-20261031
+
+# 2027 年 3 月 31 日に非推奨にする
+aws ec2 enable-image-deprecation --image-id ami-0abcdef1234567890 \
+  --deprecate-at 2027-03-31T00:00:00Z
+
+# 新しい公開共有を止める
+aws ec2 enable-image-block-public-access --image-block-public-access-state block-new-sharing
+```
+
+- **コピーの誤り:** 東京の AMI に別のアカウントへの起動許可があっても、大阪のコピーにはありません。大阪で付け直します。
+- **非推奨の例:** 公開 AMI の非推奨の日付は、既定で作成の 2 年後です。Auto Scaling は AMI ID で指定していれば、非推奨の後も起動できます。
+- **登録解除の例:** AMI を消しても、50 GiB のスナップショットは残り、課金が続きます。不要なら `aws ec2 delete-snapshot` で消します。
+
 ### EC2 Image Builder {#image-builder}
 
 [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+**提供単位:** リージョン。パイプラインはリージョンごとに作ります。ビルド用インスタンスは VPC の中のサブネットで動きます（[提供単位の考え方](resource-scope.md#two-axes)）。
 
 AMI とコンテナイメージの作成、テスト、配布を自動化します。自作の Packer やスクリプトの保守を減らせます。
 
@@ -465,7 +715,15 @@ AMI とコンテナイメージの作成、テスト、配布を自動化しま�
 
 Amazon Inspector でイメージの脆弱性を検査できます。作成後に SNS で通知し、Lambda で Parameter Store の AMI ID を更新する構成が定番です。
 
+**パイプラインの例:** 毎週日曜の 2:00 に、AL2023 と nginx のレシピを `t3.medium` でビルドします。テストの後に東京と大阪へ配布し、東京の起動テンプレートの新しいバージョンを作ります。
+
+**ライフサイクルの例:** 経過日数のルールで、30 日より古い AMI を非推奨にし、90 日より古い AMI を削除します。削除のルールには `retainAtLeast` を 3 にして、最低 3 個を残します。個数のルール（`COUNT`）は削除にしか使えません。古い AMI を残すと、スナップショットの料金が増え続けます。
+
+**誤ると:** 配布設定でコピー先のアカウントに許可がないと、配布の段階で失敗します。ビルドは成功していても、パイプラインは失敗です。
+
 ### プレイスメントグループ {#placement-groups}
+
+**提供単位:** プレイスメントグループはリージョンのリソースです。クラスターは 1 AZ に収まり、インスタンスは VPC のサブネットに置きます。
 
 インスタンスの物理的な配置を制御します。作成は無料です。
 
@@ -490,6 +748,23 @@ Amazon Inspector でイメージの脆弱性を検査できます。作成後に
 - スプレッドのホストレベルは AWS Outposts のみです。
 - クラスターは、同じリージョンのピアリングした VPC にまたがれます。
 - 停止してから再開しても同じグループに残りますが、容量がなければ再開に失敗します。
+
+```bash
+aws ec2 create-placement-group --group-name hpc --strategy cluster
+aws ec2 run-instances --image-id ami-0abcdef1234567890 --instance-type c7i.8xlarge \
+  --count 8 --placement GroupName=hpc
+
+aws ec2 create-placement-group --group-name cassandra --strategy partition --partition-count 3
+aws ec2 run-instances --image-id ami-0abcdef1234567890 --instance-type r7i.large \
+  --count 3 --placement "GroupName=cassandra,PartitionNumber=1"
+```
+
+**計算例:**
+
+- **スプレッド:** 3 AZ なら最大 `3 × 7 = 21` 台です。1 AZ に 8 台目を置こうとすると失敗します。
+- **パーティション:** 3 AZ なら最大 `3 × 7 = 21` パーティションです。各パーティションの台数はアカウントの上限まで増やせます。
+- **Cassandra の例:** レプリカ係数 3 を 3 パーティションに分ければ、1 つのパーティションのハードウェア障害でも、残りの 2 つにデータがあります。
+- **クラスターの例:** 8 台を 1 回で起動します。4 台ずつ 2 回に分けると、2 回目が `InsufficientInstanceCapacity` になりやすくなります。
 
 ### ステータスチェック {#status-checks}
 
@@ -524,6 +799,22 @@ Amazon Inspector でイメージの脆弱性を検査できます。作成後に
 
 これらは AWS Health のイベントにもなるので、[EventBridge で自動処理](#health-events) できます。
 
+**追加のチェック:** 公式の分類は 5 種類です。上の 3 つのほかに、対応するアクセラレーテッドインスタンスで動くパフォーマンスのチェックと、自分で作るアプリケーションのチェックがあります。アプリケーションのチェックは、HTTP や HTTPS のパスへのリクエストと、正常とする応答コードを指定します。
+
+```bash
+aws cloudwatch put-metric-alarm --alarm-name ec2-auto-recover \
+  --namespace AWS/EC2 --metric-name StatusCheckFailed_System \
+  --dimensions Name=InstanceId,Value=i-0123456789abcdef0 \
+  --statistic Maximum --period 60 --evaluation-periods 2 --threshold 1 \
+  --comparison-operator GreaterThanOrEqualToThreshold \
+  --alarm-actions arn:aws:automate:ap-northeast-1:ec2:recover
+```
+
+- **例:** 上のアラームは、システムチェックが 2 分続けて失敗すると復旧を始めます。インスタンス ID は変わりません。メモリの内容は失われます。
+- **インスタンスチェックの例:** `StatusCheckFailed_Instance` には `arn:aws:automate:ap-northeast-1:ec2:reboot` を付けます。メモリ不足で固まった OS は、再起動で戻ることがあります。
+- **簡易自動復旧を切る例:** `aws ec2 modify-instance-maintenance-options --instance-id i-0123456789abcdef0 --auto-recovery disabled` です。
+- **誤ると:** `StatusCheckFailed_Instance` に `recover` を付けると、OS の問題には効きません。
+
 ### インスタンスのトラブルシューティング {#instance-troubleshooting}
 
 | 症状 | 原因 | 対処 |
@@ -552,6 +843,13 @@ aws ec2 describe-instances --instance-ids i-0123456789abcdef0 \
 | EC2 Instance Connect Endpoint | パブリック IP 不要、踏み台不要 | SSH や RDP を使いたいプライベートのインスタンス |
 | シリアルコンソール | ネットワーク不要 | ネットワークやブートの問題 |
 
+症状ごとの例です。
+
+- **`InstanceLimitExceeded`:** オンデマンドの上限は vCPU で数えます。上限 64 vCPU で 16 vCPU のインスタンスを 5 台起動すると、`16 × 5 = 80` で超えます。
+- **`InsufficientInstanceCapacity`:** `c7i.8xlarge` を AZ `ap-northeast-1a` に 20 台は無理でも、10 台ずつに分ける、AZ を指定しない、といった方法で通ることがあります。
+- **`Permission denied`:** Ubuntu の AMI に `ec2-user` で入ると失敗します。ユーザーは `ubuntu` です。
+- **シリアルコンソール:** `aws ec2 enable-serial-console-access` はアカウントとリージョンの設定です。有効にしないと使えません。
+
 ### 購入オプションの運用 {#purchase-options}
 
 コストの比較は [コスト管理](cost-management.md) に譲り、運用の違いをまとめます。
@@ -575,6 +873,13 @@ aws ec2 describe-instances --instance-ids i-0123456789abcdef0 \
 
 **キャパシティ予約の使い分け:** 重要な日のために容量を確実に取りたいなら予約、割引だけならば Savings Plans を選びます。予約は割引がないので、Savings Plans やリージョナル RI と組み合わせます。
 
+例です。
+
+- **キャパシティ予約の計算:** 10 台分を予約し 6 台だけ動かしても、10 台分の料金です。使っていない 4 台分もオンデマンド料金で課金されます。
+- **RI の分割:** `m5.2xlarge` 1 台分の RI は、正規化係数が `16 = 8 + 8` なので、`m5.xlarge` 2 台分に変更できます。
+- **Dedicated Hosts:** ソケット単位の Windows Server のライセンスを持ち込むなら、ホストのソケット数が見える Dedicated Hosts を選びます。
+- **選び方の例:** 年末の 3 日間に 50 台の容量を確実にしたいなら、期間の約束が不要なキャパシティ予約です。常時 20 台動かす 1 年なら、Savings Plans です。
+
 ### スポットの中断への対応 {#spot-interruptions}
 
 | シグナル | タイミング | 受け取り方 |
@@ -595,6 +900,14 @@ curl -H "X-aws-ec2-metadata-token: $TOKEN" \
 - 休止の場合、通知はありますが 2 分の猶予はなく、すぐ休止が始まります。
 - Auto Scaling の `price-capacity-optimized` を選ぶと、中断の少ないプールから起動できます。`lowest-price` は中断のリスクが最も高く、推奨されません。
 
+**応答の例:** 通知があれば、次の JSON が返ります。この例では 10:00:00 に中断するので、通知は 9:58 ごろに届きます。
+
+```json
+{"action": "terminate", "time": "2026-10-31T10:00:00Z"}
+```
+
+**計算例:** ALB の登録解除の遅延が 300 秒のままだと、2 分（120 秒）の猶予に収まりません。処理中のリクエストが途中で切れます。スポットのターゲットでは 90 秒にして、120 秒以内に終わるようにします。
+
 ### 休止 {#hibernate}
 
 メモリの内容を EBS のルートボリュームに保存して停止します。再開すると、メモリの状態から続けられます。起動の遅いアプリに向きます。
@@ -611,9 +924,23 @@ curl -H "X-aws-ec2-metadata-token: $TOKEN" \
 
 **設定を誤ったときの症状:** ルートボリュームが暗号化されていないと、起動の検証で失敗します。後から休止したくなっても有効にできないので、起動し直します。
 
+```bash
+aws ec2 run-instances --image-id ami-0abcdef1234567890 --instance-type r7i.2xlarge \
+  --hibernation-options Configured=true \
+  --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=100,VolumeType=gp3,Encrypted=true}'
+
+aws ec2 stop-instances --instance-ids i-0123456789abcdef0 --hibernate
+```
+
+**計算例:** RAM が 64 GiB のインスタンスに、OS とアプリで 30 GiB 使うなら、ルートボリュームは少なくとも `64 + 30 = 94` GiB が必要です。上の例は 100 GiB にしています。
+
+**上限の例:** Linux で RAM が 192 GiB のインスタンスは、150 GiB 未満の条件を満たさないので休止できません。
+
 ## EC2 Auto Scaling の運用 {#auto-scaling}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
+
+**提供単位:** リージョン。グループには複数の AZ のサブネットを指定し、インスタンスは VPC の中の各サブネットに置きます（[VPC の中のリソース](resource-scope.md#scope-regional-vpc)）。
 
 容量、クールダウン、ウォームアップ、ヘルスチェックの基本は [EC2 Auto Scaling](ec2-beanstalk.md#auto-scaling) を参照してください。ここでは DOP-C02 の深さで、更新と自動化の設定を扱います。
 
@@ -678,6 +1005,22 @@ aws autoscaling complete-lifecycle-action \
 
 待機の全体の上限は **48 時間か、ハートビートの 100 倍の短いほう** です。
 
+**上限の計算例:**
+
+| `--heartbeat-timeout` | 100 倍 | 待機の上限 |
+| --- | --- | --- |
+| 120 秒 | 12,000 秒（200 分） | 200 分 |
+| 1,200 秒 | 120,000 秒（約 33 時間） | 約 33 時間 |
+| 3,600 秒 | 360,000 秒（100 時間） | 48 時間 |
+
+**例:** ログの退避に最大 5 分かかるなら、`--heartbeat-timeout 120` では足りません。100 秒ごとに `record-lifecycle-action-heartbeat` を呼ぶか、最初から 360 にします。
+
+**結果の例:**
+
+- 起動のフックで設定に失敗し、`ABANDON` を返すと、インスタンスは終了し、新しいものに置き換わります。
+- 同じ場面で `--default-result CONTINUE` のままタイムアウトすると、設定の終わっていないインスタンスがサービスに入ります。
+- 終了のフックでは `CONTINUE` と `ABANDON` のどちらでも終了します。ログの退避を確実にしたいなら、[インスタンスライフサイクルポリシー](#instance-lifecycle-policy) を使います。
+
 #### EventBridge でログを退避する例 {#lifecycle-eventbridge}
 
 終了するインスタンスからログを取り出して S3 に保存する、定番の構成です。
@@ -705,6 +1048,8 @@ sequenceDiagram
 
 ターゲットに Lambda を使う場合、そのロールに `autoscaling:CompleteLifecycleAction` の権限が必要です。権限がないと、タイムアウトまで待ち続けます。
 
+**例:** 上の設定で `--heartbeat-timeout 120`、完了が 40 秒なら、スケールインは 40 秒ほどの待ちで済みます。権限がないと、毎回 120 秒待ってから既定の結果で進みます。
+
 #### インスタンスの中から処理する {#lifecycle-imds}
 
 起動のフックなら、通知先がなくてもユーザーデータの中で完了を伝えられます。終了を検知するにはインスタンスのメタデータ `autoscaling/target-lifecycle-state` を定期的に確認します。
@@ -716,6 +1061,8 @@ curl -H "X-aws-ec2-metadata-token: $TOKEN" \
 
 値が `Terminated` になったら、終了の準備を始めます。
 
+**例:** 5 秒ごとに確認するスクリプトが `InService` から `Terminated` への変化を見つけ、キューの受信を止めて処理中のジョブを完了させます。
+
 #### 注意点 {#lifecycle-notes}
 
 - フックは自動のものも、`SetDesiredCapacity` のような手動のものも対象です。**アタッチ、デタッチ、スタンバイ、強制削除では動きません**。
@@ -724,9 +1071,13 @@ curl -H "X-aws-ec2-metadata-token: $TOKEN" \
 - スポットの中断は止められません。2 分の通知の中で処理します。
 - シンプルスケーリングのポリシーは、フックの完了とクールダウンを待ちます。長いフックはスケーリングを遅らせます。
 
+**誤ると:** `detach-instances` で外したインスタンスは、終了のフックが動きません。ログの退避を期待しても、走りません。
+
 #### インスタンスライフサイクルポリシー {#instance-lifecycle-policy}
 
 終了のフックが放棄されたとき、インスタンスを終了させずに保持する設定です。データの永続化が必須のステートフルなアプリで、シャットダウンの失敗時に人が調べられるようにします。
+
+**例:** DB ノードのデータ退避のフックがタイムアウトしても、インスタンスを残します。担当者がデータを移してから終了させられます。
 
 ### ウォームプール {#warm-pools}
 
@@ -750,6 +1101,23 @@ curl -H "X-aws-ec2-metadata-token: $TOKEN" \
 - 混合インスタンスグループでは、重み付けとスポットが使えません。
 
 **落とし穴:** ウォームプールに入る前の停止は、ユーザーデータの完了を待ちません。初期化を待つには `EC2_INSTANCE_LAUNCHING` のフックを使います。インスタンスは `Warmed:Pending:Wait` で止まります。
+
+```bash
+aws autoscaling put-warm-pool --auto-scaling-group-name web-asg \
+  --pool-state Stopped \
+  --min-size 2 \
+  --max-group-prepared-capacity 8 \
+  --instance-reuse-policy ReuseOnScaleIn=true
+```
+
+**サイズの計算例:**
+
+- `MaxGroupPreparedCapacity` を指定しないとき、希望 6、最大 10 なら、プールは `10 - 6 = 4` 台です。
+- 上のコマンドなら、希望 6、上限 8 で `8 - 6 = 2` 台です。`MinSize=2` は、希望が 8 に増えてもプールに 2 台を保ちます。
+
+**状態の選び方の例:** 起動に 10 分かかる Java アプリは `Stopped` にします。EBS の料金だけで、スケールアウトは起動の時間で済みます。メモリのキャッシュまで保ちたいなら `Hibernated` です。
+
+**誤ると:** `Running` にすると、インスタンス料金が 2 台分かかり続けます。
 
 ### インスタンスの更新 {#instance-refresh}
 
@@ -788,6 +1156,17 @@ aws autoscaling start-instance-refresh \
 
 **戦略:** 既定のローリングのほかに、ルートボリュームだけ交換する方式があります。ネットワークインターフェイス、ルート以外の EBS、インスタンスストアを残せます。混合インスタンスポリシーで `ImageId` を上書きしている必要があります。
 
+**上のコマンドの計算:** 希望 10 台、`MinHealthyPercentage: 90`、`MaxHealthyPercentage: 120` なら、9〜12 台の範囲で進みます。先に 2 台を起動し、正常になったら古いものを終了します。
+
+**設定ごとの例:**
+
+- **`MaxHealthyPercentage` を省く:** 既定は 100% で、10 台を超えません。先に終了してから起動するので、一時的に 9 台です。
+- **`SkipMatching: true`:** 途中で失敗して再開するとき、すでに新しいバージョン 7 の 4 台を飛ばします。`false` なら、10 台すべてを置き換え直します。
+- **`BakeTime: 600`:** 全台の置き換えの後、完了とする前に 10 分待ちます。この間に `web-5xx-high` が鳴ると失敗として扱います。
+- **チェックポイント:** `"CheckpointPercentages": [20, 50, 100]` なら、20% で止めて確認します。`"CheckpointDelay"` の既定は 3,600 秒です。
+
+**誤ると:** `"Version": "$Latest"` にすると、`AutoRollback: true` の更新は受け付けられません。`"Version": "7"` のように番号で指定します。
+
 ### インスタンスメンテナンスポリシー {#instance-maintenance-policy}
 
 ヘルスチェックによる置き換えや更新のときの容量の範囲を、グループに設定します。既定ではポリシーはありません。
@@ -799,6 +1178,16 @@ aws autoscaling start-instance-refresh \
 | カスタム | 最小と最大の割合を指定 | バランス |
 
 **例:** 希望容量 100、最小 90%、最大 120% なら、メンテナンス中は 90〜120 台の範囲で動きます。
+
+```bash
+aws autoscaling update-auto-scaling-group --auto-scaling-group-name web-asg \
+  --instance-maintenance-policy '{"MinHealthyPercentage":100,"MaxHealthyPercentage":110}'
+```
+
+- **範囲:** 最小は 0〜100、最大は 100〜200 です。両方を指定し、差は 100 以下です。`-1` で解除します。
+- **終了の前に起動の例:** 最小 100、最大 110 で希望容量 100 なら、一度に 10 台ずつ先に起動します。
+- **ライセンスの例:** 同時に動かせる台数が契約で 100 台までなら、最大を 100 にします。
+- **誤ると:** 最小 50、最大 200 は、差が 150 なのでエラーです。
 
 ### プロセスの一時停止 {#suspend-processes}
 
@@ -820,6 +1209,17 @@ aws autoscaling start-instance-refresh \
 
 **単体を残す方法:** `enter-standby` は、インスタンスをグループに残したまま、ロードバランサーとヘルスチェックから外します。
 
+```bash
+aws autoscaling suspend-processes --auto-scaling-group-name web-asg \
+  --scaling-processes ReplaceUnhealthy
+aws autoscaling enter-standby --auto-scaling-group-name web-asg \
+  --instance-ids i-0123456789abcdef0 --should-decrement-desired-capacity
+```
+
+**例:** 1 台だけ調べるなら `enter-standby` です。`--should-decrement-desired-capacity` で希望容量も減らすので、代わりは起動しません。全体の置き換えを止めたいなら `suspend-processes` です。
+
+**誤ると:** 調査が終わっても `Terminate` を止めたままだと、スケールインされず、夜間も昼の台数の料金が続きます。`resume-processes` を忘れないようにします。`AddToLoadBalancer` を止めている間に起動した分は、再開後に手で登録します。
+
 ### 終了の制御 {#termination-protection}
 
 | 機能 | 内容 | 例外 |
@@ -829,6 +1229,19 @@ aws autoscaling start-instance-refresh \
 | 最大インスタンス有効期間 | 指定秒数で置き換える | 最小 86,400 秒（1 日）、0 で解除 |
 
 **例:** ジョブを処理中のインスタンスだけ、アプリからスケールイン保護を有効にします。処理が終わったら解除します。
+
+```bash
+aws autoscaling set-instance-protection --auto-scaling-group-name web-asg \
+  --instance-ids i-0123456789abcdef0 --protected-from-scale-in
+aws autoscaling update-auto-scaling-group --auto-scaling-group-name web-asg \
+  --max-instance-lifetime 2592000
+```
+
+**`Default` の順の例:** `1a` に 3 台、`1c` に 2 台なら、まず台数の多い `1a` を選びます。その中で古い設定のインスタンス、次に次の課金時間に近いものを終了します。AZ の均等化が優先です。
+
+**有効期間の例:** 上の `2592000` は 30 日です。`604800` なら 7 日で、`86399` はエラーです。
+
+**誤ると:** 1 台のグループに有効期間を設定すると、終了してから起動するので、その間は止まります。2 台以上で使います。
 
 ### 混合インスタンスとキャパシティ再調整 {#mixed-instances}
 
@@ -840,11 +1253,29 @@ aws autoscaling start-instance-refresh \
 
 キャパシティ再調整を使わないと、中断してヘルスチェックに失敗してから置き換えます。
 
+```json
+{
+  "InstancesDistribution": {
+    "OnDemandBaseCapacity": 2,
+    "OnDemandPercentageAboveBaseCapacity": 25,
+    "SpotAllocationStrategy": "price-capacity-optimized"
+  }
+}
+```
+
+**計算例:** 希望容量 10 なら、ベースの 2 台がオンデマンドです。残りの `10 - 2 = 8` 台の 25% で 2 台もオンデマンドで、計 4 台です。スポットは 6 台です。
+
+**誤ると:** インスタンスタイプを 1 種類だけにすると、スポットのプールが少なく、まとめて中断されやすくなります。`m7i.large`、`m6i.large`、`m7a.large` のように複数を指定します。
+
 ### 予測スケーリング {#predictive-scaling}
 
 履歴から日次や週次のパターンを見つけ、需要の前に容量を増やします。初期化に時間がかかり、波が周期的なアプリに向きます。
 
 最初は「予測のみ」モードで精度を確認し、それから有効にします。
+
+**例:** 平日 9:00 にアクセスが増え、起動に 5 分かかるアプリなら、需要の前に台数を増やせます。新しいグループは、少なくとも 24 時間分のデータがないと予測できません。
+
+**モードの例:** `"Mode": "ForecastOnly"` で 1 週間ほど予測と実際を比べ、合っていれば `"Mode": "ForecastAndScale"` にします。
 
 ### スケーリングの失敗の調査 {#asg-troubleshooting}
 
@@ -860,7 +1291,11 @@ aws autoscaling describe-scaling-activities --auto-scaling-group-name web-asg
 | 起動テンプレートのエラー | AMI、セキュリティグループ、キーペアが削除済み |
 | 起動できない | 容量不足、上限、暗号化キーの権限 |
 
+**猶予期間の計算例:** アプリの起動に 3 分かかり、CLI で作って猶予期間が 0 秒のグループは、起動直後に ELB のヘルスチェックに失敗します。インスタンスが異常とされて、置き換えを繰り返します。`--health-check-grace-period 300` にします。
+
 ## StackSets とドリフトの運用 {#stacksets-drift}
+
+**提供単位:** StackSet はリージョンのリソースで、作成したリージョンから他のリージョンへスタックを展開します。VPC の外のサービスです。
 
 設定項目の一覧は [ネストされたスタックと StackSets](iac.md#nested-stacks-stacksets)、[ドリフト検出](iac.md#drift) にあります。ここでは運用の判断を扱います。
 
@@ -875,6 +1310,18 @@ aws autoscaling describe-scaling-activities --auto-scaling-group-name web-asg
 | 全 OU へ確実に | 自動デプロイを有効 | アカウントを追加すると自動で作る |
 | OU から外れたアカウント | 削除か保持を選ぶ | 保持ならリソースは残るが StackSet の外へ |
 | 大きな組織 | 自動デプロイとマネージド実行を併用 | 同時に処理して速くなる |
+
+```bash
+aws cloudformation create-stack-set --stack-set-name baseline \
+  --template-url https://my-templates.s3.amazonaws.com/baseline.yaml \
+  --permission-model SERVICE_MANAGED \
+  --auto-deployment Enabled=true,RetainStacksOnAccountRemoval=false
+
+aws cloudformation create-stack-instances --stack-set-name baseline \
+  --deployment-targets OrganizationalUnitIds=ou-abcd-11111111 \
+  --regions ap-northeast-1 ap-northeast-3 \
+  --operation-preferences MaxConcurrentPercentage=25,FailureTolerancePercentage=10,ConcurrencyMode=SOFT_FAILURE_TOLERANCE
+```
 
 **自動デプロイの注意:**
 
@@ -891,6 +1338,10 @@ aws autoscaling describe-scaling-activities --auto-scaling-group-name web-asg
 
 **例:** `Failure tolerance` を 0、`Maximum concurrent accounts` を 1 にすると、1 アカウントずつ進み、最初の失敗で止まります。カナリアに近い展開です。
 
+**割合の計算例:** 10 アカウントに `MaxConcurrentPercentage=25` なら、`2.5` を切り捨てて同時に 2 アカウントです。`FailureTolerancePercentage=10` なら、1 リージョンあたり 1 スタックの失敗を許容します。
+
+**モードの例:** Strict で `Failure tolerance` が 2 なら、失敗数は 3 を超えません。Soft なら同時実行数を保つので、失敗はもっと増える場合があります。
+
 **`OUTDATED` のスタックインスタンス:** 操作に失敗すると、この状態になります。
 
 | 原因 | 確認すること |
@@ -901,6 +1352,8 @@ aws autoscaling describe-scaling-activities --auto-scaling-group-name web-asg
 | クォータ超過 | 対象アカウントの上限 |
 
 原因を直してから再度更新します。
+
+**例:** テンプレートに `BucketName: company-logs` と固定で書くと、2 つ目のアカウントで名前が衝突して `OUTDATED` になります。`!Sub company-logs-${AWS::AccountId}-${AWS::Region}` のように、アカウントとリージョンを含めます。
 
 ### ドリフトの運用 {#drift-operations}
 
@@ -924,6 +1377,18 @@ aws autoscaling describe-scaling-activities --auto-scaling-group-name web-asg
 - スタックインスタンスのスタックを CloudFormation で直接更新しても、StackSet のドリフトにはなりません。
 - 検出だけで、修復はしません。
 
+```bash
+aws cloudformation detect-stack-drift --stack-name web
+aws cloudformation describe-stack-resource-drifts --stack-name web \
+  --stack-resource-drift-status-filters MODIFIED DELETED
+```
+
+**例:**
+
+- テンプレートで `InstanceType: t3.small` と書いたインスタンスを、手で `t3.large` にすると `MODIFIED` です。
+- テンプレートに書いていない `Monitoring` を手で変えても、検出されません。
+- スタックの S3 バケットを手で消すと `DELETED` です。
+
 **修復の方法:**
 
 | 方法 | 使いどころ |
@@ -934,7 +1399,11 @@ aws autoscaling describe-scaling-activities --auto-scaling-group-name web-asg
 
 **継続的な検知:** AWS Config の管理ルール `cloudformation-stack-drift-detection-check` で確認し、EventBridge で通知します。[AWS Config](governance.md) の修復と組み合わせられます。
 
+**修復の例:** 手で変えた `t3.large` を `t3.small` に戻したいなら、`--deployment-mode REVERT_DRIFT` の変更セットです。負荷のために `t3.large` を残したいなら、テンプレートを `t3.large` に書き換えて更新します。
+
 ## CloudWatch エージェント {#cloudwatch-agent}
+
+**提供単位:** エージェントはノードの中で動くソフトウェアです。EC2 なら VPC のサブネットで動き、送信先の CloudWatch はリージョンのサービスです（[提供単位の一覧](resource-scope.md#scope-regional-outside)）。
 
 OS の中のメトリクス（メモリ、ディスク）とログファイルを CloudWatch に送ります。既定のメトリクスの範囲は [EC2 の既定メトリクスとエージェント](observability.md#ec2-metrics) を参照してください。
 
@@ -996,6 +1465,18 @@ sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
 
 **他の収集方法:** プロセスごとの `procstat`、アプリから受け取る `StatsD`、`collectd`、EC2 上の Prometheus の収集にも対応します。
 
+設定ごとの例です。
+
+- **`metrics_collection_interval`:** 10 なら 10 秒ごとで、60 秒未満は高解像度メトリクスになります。300 なら 5 分ごとです。
+- **`append_dimensions`:** 上の例で `InstanceId` を付けると、同じ設定の 10 台は 10 個のメトリクスに分かれます。
+- **`aggregation_dimensions`:** 上の `[["AutoScalingGroupName"]]` で、全台の `mem_used_percent` をグループで集約できます。アラームはこの集約に設定します。
+- **`retention_in_days`:** 既存のロググループに 3 を指定すると、3 日より前のログが消えます。設定を試す前に確認します。
+- **`log_stream_name`:** `{instance_id}` なら、Auto Scaling で 10 台あると 10 本のストリームです。
+- **`force_flush_interval`:** ログの既定は 5 秒で、メモリのバッファが 1 MB に達すると、すぐに送ります。
+- **`run_as_user`:** 省くと root で動きます。`cwagent` にするなら、読むログファイルの権限も確認します。
+
+**読み込みの例:** 設定を Parameter Store に置くなら、`-c ssm:AmazonCloudWatch-linux` です。全台で同じ設定を読めます。
+
 **コンテナ:** EKS では Amazon CloudWatch Observability EKS アドオンで、エージェントと Fluent Bit を導入します。Container Insights と Application Signals が既定で有効になります。
 
 **よくある問題:**
@@ -1007,9 +1488,18 @@ sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
 | 開始できない | IAM の権限とリージョンの設定 |
 | コンテナで起動が遅い、hop limit のエラー | IMDS のホップ制限 |
 
+**ホップ制限の例:** コンテナから IMDSv2 を使うには、既定の 1 ではなく 2 にします。
+
+```bash
+aws ec2 modify-instance-metadata-options --instance-id i-0123456789abcdef0 \
+  --http-put-response-hop-limit 2
+```
+
 ## CloudWatch Synthetics {#synthetics}
 
 [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
+**提供単位:** リージョン。カナリアはリージョンの Lambda 関数として動き、既定では VPC の外です。VPC を指定するとサブネットの中から確認します（[提供単位の考え方](resource-scope.md#two-axes)）。
 
 スケジュールで動くスクリプト（カナリア）で、エンドポイントや API を外から確認します。実際のユーザーのアクセスがない時間帯でも問題に気づけます。
 
@@ -1034,7 +1524,16 @@ sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
 
 カナリアの失敗は、CloudWatch のメトリクスとアラームで通知します。[Application Signals](observability.md#application-signals) とも連携します。
 
+**スケジュールの計算例:** `rate(5 minutes)` なら、1 日に `24 × 12 = 288` 回です。`rate(1 minute)` なら 1,440 回で、料金も実行の回数で増えます。
+
+- **タイムアウトの例:** Lambda のコールドスタートと計装の起動を考えて、15 秒以上にします。
+- **アラームの例:** 名前空間 `CloudWatchSynthetics` の `SuccessPercent` が 90 を下回ったら通知します。
+- **保持の例:** 30 日で設定しても、S3 の成果物は別です。バケットのライフサイクルで消します。
+- **誤ると:** プライベートサブネットのカナリアに NAT もエンドポイントもないと、チェックは通っても結果を送れず、失敗します。
+
 ## CloudWatch RUM {#rum}
+
+**提供単位:** リージョン。アプリモニターはリージョンごとに作ります。データは利用者のブラウザからインターネット経由で届き、VPC の外です（[提供単位の考え方](resource-scope.md#two-axes)）。
 
 実際のユーザーのブラウザやモバイルアプリから、性能のデータを集めます。
 
@@ -1047,9 +1546,17 @@ sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
 
 **Synthetics との違い:** Synthetics は合成の確認なのでトラフィックがなくても動きます。RUM は実際のユーザーの体験を測ります。問題の発見に Synthetics、影響の範囲の把握に RUM を使います。
 
+**サンプリングの計算例:** 月 100,000 セッションで割合を 10% にすると、`100,000 × 0.1 = 10,000` セッションを計測します。100% なら 10 倍のデータです。
+
+**保持の例:** 40 日前の読み込み時間は残っていません。長く残すなら、アプリモニターで CloudWatch Logs へのコピーを有効にします。
+
+**場面の例:** 東京の Synthetics は正常なのに、RUM ではスマートフォンの読み込みだけが 8 秒です。外形監視では見えない、実際の端末の遅さが分かります。
+
 ## Amazon DevOps Guru {#devops-guru}
 
 [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
+
+**提供単位:** リージョン。VPC の外のサービスです。
 
 !!! warning "新規受付は終了しています"
     2026 年 10 月 29 日で新規顧客の受付を終了し、2027 年 9 月 30 日にサポートを終了します。AWS は CloudWatch と AWS DevOps Agent への移行を案内しています。
@@ -1063,9 +1570,13 @@ sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
 
 試験では「ML で異常を検知して推奨を得る」の答えとして出る可能性があります。新しい構成には選びません。
 
+**例:** Lambda のエラーと DynamoDB のスロットリングが同時に増えると、関連する異常として 1 つのリアクティブインサイトにまとまります。ディスクの空きが 3 日後に尽きる傾向は、プロアクティブインサイトの例です。
+
 ## AWS DevOps Agent {#devops-agent}
 
 [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate }
+
+**提供単位:** リージョン。対応するリージョンで使います。VPC の外のサービスです。
 
 インシデントの調査とリリースの確認を行う AI エージェントです。SOA-C03 のスキルで、修復の自動化の例として名前が挙がっています。
 
@@ -1073,11 +1584,15 @@ sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
 - 緩和の手順を提示します。
 - リリース管理の機能はプレビューです。
 
+**例:** 22:00 に `5XXError` のアラームが届くと、エージェントが調査を始めます。同じ時刻のデプロイと、遅いトレースを関連付けて、「21:55 のリリースが原因の可能性が高い」のように報告します。
+
 概要は [AI サービス](ai.md) にもあります。
 
 ## Amazon Managed Grafana {#managed-grafana}
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+**提供単位:** リージョン。ワークスペースはリージョンごとに作ります。VPC の外で、VPC の中のデータソースへは VPC 接続を設定して届きます（[提供単位の考え方](resource-scope.md#two-axes)）。
 
 Grafana のサーバーをマネージドで動かします。ワークスペースという単位で作ります。
 
@@ -1090,9 +1605,15 @@ Grafana のサーバーをマネージドで動かします。ワークスペー
 
 **症状:** ワークスペースに入れないなら、IdP か Identity Center のユーザーに権限を割り当てたか確認します。
 
+**例:** 運用チームは管理者、開発者は編集者、経営層は閲覧者にします。Identity Center のグループ `grafana-viewers` に閲覧者を割り当てると、新しい人はグループに入れるだけで済みます。
+
+**データソースの例:** 東京の CloudWatch と、プライベートサブネットの OpenSearch を 1 枚に並べるなら、ワークスペースに VPC 接続を設定します。
+
 ## Amazon Managed Service for Prometheus {#managed-prometheus}
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
+
+**提供単位:** リージョン。データは同じリージョンの 3 AZ に複製されます。VPC の外のサービスで、VPC の中からはインターフェイスエンドポイントで書き込めます（[提供単位の考え方](resource-scope.md#two-axes)）。
 
 Prometheus 互換のメトリクスを保存し、PromQL で検索するサーバーレスのサービスです。
 
@@ -1106,11 +1627,24 @@ Prometheus 互換のメトリクスを保存し、PromQL で検索するサー�
 
 **クォータの例:** ワークスペースごとのアクティブ系列の既定は 5,000 万（最大 15 億）、取り込みは毎秒 1,666,666 サンプルです。どちらも引き上げられます。
 
+**計算例:** 200 ノードで 1 ノード 500 系列なら、`200 × 500 = 100,000` 系列です。15 秒ごとに取得すると、`100,000 / 15 ≒ 6,667` サンプル毎秒で、既定の上限に十分収まります。
+
+**誤ると:** `pod_id` をラベルに入れて毎日 Pod が入れ替わると、系列が増え続けます。
+
+```yaml
+remote_write:
+  - url: https://aps-workspaces.ap-northeast-1.amazonaws.com/workspaces/ws-exampleid/api/v1/remote_write
+    sigv4:
+      region: ap-northeast-1
+```
+
 **CloudWatch との選択:** Prometheus の資産や PromQL をそのまま使いたいなら Managed Service for Prometheus、AWS サービスのメトリクスが中心なら CloudWatch を選びます。
 
 ## Amazon Q Developer in chat applications {#q-chat}
 
 [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
+**提供単位:** VPC の外のサービスです。通知元の SNS トピックはリージョンごとに作ります。
 
 **旧称は AWS Chatbot です。** 2025 年 2 月 19 日に名称が変わりました。機能、料金、設定は同じです。
 
@@ -1124,9 +1658,15 @@ CloudFormation のリソース名、IAM のアクション、サービスプリ�
 
 **例:** CloudWatch アラームを SNS に送り、Q Developer in chat applications の設定で Slack のチャネルを購読させます。
 
+**権限の例:** チャネルロールに広い権限があっても、ガードレールポリシーが `ReadOnlyAccess` なら、チャネルからは読み取りだけです。実際に使えるのは 2 つの重なりです。
+
+**誤ると:** 東京の SNS トピックだけ購読していると、大阪のアラームは Slack に届きません。大阪のトピックも追加します。
+
 ## AWS User Notifications {#user-notifications}
 
 [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+**提供単位:** アカウントの設定で、通知を保存するリージョン（通知ハブ）を選びます。VPC の外のサービスです。
 
 AWS の通知を一か所で管理します。
 
@@ -1142,7 +1682,13 @@ AWS の通知を一か所で管理します。
 
 **使い分け:** 人に通知を届けるだけなら User Notifications、修復などの処理を動かすなら EventBridge を使います。
 
+**例:** 通知ハブに `ap-northeast-1` を選び、Health の EC2 のイベントをメールと Slack に送る設定を作ります。
+
+**誤ると:** 通知ハブを 1 つも選んでいないと、通知の設定を作れません。
+
 ## AWS Health イベントの自動化 {#health-events}
+
+**提供単位:** AWS Health はアカウントの情報を返すサービスで、イベントはリージョンごとに EventBridge へ届きます。VPC の外です。
 
 AWS の障害や、アカウントに関係する予定を EventBridge で受け取ります。
 
@@ -1183,7 +1729,19 @@ AWS の障害や、アカウントに関係する予定を EventBridge で受け
 
 **例:** `AWS_EC2_INSTANCE_RETIREMENT_SCHEDULED` のようなイベントで Automation を起動し、該当するインスタンスを停止、再開して別のホストへ移します。ルートデバイスが EBS のインスタンスに限ります。インスタンスストアのデータは失われます。
 
+**カテゴリの例:**
+
+- `issue`: 東京の EC2 でネットワークの問題が起きている。
+- `scheduledChange`: 11 月 15 日に、このインスタンスのメンテナンスがある。
+- `accountNotification`: アカウントに関係するお知らせ。
+
+**重複の計算例:** 東京のルールとオレゴンのルールの両方があると、同じイベントが 2 回届く場合があります。`detail.communicationId` が同じなら 1 回として扱います。
+
+**誤ると:** `us-east-1` のルールだけでは、東京のアカウント固有のイベントは届きません。東京にもルールを作ります。
+
 ## EventBridge による修復パターン {#eventbridge-remediation}
+
+**提供単位:** リージョン。ルールはイベントが発生するリージョンごとに作ります。VPC の外のサービスです（[提供単位の一覧](resource-scope.md#scope-regional-outside)）。
 
 EventBridge の基本は [EventBridge](messaging.md#eventbridge)、再試行は [ターゲットの再試行と DLQ](messaging.md#target-retry-dlq) を参照してください。
 
@@ -1199,6 +1757,21 @@ EventBridge の基本は [EventBridge](messaging.md#eventbridge)、再試行は 
 
 EventBridge のターゲットには、Systems Manager の Automation、OpsItem、Run Command を直接指定できます。
 
+**セキュリティグループの変更を受けるルールの例:**
+
+```json
+{
+  "source": ["aws.ec2"],
+  "detail-type": ["AWS API Call via CloudTrail"],
+  "detail": {
+    "eventSource": ["ec2.amazonaws.com"],
+    "eventName": ["AuthorizeSecurityGroupIngress"]
+  }
+}
+```
+
+**誤ると:** IAM のように `us-east-1` で記録されるサービスの操作は、東京のルールでは受けられません。`us-east-1` にルールを作ります。
+
 **CloudWatch アラームから:** アラームは Systems Manager の OpsItem とインシデントのほか、[アラームのアクション](observability.md#alarm-actions) にある対象へ通知できます。ランブックを動かすなら、アラームの状態変化を EventBridge で受けます。
 
 **AWS Config の修復:** ルールに Automation ドキュメントを関連付けます。
@@ -1208,6 +1781,8 @@ EventBridge のターゲットには、Systems Manager の Automation、OpsItem�
 | 手動の修復 | コンソールで実行する |
 | 自動の修復 | 非準拠になると実行する |
 | 再試行 | 回数と秒数。例は 300 秒に 5 回 |
+
+**計算例:** 300 秒に 5 回なら、1 回あたり 60 秒以内に失敗が続くと例外が付きます。ランブックが 1 回 2 分かかるなら、300 秒に 5 回には届きません。
 
 ```mermaid
 flowchart TD
@@ -1225,9 +1800,13 @@ flowchart TD
 - ランブックのロールは必要最小限にします。
 - 修復の結果は SNS か OpsCenter で人に知らせます。
 
+**ループの例:** タグを直す Lambda が `CreateTags` を呼び、その `CreateTags` をルールが受けて同じ Lambda を起動すると、止まらなくなります。`detail.userIdentity.arn` で修復用のロールを除外します。
+
 ## AWS OpsWorks の状況 {#opsworks}
 
 [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
+
+**提供単位:** リージョンのサービスでしたが、提供を終了しています。
 
 !!! warning "提供を終了しています"
     OpsWorks Stacks、OpsWorks for Chef Automate、OpsWorks for Puppet Enterprise は、いずれも 2024 年 5 月 1 日に完全に終了しました。
@@ -1236,9 +1815,13 @@ Chef や Puppet による構成管理のサービスでした。DOP-C02 の範�
 
 試験で問われたら、「Chef または Puppet のレシピで構成を管理する」用途として理解してください。実際の環境では [State Manager](#state-manager) や [Automation](#automation) に置き換えます。
 
+**例:** 「30 分ごとに Chef のレシピを適用する」という昔の構成は、State Manager の関連付けで `AWS-ApplyChefRecipes` を `rate(30 minutes)` で動かす形に置き換えられます。
+
 ## AWS Device Farm {#device-farm}
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
+**提供単位:** リージョン（`us-west-2` のみ）。VPC の外のサービスです。
 
 実機のスマートフォンとタブレットで、Android、iOS、Web のアプリをテストするサービスです。SAP-C03 では範囲外です。
 
@@ -1246,9 +1829,13 @@ Chef や Puppet による構成管理のサービスでした。DOP-C02 の範�
 - 2 つの使い方があります。ブラウザから実機を操作するリモートアクセスと、マネージドの環境でのテストの自動実行です。
 - Appium のテストをローカルのクライアントから実機に対して実行できます。
 
+**例:** 東京からでも CLI は `aws devicefarm list-devices --region us-west-2` です。`ap-northeast-1` を指定すると失敗します。
+
 ## Amazon ECS Anywhere {#ecs-anywhere}
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate }
+
+**提供単位:** ECS クラスターはリージョンです。外部インスタンスはオンプレミスにあるので、AWS の VPC の外です（[提供単位の考え方](resource-scope.md#two-axes)）。
 
 オンプレミスのサーバーや VM を、ECS クラスターの外部インスタンスとして登録します。ECS の基本は [コンテナ](containers.md) を参照してください。
 
@@ -1265,9 +1852,19 @@ Chef や Puppet による構成管理のサービスでした。DOP-C02 の範�
 
 **対応 OS:** 2026 年 8 月 7 日から Amazon Linux 2、RHEL 7 と 8、Ubuntu 18 などのサポートがなくなりました。Amazon Linux 2023、Ubuntu 20 以降、RHEL 9 を使います。
 
+```bash
+aws ecs run-task --cluster onprem --launch-type EXTERNAL --task-definition batch:3
+```
+
+**例:** 工場のサーバー 3 台を登録し、データの集計タスクを実行します。
+
+**誤ると:** タスク定義の `networkMode` が `awsvpc` だと、`EXTERNAL` では実行できません。`bridge` に変えます。
+
 ## Amazon EKS Anywhere {#eks-anywhere}
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate }
+
+**提供単位:** AWS のリージョンや VPC の外です。自社のデータセンターで動きます。
 
 自分のデータセンターで Kubernetes クラスターを作って運用するためのソフトウェアです。
 
@@ -1289,17 +1886,25 @@ Chef や Puppet による構成管理のサービスでした。DOP-C02 の範�
 
 AWS との常時接続が取れるなら Hybrid Nodes、取れないなら EKS Anywhere を検討します。
 
+**例:** 店舗のサーバーでインターネットに出られないなら、EKS Anywhere です。データセンターから Direct Connect で常時つながるなら、コントロールプレーンを AWS に任せる Hybrid Nodes です。
+
 ## Amazon EKS Distro {#eks-distro}
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
+
+**提供単位:** AWS のリージョンや VPC の外です。自分の環境に自分で導入します。
 
 Amazon EKS で使っている Kubernetes の構成要素の配布版です。
 
 クラスターの構築、更新、バックアップはすべて自分で行います。EKS と同じ部品を、自分の環境で使いたいときに選びます。ライフサイクル管理も欲しいなら EKS Anywhere を選びます。
 
+**例:** 既に Kubernetes の運用チームがあり、独自の構築ツールを使うなら EKS Distro です。チームが小さく更新も任せたいなら、EKS Anywhere を検討します。
+
 ## Red Hat OpenShift Service on AWS (ROSA) {#rosa}
 
 [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
+
+**提供単位:** リージョン。ワーカーノードは自分のアカウントの VPC の中に置きます。
 
 Red Hat OpenShift を AWS でマネージドで使うサービスです。既に OpenShift を使っている組織が、そのまま AWS へ移るときに選びます。
 
@@ -1307,6 +1912,8 @@ Red Hat OpenShift を AWS でマネージドで使うサービスです。既に
 | --- | --- | --- | --- |
 | Hosted control plane（HCP） | Red Hat のアカウント | お客様のアカウント | インフラの費用が少なく、作成が速い |
 | Classic | お客様のアカウント | お客様のアカウント | |
+
+**例:** オンプレミスの OpenShift で動くアプリと運用手順をそのまま移すなら、ROSA の HCP です。新規で OpenShift の資産がないなら、EKS や ECS を比べます。
 
 ## 選び方の比較 {#choosing}
 
@@ -1323,6 +1930,12 @@ Red Hat OpenShift を AWS でマネージドで使うサービスです。既に
 | Managed Grafana と CloudWatch ダッシュボード | 複数のソースをまとめる、Grafana の資産を使うなら Managed Grafana |
 | User Notifications と SNS | AWS の通知を人に届けるなら User Notifications、アプリへの配信は SNS |
 | OpsCenter と Incident Manager | 新しい構成では OpsCenter。Incident Manager は新規受付を終了 |
+
+**例:**
+
+- 「全 200 台で `df -h` を 1 回実行」は Run Command です。「スナップショットを取り、停止し、タイプを変えて起動」は Automation です。
+- 「`Env=prod` の全台に常にエージェントが入っている」は State Manager です。「毎月第 3 木曜の夜だけ再起動」は Maintenance Windows です。
+- 「`openssl` の入っているノードを探す」は Inventory です。「セキュリティグループの先週の設定を見る」は AWS Config です。
 
 ## 既定値と上限のまとめ {#numbers}
 

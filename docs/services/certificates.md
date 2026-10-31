@@ -12,6 +12,8 @@ ACM と AWS Private CA は TLS 証明書を発行、管理するサービスで�
 
 ACM は、公開証明書とプライベート証明書の発行、保存、更新を担います。統合サービスで使う限り、更新と配置を自動化できます。
 
+**提供単位:** ACM の証明書はリージョンのリソースで、VPC の外にあります（[提供単位の一覧](resource-scope.md#scope-regional-outside)）。使うリソースと同じリージョンに作り、CloudFront 用は `us-east-1` に作ります。
+
 | 観点 | 公開証明書 | プライベート証明書 |
 | --- | --- | --- |
 | 発行元 | Amazon の公開 CA | AWS Private CA のプライベート CA |
@@ -19,6 +21,10 @@ ACM は、公開証明書とプライベート証明書の発行、保存、更�
 | 所有権の確認 | ドメインの検証が必要 | 不要 |
 | 用途 | 公開 Web サイト、公開 API | 社内サービス、サービス間通信 |
 | 料金 | 統合サービスで使う証明書は追加料金なし（エクスポート可能な証明書と ACME の証明書は有料） | Private CA の料金がかかる |
+
+- **公開証明書の例:** `www.example.com` を ALB で公開する。ブラウザは Amazon の CA を信頼しているので警告が出ない。
+- **プライベート証明書の例:** 社内の `api.internal.example.com` を ALB で公開する。社員の PC と社内の API クライアントに、ルート CA を信頼させる。
+- **誤ると:** プライベート証明書を一般向けのサイトに付けると、利用者のブラウザが CA を信頼しないので `NET::ERR_CERT_AUTHORITY_INVALID` のような警告が出る。
 
 ### ドメイン検証 {#domain-validation}
 
@@ -45,6 +51,11 @@ aws acm request-certificate \
 
 ワイルドカードは一番左にだけ置け、1 階層だけを保護します。`*.example.com` は `www.example.com` を保護しますが、`a.www.example.com` や `example.com` 自体は保護しません。1 枚の証明書に入れられるドメインは既定で 10 個で、申請すると増やせます。
 
+- **`--domain-name` と `--subject-alternative-names` の例:** 上のコマンドで `example.com` と `www.example.com` の両方が保護される。11 個のドメイン名を 1 枚に入れるには、既定の 10 個を超えるので引き上げを申請するか、ワイルドカードにまとめる。
+- **例:** `*.example.com` と `example.com` の 2 つを申請しても、CNAME は `example.com` に対して同じ 1 組になることがある。ACM が示したレコードをそのまま追加する。
+- **誤ると:** `*.*.example.com` は申請できない。`a.www.example.com` を守りたいなら `*.www.example.com` を足す。
+- **誤ると:** Pending validation のまま 72 時間が過ぎると、検証はタイムアウトし、証明書は発行されない。同じ設定で要求し直す。
+
 ### 自動更新 {#auto-renewal}
 
 ACM の公開証明書の有効期間は 198 日で、期限の 45 日前から更新を確認します。以前に発行された有効期間 395 日の証明書は、期限の 60 日前に更新され、更新後は 198 日になります。
@@ -60,6 +71,10 @@ ACM の公開証明書の有効期間は 198 日で、期限の 45 日前から�
 
 DNS 検証のものは自動で更新され、メール検証のものは更新の案内がメールで届きます。
 
+- **計算の例:** 2026 年 1 月 1 日に発行した公開証明書は、198 日後の 7 月 18 日に切れる。45 日前の 6 月 3 日ごろから更新を確認する。ARN は変わらない。
+- **誤ると:** CNAME を消したあとは、次の更新のときに検証できず、期限の日に HTTPS のエラーで全利用者に影響する。
+- **誤ると:** ALB から外した証明書は「使っていない」ので自動更新されない。同じドメインで付け直す予定があるなら、期限を確認する。
+
 ### リージョンのルール {#region-rules}
 
 ACM の証明書はリージョンのリソースです。リージョン間でコピーできないので、必要なリージョンごとに作ります。
@@ -74,6 +89,9 @@ ACM の証明書はリージョンのリソースです。リージョン間で�
 
 !!! tip "CloudFront の証明書が選択肢に出ない"
     多くの場合、証明書を `us-east-1` 以外で作っています。東京リージョンで動くアプリでも、CloudFront 用の証明書は `us-east-1` に作ります。
+
+- **例:** 東京の ALB、東京の API（リージョナル）、CloudFront の 3 つで `www.example.com` を使うなら、証明書は東京に 1 枚、`us-east-1` に 1 枚の計 2 枚を作る。同じ CNAME で検証できる。
+- **誤ると:** CloudFront の前に ALB を置き、両方を同じドメインにするときに、東京の証明書だけを作ると CloudFront に設定できない。
 
 ### 統合サービス {#integrated-services}
 
@@ -98,6 +116,10 @@ EC2 上のサーバーに直接置くには、エクスポート可能な公開�
 
 ただし、一般的には EC2 の前に ALB や CloudFront を置いて、そこに証明書を設定するほうが簡単です。
 
+- **ALB の例:** HTTPS リスナーの `Certificates` に証明書の ARN を指定する。
+- **EC2 の例:** nginx が使う `fullchain.pem` と `privkey.pem` をエクスポート可能な公開証明書から取り出す。更新されたら再度エクスポートして配置し直す。
+- **誤ると:** 通常の公開証明書は秘密鍵を取り出せない。`ExportCertificate` が拒否される。
+
 ### 証明書のインポート {#import}
 
 他の CA が発行した証明書は ACM にインポートできます。
@@ -112,12 +134,16 @@ aws acm import-certificate \
 - ACM は自動更新しないので、新しい証明書を取得して再インポートする。ARN と関連付けは維持される。
 - 期限の管理は自分の責任。EventBridge で期限切れが近いイベントを受け取り、通知する。
 - 同じリージョンのルールが適用される。CloudFront 用は `us-east-1` にインポートする。
+- **例:** 2027 年 3 月 31 日に切れる証明書をインポートすると、インポートした証明書は 45 日前の 2 月 14 日から毎日 `ACM Certificate Approaching Expiration` が届く。
+- **誤ると:** 再インポートを `--certificate-arn` なしで実行すると、新しい ARN の別の証明書になり、ALB は古い証明書を使い続ける。
 
 ## AWS Private CA {#private-ca}
 
 [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 ルート CA と下位 CA からなるプライベート CA の階層を、自前の設備なしで運用するサービスです。
+
+**提供単位:** プライベート CA はリージョンのリソースで、VPC の外にあります。
 
 | 用途 | 例 |
 | --- | --- |
@@ -140,6 +166,11 @@ aws acm request-certificate \
 ```
 
 プライベート CA はリージョンのリソースで、リージョン間でコピーできません。クライアント側には、ルート CA 証明書を信頼するよう設定します。
+
+- **ACM で要求する例:** 上のコマンドで作ると、ALB に付けられ、自動で更新される。
+- **`IssueCertificate` の例:** mTLS のクライアントに配る証明書を 90 日の有効期間で発行する。更新の仕組みは自分で作る。
+- **誤ると:** 自前で更新を作らずに `IssueCertificate` の証明書を使うと、期限の日に通信が止まる。
+- **誤ると:** クライアントがルート CA を信頼していないと、TLS のハンドシェイクで `unable to get local issuer certificate` のようなエラーになる。
 
 ## 開発用の証明書と SSH キーの生成 {#dev-certs-ssh}
 
@@ -176,10 +207,15 @@ openssl req -new -newkey rsa:2048 -nodes \
 - 自己署名証明書はクライアントから信頼されないので、ブラウザに警告が出る。
 - 秘密鍵をリポジトリにコミットしない。`.gitignore` に入れ、必要なら [Secrets Manager](secrets.md) に置く。
 - ALB でテストするには、ACM にインポートする。自動更新はされない。
+- **例:** 上の `-days 90` は 90 日。91 日目にローカルのアプリがブラウザで期限切れの警告を出す。
+- **例:** `-nodes` は秘密鍵を暗号化しない指定。CI で使うならこのままで、持ち運ぶならパスフレーズを付ける。ACM にはパスフレーズなしの鍵しかインポートできない。
+- **誤ると:** `subjectAltName` を省くと、現代のブラウザは CN だけでは名前を確認しないので、`localhost` でも一致しないと表示される。
 
 ### SSH キーと EC2 キーペア {#ssh-keys}
 
 EC2 キーペアでは、公開鍵を EC2 が持ち、秘密鍵は自分で保管します。AWS は秘密鍵を保存しないので、なくすと取り戻せません。
+
+- **例:** キーペアはリージョンのリソース。東京で作った `dev-key` は大阪では選べない。同じ公開鍵を大阪にも `import-key-pair` すれば、同じ秘密鍵で入れる。
 
 | キーの種類 | Linux | Windows |
 | --- | --- | --- |
@@ -215,6 +251,10 @@ aws ec2 import-key-pair \
 | 秘密鍵をなくした | 取り戻せない。新しい公開鍵をインスタンスに追加する、または Session Manager で入る |
 | Windows のパスワードが読めない | 秘密鍵で管理者パスワードを復号する |
 
+- **`--key-type` の例:** Linux なら `ed25519`、Windows なら `rsa`。`ed25519` のキーペアは Windows インスタンスに指定できない。
+- **`ssh-keygen -C` の例:** `-C "dev"` は公開鍵の末尾のコメント。誰の鍵かを示す。
+- **誤ると:** `ssh -i dev-key.pem root@...` では入れない。Amazon Linux のユーザーは `ec2-user`。
+
 ## 転送時の TLS {#tls-in-transit}
 
 TLS の終端の場所を決めるのが設計の中心です。
@@ -230,6 +270,10 @@ TLS の終端の場所を決めるのが設計の中心です。
 
 データの暗号化の全体は [KMS](kms.md) を参照してください。
 
+- **例:** CloudFront のビューワープロトコルポリシーを `redirect-to-https` にすると、`http://` のリクエストは 301 で `https://` に転送される。
+- **例:** ALB から EC2 の間を HTTPS にするとき、ターゲットの証明書は検証されないので、自己署名でも通る。
+- **誤ると:** CloudFront のオリジンプロトコルを `https-only` にして、オリジンに自己署名の証明書を置くと、CloudFront は `502` を返す。オリジンには信頼された CA の証明書が要る。
+
 ### 相互 TLS（mTLS） {#mtls}
 
 サーバーだけでなく、クライアントも証明書で認証します。API Gateway のカスタムドメインでは、次のように設定します。
@@ -240,11 +284,16 @@ TLS の終端の場所を決めるのが設計の中心です。
 
 クライアント証明書の発行には、AWS Private CA を使えます。
 
+- **例:** トラストストアを `s3://my-trust/truststore.pem` に置き、`aws apigateway create-domain-name --domain-name api.example.com --mutual-tls-authentication truststoreUri=s3://my-trust/truststore.pem` のように指定する。
+- **誤ると:** `execute-api` のエンドポイントを残すと、そちらから mTLS なしで呼べてしまう。
+
 ## AWS WAF {#waf}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 HTTP(S) リクエストを検査して、許可、ブロック、カウントなどを行うファイアウォールです。ウェブ ACL は、現在のコンソールでは protection pack とも呼ばれます。
+
+**提供単位:** ウェブ ACL は、CloudFront 用がグローバルで `us-east-1` に作り、それ以外はリージョンごとに作ります。どちらも VPC の外にあります（[提供単位の一覧](resource-scope.md#scope-global)）。
 
 ### アタッチできる場所 {#waf-resources}
 
@@ -258,6 +307,9 @@ HTTP(S) リクエストを検査して、許可、ブロック、カウントな
 | リージョナル | App Runner、Amplify、Verified Access、Bedrock AgentCore Gateway | 同上 |
 
 対応一覧に、NLB、API Gateway の HTTP API、EC2 のインスタンスはありません。保護するには、前に CloudFront や ALB を置きます。
+
+- **例:** HTTP API を守るなら、前に CloudFront を置いて、CloudFront のウェブ ACL で検査する。ALB の後ろの EC2 なら、ALB に付ければ足りる。
+- **誤ると:** 東京の ALB に付けるウェブ ACL を `CLOUDFRONT` スコープで作ると、関連付けに失敗する。`REGIONAL` のスコープで東京に作る。
 
 ### ウェブ ACL の構成 {#web-acl}
 
@@ -300,6 +352,12 @@ flowchart TD
 
 新しいルールはまず `Count` で動かし、正常なリクエストを止めないことを確認してから `Block` にします。
 
+- **優先度の例:** 優先度 0 で社内の IP を `Allow`、優先度 1 で国の制限を `Block`、優先度 2 でマネージドルールにする。社内の IP からは優先度 0 で評価が終わるので、後のルールで止まらない。
+- **既定のアクションの例:** 公開サイトは `Allow`。特定の IP だけに使わせる社内向けは `Block` にして、その IP の `Allow` ルールを置く。
+- **WCU の計算の例:** `AWSManagedRulesCommonRuleSet` の 700 WCU と、レートベースルールの基本 2 WCU で 702 WCU。5,000 の上限に収まり、1,500 以下なので追加料金もかからない。
+- **Block の例:** `CustomResponse` で 403 の代わりに `429` と本文を返せる。
+- **誤ると:** 優先度の小さい `Allow` が広すぎると、後の `Block` まで評価されない。SQL インジェクションのルールを Allow の後に置くと、社内の IP では検査されない。
+
 ### レートベースルール {#rate-based-rules}
 
 一定時間のリクエスト数が上限を超えた送信元などを、一時的に制限します。
@@ -335,6 +393,9 @@ flowchart TD
 - `/login` だけを制限したいときは、`ScopeDownStatement` で対象を絞る。
 - 上限の付近で制限されるが、正確な一致は保証されない。
 - CloudFront の背後の ALB に WAF を置くと、送信元 IP が CloudFront になる。CloudFront に付けるか、`X-Forwarded-For` などの転送 IP を集約キーにする。
+- **`Limit` の例:** `100` で `EvaluationWindowSec` が 300 なら、1 つの IP が 5 分間に約 100 回を超えると、それ以降のリクエストをブロックする。秒に直すと約 0.33 回/秒なので、普通の閲覧者にも当たりうる。
+- **`ScopeDownStatement` の例:** `UriPath` が `/login` で始まるリクエストだけを数えるので、ログインの総当たりを止めつつ、画像の取得を数えない。
+- **誤ると:** 反応には数分かかることがある。設定を変えるとカウントがリセットされ、最大 1 分ほど制限が止まる場合がある。短い間のスパイクを正確に止めたいなら、API Gateway のスロットリングを併用する。
 
 ### 似た機能との比較 {#waf-comparison}
 
@@ -346,6 +407,8 @@ flowchart TD
 
 ネットワーク側の制御は [ネットワーク](networking.md) を参照してください。
 
+- **例:** 同じ `/orders` に WAF で 5 分 2,000 回の IP 制限を、API Gateway で秒間 100 回のスロットリングを設定する。前者は特定の IP を 403 で止め、後者は全体の負荷を 429 で止める。
+
 ### ウェブ ACL の関連付け {#waf-association}
 
 ```bash
@@ -356,6 +419,9 @@ aws wafv2 associate-web-acl \
 ```
 
 CloudFront の場合は、ディストリビューション設定でウェブ ACL を指定します。CloudFormation でも、CloudFront のディストリビューション設定側に記述します。
+
+- **`--scope` の例:** 一覧を見るときは `aws wafv2 list-web-acls --scope REGIONAL --region ap-northeast-1`、CloudFront 用は `--scope CLOUDFRONT --region us-east-1`。
+- **誤ると:** `--region ap-northeast-1` で `--scope CLOUDFRONT` を指定すると、エラーになる。
 
 ## ACM の設定の詳細 {#acm-settings}
 
@@ -370,17 +436,27 @@ CloudFront の場合は、ディストリビューション設定でウェブ AC
 
 連携先のサービスが対応するアルゴリズムしか使えません。証明書のキーが連携先に対応していないと、選択肢に出ないか、関連付けに失敗します。
 
+- **`KeyAlgorithm` の例:** 応答を小さくしたいなら `EC_prime256v1`。`--key-algorithm EC_prime256v1` を付けて要求する。古いクライアントの互換性を優先するなら `RSA_2048`。
+- **`ValidationMethod` の例:** Route 53 を使えるなら `DNS`。DNS を変更できず、`admin@example.com` のメールだけを受け取れるなら `EMAIL`。
+- **誤ると:** `RSA_1024` は公開証明書には要求できない。
+
 ### DNS 検証の注意点 {#dns-validation-details}
 
 - ACM はドメイン名ごとに CNAME を 1 つ指定する。`example.com` と `www.example.com` なら 2 つ。
 - CNAME が残っていれば、同じドメインの別の証明書でも再検証は不要。
 - CNAME のチェーンが 5 つを超えると解決に失敗する。それより長いチェーンが必要なら、メール検証を使う。
+- **例:** `_a79865eb4cd1a6ab990a45779b4e0b96.example.com` のような名前に、`_424c7224e9b0146f9a8808af955727d0.acm-validations.aws.` のような値を持つ CNAME を追加する。Route 53 なら「Route 53 でレコードを作成」で足せる。
+- **誤ると:** DNS の管理画面で名前の末尾にドメインが自動で付く場合、`example.com` まで入れると `...example.com.example.com` になり、検証が通らない。
 
 ### メール検証の注意点 {#email-validation-details}
 
 送り先は `admin@`, `administrator@`, `hostmaster@`, `postmaster@`, `webmaster@` です。WHOIS の連絡先には送りません。古い教材の記述が残っているので注意します。
 
 更新のメールも期限の 45 日前に届きます。リンクを選ばないと更新されません。
+
+- **例:** `www.example.com` を申請すると、`www` を除いた `admin@example.com` などの 5 つに届く。`sub.example.com` のメールを受け取れないなら、検証ドメインに `example.com` を指定する。
+- **例:** 検証メールのトークンは 72 時間で切れるので、切れたら再送する。
+- **誤ると:** 担当者の退職で `admin@` を誰も見ていないと、更新の案内が届いても処理されず、198 日で切れる。
 
 ### 更新の監視 {#renewal-monitoring}
 
@@ -392,6 +468,10 @@ CloudFront の場合は、ディストリビューション設定でウェブ AC
 | 更新できないときの通知 | 期限の 30、15、7、3、1 日前に AWS Health と EventBridge に送る |
 
 インポートした証明書を管理するなら、`DaysToExpiry` に CloudWatch アラームを付けるか、EventBridge から通知します。
+
+- **`DaysToExpiry` の例:** しきい値を `30` にして、`DaysToExpiry < 30` で SNS に通知する。`AWS/CertificateManager` 名前空間の `CertificateArn` ディメンションで指定する。
+- **EventBridge の例:** パターンの `detail-type` を `ACM Certificate Approaching Expiration` にして、Lambda で再インポートを自動化する。開始の日数は `PutAccountConfiguration` で変えられる。
+- **誤ると:** 期限切れの後はメトリクスが出なくなるので、アラームの「データ不足」を無視すると、切れたことに気づけない。
 
 自動更新は、統合サービスで使用中か、エクスポートされていること、DNS の CNAME が残っていることなどが条件です。使っていない証明書は更新されません。
 
@@ -407,6 +487,10 @@ CloudFront の場合は、ディストリビューション設定でウェブ AC
 | 更新 | 自動更新なし。再インポートで ARN と関連付けを維持 |
 
 パスフレーズ付きの秘密鍵はそのままインポートできません。先に解除します。
+
+- **例:** `openssl rsa -in encrypted.key -out key.pem` でパスフレーズを外し、インポートのあとで手元の平文の鍵を消す。
+- **例:** DER 形式は `openssl x509 -inform der -in cert.der -out cert.pem` で PEM にする。
+- **誤ると:** `--certificate-chain` を省くと、中間証明書が渡らず、クライアントによっては信頼できないと判断される。
 
 ## Private CA の設定の詳細 {#private-ca-settings}
 
@@ -426,6 +510,11 @@ CloudFront の場合は、ディストリビューション設定でウェブ AC
 
 CA 1 つあたりの証明書は累計 100 万枚です。Private CA の証明書は、ACM の枚数の上限には数えません。
 
+- **種類の例:** ルート CA の下に、本番用と開発用の 2 つの下位 CA を作る。下位 CA が侵害されても、ルートは無事なので下位だけを失効できる。
+- **`UsageMode` の例:** `SHORT_LIVED_CERTIFICATE` なら 7 日以内で発行し、サービスメッシュの mTLS のように頻繁に自動更新する用途に使う。
+- **キーの例:** 規格の要件に合わせて、`RSA_2048` の代わりに `EC_prime256v1` を選ぶ。作成後は変えられない。
+- **誤ると:** ACM は短期証明書モードの CA からは発行できない。ALB で ACM の自動更新と組み合わせたいなら、汎用モードを選ぶ。
+
 ## WAF の設定の詳細 {#waf-settings}
 
 ### スコープと関連付け {#waf-scope}
@@ -433,6 +522,8 @@ CA 1 つあたりの証明書は累計 100 万枚です。Private CA の証明�
 - 1 つのリソースには、1 つのウェブ ACL だけ付けられる。
 - 1 つのウェブ ACL は複数のリソースに付けられる。
 - CloudFront に付けたウェブ ACL は、他の種類のリソースに付けられない。
+- **例:** 東京の ALB と API Gateway に同じウェブ ACL を付けられる。大阪の ALB には、大阪のウェブ ACL を別に作る。
+- **誤ると:** 1 つの ALB に 2 つのウェブ ACL を同時に効かせることはできない。チームごとのルールも、1 つのウェブ ACL にまとめる。
 
 ### 容量と本文の検査 {#waf-capacity-body}
 
@@ -446,6 +537,10 @@ CA 1 つあたりの証明書は累計 100 万枚です。Private CA の証明�
 | 検査対象 | 上限を超えた部分は検査しない。`Oversize handling` で扱いを決める |
 
 16 KB より大きい本文を受ける API では、攻撃文字列を 16 KB より後ろに置かれると、SQL インジェクションのルールを通過してしまいます。サイズ制約のルールで大きいリクエストを止めるか、上限を引き上げます。
+
+- **オーバーサイズの例:** 検査の `OversizeHandling` は `CONTINUE`（検査できた範囲で評価）、`MATCH`（一致として扱う）、`NO_MATCH`（一致しないとして扱う）から選ぶ。SQL インジェクションのルールでは `MATCH` にすると、20 KB の本文は Block になる。
+- **計算の例:** ALB で 20 KB の本文を受けると、検査できるのは先頭の 8 KB だけで、残りの 12 KB は検査されない。
+- **誤ると:** CloudFront で上限を 64 KB にすると、16 KB を超える本文の検査には追加料金がかかる。
 
 ### ルールのアクションの詳細 {#waf-actions-details}
 
@@ -464,9 +559,15 @@ CA 1 つあたりの証明書は累計 100 万枚です。Private CA の証明�
 
 CAPTCHA と Challenge は HTTPS でブラウザからアクセスするときにしか動きません。API クライアントのルールに付けると、正常なリクエストが拒否されます。追加料金もかかります。
 
+- **イミュニティの例:** CAPTCHA のイミュニティを 3,600 秒にすると、1 回解いた人は 1 時間パズルが出ない。既定の 300 秒だと 5 分ごとに解くことになり、利用者が離れやすい。
+- **誤ると:** Challenge の 60 秒は範囲外で設定できない。下限は 300 秒。
+
 **ラベル**は、一致したリクエストに付けるメタデータです。同じウェブ ACL の後のルールが、ラベルで判定できます。
 
 **マネージドルールグループ**のルールは、ルールアクションのオーバーライドで Count にして試せます。代表的なものは `AWSManagedRulesCommonRuleSet`, `AWSManagedRulesSQLiRuleSet`, `AWSManagedRulesKnownBadInputsRuleSet` です。
+
+- **ラベルの例:** マネージドルールが一致すると `awswaf:managed:aws:core-rule-set:SizeRestrictions_Body` のラベルが付く。Count にしておき、後のルールで「このラベルかつ `/upload` 以外」のときだけ Block する。
+- **マネージドの例:** `AWSManagedRulesCommonRuleSet` は 700 WCU で、8 KB を超える本文を `SizeRestrictions_BODY` で止める。ファイルのアップロードが 403 になるのはこのルールが多い。
 
 ### レートベースルールの詳細 {#rate-based-details}
 
@@ -484,6 +585,10 @@ CAPTCHA と Challenge は HTTPS でブラウザからアクセスするときに
 同じ設定のルールでも、2 つのウェブ ACL に置くとカウントは別々です。
 
 `CONSTANT` はすべての一致するリクエストをまとめて数えるので、スコープダウンステートメントが必須です。
+
+- **`AggregateKeyType` の例:** `IP` は送信元ごと。`FORWARDED_IP` は `X-Forwarded-For` の先頭の IP。`CUSTOM_KEYS` は `x-api-key` ヘッダーごと、のように数える。カスタムキーは 1 つごとに 30 WCU を加える。
+- **`FORWARDED_IP` の例:** 欠けたときの動作を `MATCH` にすると、ヘッダーのないリクエストも制限の対象に数える。
+- **誤ると:** ウェブ ACL あたりのレートベースルールは 10 個まで。
 
 ### ログ {#waf-logging}
 
@@ -503,11 +608,18 @@ CAPTCHA と Challenge は HTTPS でブラウザからアクセスするときに
 
 ログの redaction は、サンプルリクエストには影響しません。別に設定が必要です。
 
+- **例:** 送信先に `arn:aws:logs:ap-northeast-1:111122223333:log-group:aws-waf-logs-prod` を指定する。CloudFront 用のウェブ ACL のログは `us-east-1` のロググループに送る。
+- **redaction の例:** `authorization` ヘッダーを隠すと、ログには `REDACTED` と残る。トークンが漏れない。
+- **フィルターの例:** `Block` のログだけを残すと、ログの量が減る。
+
 ### 監視 {#waf-monitoring}
 
 ルールごとの `VisibilityConfig` で、CloudWatch のメトリクスとサンプルを有効にします。`CountedRequests`, `BlockedRequests`, `AllowedRequests` などのメトリクスで、ルールの影響を確認します。
 
 新しいルールはまず Count で動かし、メトリクスと `CountedRequests` のサンプルを確認してから、Block に変えます。
+
+- **例:** 新しいルールを 1 週間 Count にして、`CountedRequests` が 1 日 200 件、サンプルの中身がすべて攻撃なら Block に変える。正常な検索が混じっているなら、スコープダウンで除外する。
+- **`MetricName` の例:** `ip-rate-limit` のように英数字とハイフンで書く。CloudWatch のメトリクス名になる。
 
 ## 既定値と上限のまとめ {#numbers}
 

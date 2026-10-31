@@ -22,7 +22,7 @@
 | AWS App Mesh | サポート終了 | 2026-09-30 | ECS Service Connect など |
 | AWS Infrastructure Composer | 新規受付を終了。スタンドアロンのコンソールも終了予定 | 2026-10-29、2026-12-07 | コンソールの IaC エディタ、VS Code の AWS Toolkit |
 | Amazon Managed Blockchain | 新規受付を終了。サポートも終了予定 | 2026-10-29、2027-09-29 | |
-| WorkSpaces Secure Browser | メンテナンス（新規利用不可） | 2026-09-29 | |
+| WorkSpaces Secure Browser | メンテナンス（新規利用不可） | 2026-10-29（公表は 2026-09-29） | |
 | WorkSpaces Pools | 新規受付を終了。サポートも終了予定 | 2026-07-31、2027-12-31 | WorkSpaces Applications |
 | PCoIP の WorkSpaces Personal | 新規受付を終了。サポートも終了予定 | 2026-07-31、2027-10-31 | |
 | Timestream for LiveAnalytics | メンテナンス | 2025-06-20 | Timestream for InfluxDB |
@@ -49,6 +49,8 @@
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
+[提供単位](resource-scope.md#two-axes): リージョン。コンピューティング環境のインスタンスやタスクはサブネット（AZ、VPC の中）で動きます。
+
 コンテナのバッチジョブを、必要な量の容量を用意して順に実行します。ジョブの定義、キュー、コンピューティング環境を用意すれば、スケジューラーとインフラの管理は任せられます。
 
 - EC2、Fargate、ECS Managed Instances で動き、ECS または EKS 上で実行します。
@@ -57,19 +59,30 @@
 - ジョブのタイムアウト（`attemptDurationSeconds`）は 60 秒以上です。
 - SageMaker のトレーニングジョブのキューイングにも使えます。
 
+- **配列ジョブの例:** サイズ 1,000 で投入すると、1 つのジョブが 1,000 の子を生みます。子は環境変数 `AWS_BATCH_JOB_ARRAY_INDEX`（0〜999）で担当のファイルを選びます。サイズ 1 や 10,001 は指定できません。
+- **タイムアウトの例:** `attemptDurationSeconds` を 3600 にすると、開始から 1 時間で `SIGTERM` を受けて終了します。60 未満は指定できません。時間ちょうどとは限らず、数秒遅れることがあります。
+- **依存の例:** `N_TO_N` で配列ジョブ B が A に依存すると、B の 5 番は A の 5 番の完了を待ちます。`SEQUENTIAL` なら 0 番から順に実行します。
+- **Spot の例:** 中断に耐えるジョブは Spot の環境に送り、リトライを `attempts: 3` にします。
+
 **選び方:** 15 分を超える長時間の処理や、数千のジョブを並べるなら Batch を選びます。短いイベント処理は Lambda、複数のステップの制御は [Step Functions](step-functions.md) です。
 
 ### Amazon Lightsail {#lightsail}
 
+[提供単位](resource-scope.md#two-axes): リージョン。インスタンスは AZ を選んで作り、AWS が管理する Lightsail 用の VPC に入ります。
+
 仮想サーバー、コンテナ、データベースなどをまとめて簡単に使えるサービスです。小さな Web サイトや個人のプロジェクトに向きます。
 
 **選び方:** 細かい設定が要らず、すぐ始めたいなら Lightsail を選びます。VPC やスケーリングの細かい制御が必要なら EC2 です。
+
+- **例:** 個人のブログで WordPress を 1 台動かすなら Lightsail です。セール時に 2 台から 20 台へ自動で増やすなら EC2 です。
 
 SAP-C03 では範囲外です。
 
 ### AWS App Runner {#app-runner}
 
 [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): リージョン。サービスは VPC の外で動きます。VPC コネクタで VPC のリソースへ接続します。
 
 コンテナやソースコードを、インフラを意識せずに Web アプリとして動かすサービスです。
 
@@ -113,6 +126,8 @@ Envoy プロキシによるサービスメッシュでした。
 
 ### AWS License Manager {#license-manager}
 
+[提供単位](resource-scope.md#two-axes): リージョン。VPC の外です。
+
 Microsoft、SAP、Oracle、IBM などのソフトウェアライセンスを、リージョンとアカウントをまたいで管理します。
 
 - ライセンスの持ち込み（BYOL）に使います。
@@ -121,11 +136,17 @@ Microsoft、SAP、Oracle、IBM などのソフトウェアライセンスを、�
 
 監査で問題になるライセンスの超過を防ぎたいときに選びます。
 
+- **ハードリミットの例:** 契約が 100 vCPU の Oracle で、ハードリミットを 100 にします。使用が 96 vCPU のときに 8 vCPU の起動は、合計 104 になるので拒否されます。ソフトリミットなら起動でき、通知が届きます。
+- **上限の例:** 自己管理ライセンスはリソースあたり 10 個、リージョンあたり 25 個までです。
+- **誤ると:** 共有するアカウントと AMI の関連付けを忘れると、数えられずに監査で超過が見つかります。
+
 ## アプリケーションとメッセージ {#app-integration}
 
 ### AWS AppSync {#appsync}
 
 [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): リージョン。VPC の外です。プライベート API は VPC エンドポイントから呼びます。
 
 GraphQL API と Pub/Sub API をサーバーレスで作るサービスです。
 
@@ -139,9 +160,16 @@ GraphQL API と Pub/Sub API をサーバーレスで作るサービスです。
 
 **選び方:** クライアントが必要なフィールドだけを取得する、複数のデータソースを 1 つの API にまとめる、リアルタイムの更新を届けるなら AppSync を選びます。REST なら [API Gateway](api-gateway.md) です。
 
+- **例:** スマホの一覧画面は `name` と `price` だけを取得し、PC の詳細画面は全項目を取得します。REST なら別のエンドポイントが要るか、不要なデータも返します。
+- **キャッシュの例:** 商品一覧に TTL 60 秒のリゾルバーのキャッシュを付けると、毎秒 100 件の読み取りでも、データソースへの問い合わせはキーごとに 60 秒に 1 回です。TTL の上限は 3,600 秒です。キャッシュのキーに `context.identity` を入れると、利用者ごとに分かれます。
+- **認可の例:** 公開の読み取りは API キー、利用者の書き込みは Cognito ユーザープールにします。API キーは期限が切れるので、本番の主な認可には向きません。
+- **誤ると:** 利用者ごとのデータを返すリゾルバーで、キャッシュのキーを `context.arguments.id` だけにすると、他の利用者の結果が返る恐れがあります。
+
 ### Amazon SES {#ses}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate }
+
+[提供単位](resource-scope.md#two-axes): リージョン。送信の ID、クォータ、サンドボックスはリージョンごとで、VPC の外です。VPC からは SMTP のインターフェイスエンドポイントで呼べます。
 
 メールの送受信サービスです。SOA-C03、SAP、CLF の範囲に入ります。
 
@@ -158,6 +186,14 @@ GraphQL API と Pub/Sub API をサーバーレスで作るサービスです。
 
 **症状:** テストで届くのに本番で `MessageRejected` が出るなら、未検証の宛先に送っていて、サンドボックスのままの可能性があります。
 
+計算の例です。
+
+- **クォータの例:** クォータは宛先の数で数えます。1 通に 50 人（1 メッセージの上限）を入れると 50 と数えます。サンドボックスの 200 通は、50 人宛てなら 4 回で終わります。
+- **サイズの例:** サイズは Base64 エンコード後の値で、上限は v1 API が 10 MB、v2 API が 40 MB です。元のファイルで約 7.5 MB、約 30 MB が目安です。ヘッダーや本文の分も数えるので、20 MB の添付なら v2 API で送れますが、v1 API では送れません。
+- **バウンス率の例:** 1,000 通で 60 件なら 6% で、5% を超えるので審査の対象です。
+- **苦情率の例:** 10,000 通で 12 件なら 0.12% で、0.1% を超えます。
+- **ID の例:** 東京で `example.com` を検証しても、大阪では未検証です。リージョンごとに検証します。
+
 **選び方:** アプリからのメールは SES、受信者の管理と購読があるシステム通知は [SNS](messaging.md) です。
 
 ### Amazon Pinpoint {#pinpoint}
@@ -172,6 +208,8 @@ GraphQL API と Pub/Sub API をサーバーレスで作るサービスです。
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
+[提供単位](resource-scope.md#two-axes): リージョン。ブローカーはサブネット（AZ、VPC の中）に置きます。公開のアクセスも選べます。
+
 Apache ActiveMQ Classic と RabbitMQ のマネージドブローカーです。
 
 | エンジン | デプロイ | ストレージ |
@@ -181,13 +219,21 @@ Apache ActiveMQ Classic と RabbitMQ のマネージドブローカーです。
 
 **選び方:** 既存のアプリが AMQP、MQTT、JMS などの標準プロトコルを使っていて、コードを変えずに移すなら Amazon MQ を選びます。新規のクラウドネイティブな構成なら [SQS と SNS](messaging.md) です。
 
+- **ストレージの例:** 決済のように失えない ActiveMQ のメッセージは、複数 AZ に保存する EFS です。大量の注文で速さが要るなら EBS です。1 KB のメッセージをブローカーに入れる速さの公式の目安は、毎秒 EFS が 80 件、EBS が 500 件です。
+- **EBS の罠:** EBS は `mq.m5` のファミリーだけで使え、データは 1 つの AZ です。アクティブ/スタンバイでは使えません。
+- **単一インスタンスの例:** 検証は単一インスタンスで十分です。本番の ActiveMQ はアクティブ/スタンバイ、RabbitMQ は 3 ノードにします。
+
 ### Amazon Connect {#connect}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
+[提供単位](resource-scope.md#two-axes): リージョン。インスタンスはリージョンに作り、VPC の外です。
+
 クラウドのコンタクトセンターです。現在の製品名は **Amazon Connect Customer** で、Amazon Connect は複数の業務向け AI ソリューションの総称になりました。
 
 電話やチャットのルーティング、エージェントの画面、性能の追跡を提供します。自前の設備なしでコールセンターを作るときに選びます。
+
+- **例:** 問い合わせの「請求」を選んだ電話を、請求担当 5 人のキューへ送ります。営業時間外は音声で案内します。
 
 ## IoT {#iot}
 
@@ -196,6 +242,8 @@ Apache ActiveMQ Classic と RabbitMQ のマネージドブローカーです。
 ### AWS IoT Core {#iot-core}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+[提供単位](resource-scope.md#two-axes): リージョン。エンドポイントはアカウントとリージョンごとで、VPC の外です。
 
 デバイスと AWS を接続するメッセージブローカーです。
 
@@ -209,16 +257,31 @@ Apache ActiveMQ Classic と RabbitMQ のマネージドブローカーです。
 
 **例:** センサーの温度を MQTT で送り、ルールで閾値を超えたものだけ Lambda へ渡します。
 
+```sql
+SELECT temperature, deviceId FROM 'factory/+/temp' WHERE temperature > 80
+```
+
+- **ルールの例:** 上の SQL は `factory/line1/temp` の値が 85 なら一致し、75 なら一致しません。一致したものだけ Lambda に渡します。
+- **ポートの例:** MQTT の X.509 は 8883 番です。ファイアウォールで 443 番しか出られないなら、ALPN に `x-amzn-mqtt-ca` を指定して 443 番を使います。
+- **Shadow の例:** スマホからの「エアコンを 25 度に」を Shadow の `desired` に書くと、オフラインの機器が接続したときに差分を受け取ります。
+- **誤ると:** 証明書にポリシーを付けないと、接続や Publish が拒否されます。
+
 ### AWS IoT Device Defender {#iot-device-defender}
+
+[提供単位](resource-scope.md#two-axes): リージョン。VPC の外です。
 
 IoT デバイスのセキュリティ監査と監視を行います。
 
 - **Audit**: デバイスの設定が、ベストプラクティスに沿っているか確認します。
 - **Detect**: デバイスの異常な動きを検知します。**新規顧客は使えません（公表は 2026 年 6 月 30 日）。**
 
+- **Audit の例:** 複数のデバイスで同じ X.509 証明書を使っていると指摘されます。1 台の漏えいで全台が影響を受けるので、デバイスごとに分けます。
+
 SCS-C03 の範囲です。
 
 ### AWS IoT Device Management {#iot-device-management}
+
+[提供単位](resource-scope.md#two-axes): リージョン。VPC の外です。
 
 大量のデバイスの登録、整理、更新を行います。
 
@@ -230,11 +293,15 @@ SCS-C03 の範囲です。
 
 Fleet Hub は 2025 年 10 月 18 日に終了しました。
 
+- **Jobs の例:** 10,000 台のファームウェア更新を、まず 100 台に送り、失敗率が 5% を超えたら中止する設定にします。
+
 ### AWS IoT Events {#iot-events}
 
 デバイスのデータからイベントを検知するサービスでした。**2026 年 5 月 20 日に完全に終了しました。**
 
 ### AWS IoT Greengrass {#iot-greengrass}
+
+[提供単位](resource-scope.md#two-axes): デバイスで動くソフトウェアです。管理はリージョンのサービスで、VPC の外です。
 
 エッジデバイスで動くオープンソースの実行環境です。データをローカルで処理し、推論を実行し、接続が切れても動き続けます。
 
@@ -242,12 +309,18 @@ Fleet Hub は 2025 年 10 月 18 日に終了しました。
 
 **選び方:** デバイスが IoT Core に直接送るだけなら Greengrass は不要です。ローカルでの判断が必要なら Greengrass を選びます。
 
+- **例:** 工場の回線が切れている 2 時間も、カメラの映像をローカルで推論して不良品を止めます。結果は回線が戻ってから送ります。
+
 ### AWS IoT SiteWise {#iot-sitewise}
+
+[提供単位](resource-scope.md#two-axes): リージョン。SiteWise Edge は現場のゲートウェイで動きます。VPC の外です。
 
 産業機器のデータを大規模に収集、整理、監視します。製造現場の平均故障間隔や設備総合効率の計算に向きます。
 
 - SiteWise Edge でローカルに収集、処理します。
 - **SiteWise Monitor と Data Processing Pack はメンテナンスに移行しました。** 新規利用はできません。
+
+- **例:** 稼働時間 700 時間、停止 7 回の設備の平均故障間隔は 700 ÷ 7 = 100 時間です。この計算をメトリクスとして定義します。
 
 ### AWS IoT Things Graph {#iot-things-graph}
 
@@ -263,6 +336,8 @@ Fleet Hub は 2025 年 10 月 18 日に終了しました。
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational }
 
+[提供単位](resource-scope.md#two-axes): リージョン。WorkSpace は指定した VPC のサブネット（AZ）に置きます。
+
 クラウドの仮想デスクトップです。Windows、Ubuntu、Rocky Linux、RHEL を使えます。
 
 | 種類 | 特徴 | 状況 |
@@ -275,19 +350,27 @@ Fleet Hub は 2025 年 10 月 18 日に終了しました。
 | AlwaysOn | 月額固定。常用する利用者に |
 | AutoStop | 時間単位。切断から一定時間で停止 |
 
+- **`AutoStop Time` の例:** 既定は 1 時間です。切断から 1 時間で課金が止まり、実際の停止は数分遅れることがあります。
+- **選び方の例:** 毎日 8 時間使う人は AlwaysOn、月に数回だけ使う人は AutoStop です。損益の分かれ目は、月額と時間単価の比で計算します。
+- **誤ると:** GPU の AutoStop などはハイバネートに対応せず、停止で未保存の作業が消えます。
+
 **選び方:** 全画面のデスクトップが必要なら WorkSpaces、特定のアプリだけなら WorkSpaces Applications です。
 
 ### Amazon WorkSpaces Secure Browser {#secure-browser}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational }
 
+[提供単位](resource-scope.md#two-axes): リージョン。VPC の外で配信し、社内の Web アプリへは指定した VPC を通ります。
+
 社内の Web アプリや SaaS に、管理されたブラウザから安全にアクセスするサービスです。
 
-**メンテナンスに移行しました（公表は 2026 年 9 月 29 日）。** 新しい顧客は使えません。
+**メンテナンスに移行しました（公表は 2026 年 9 月 29 日）。** 2026 年 10 月 29 日から新しい顧客は使えません。既存の顧客は使い続けられます。
 
 ### Amazon WorkSpaces Applications（旧 AppStream 2.0） {#appstream}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational }
+
+[提供単位](resource-scope.md#two-axes): リージョン。ストリーミングのインスタンスは AWS が管理し、指定した VPC のサブネットへ接続できます。
 
 デスクトップアプリを、ブラウザやクライアントへストリーミングします。**旧称は Amazon AppStream 2.0** です。
 
@@ -299,11 +382,16 @@ Fleet Hub は 2025 年 10 月 18 日に終了しました。
 
 **例:** CAD などの重いアプリを、ダウンロードさせずに配信します。
 
+- **フリートの例:** 始業の 9 時に 200 人が同時に使うなら Always-On で待機させます。不定期に 10 人が使うなら On-Demand で、起動を少し待ちます。
+- **誤ると:** Elastic で同時接続の上限を低くすると、超えた利用者は接続できません。
+
 ## メディア {#media}
 
 ### Amazon Kinesis Video Streams {#kinesis-video}
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
+
+[提供単位](resource-scope.md#two-axes): リージョン。VPC の外です。
 
 カメラなどの動画を AWS へ送り、保存して処理します。
 
@@ -313,9 +401,13 @@ Fleet Hub は 2025 年 10 月 18 日に終了しました。
 
 **選び方:** 動画のストリームなら Kinesis Video Streams、ログやイベントのレコードなら [Kinesis Data Streams](streaming.md) です。
 
+- **例:** 店舗のカメラ 50 台の映像を 7 日保持し、Rekognition Video で人の検出に使います。不要な保持期間を長くすると、保存の費用が増えます。
+
 ### Amazon Interactive Video Service {#ivs}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): リージョン。VPC の外です。
 
 インタラクティブなライブ配信のマネージドサービスです。
 
@@ -327,21 +419,32 @@ Fleet Hub は 2025 年 10 月 18 日に終了しました。
 
 **選び方:** 配信基盤を作らず、チャットなどのある配信を手早く作るなら IVS を選びます。細かい制御が必要な放送品質の配信なら MediaLive です。
 
+- **例:** 視聴者の質問に数秒で答えるオンラインセミナーは低レイテンシー（5 秒未満）です。登壇者が会話する配信はリアルタイム（300 ミリ秒未満）です。
+
 ### AWS Elemental MediaConvert {#mediaconvert}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): リージョン。VPC の外です。
 
 ファイルベースの動画変換サービスです。保存された動画を、再生機器に合わせた形式へ変換します。放送品質のコーデックや HDR にも対応します。
 
 S3 に動画が届いたらジョブを実行する構成が定番です。
 
+- **例:** `s3://videos/in/a.mov` の到着を EventBridge で受け、Lambda がジョブを作成します。1080p と 720p の HLS を `s3://videos/out/` に出力します。
+
 ### AWS Elemental MediaLive {#medialive}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
+[提供単位](resource-scope.md#two-axes): リージョン。チャンネルは VPC の外です。VPC の入力も選べます。
+
 ライブ動画のリアルタイム変換サービスです。放送やストリーミング向けの出力を作ります。
 
 チャンネルクラスは `STANDARD`（2 パイプライン）と `SINGLE_PIPELINE` です。冗長性が必要なら `STANDARD` を選びます。
+
+- **例:** `STANDARD` は同じ入力を 2 つの入口で受け、1 つのパイプラインが止まってももう 1 つで続きます。上流から 2 本送る必要があります。社内の小さな配信なら `SINGLE_PIPELINE` です。
+- **誤ると:** `SINGLE_PIPELINE` で重要な配信を行うと、パイプラインの障害で配信が止まります。
 
 **選び方:** 保存された動画は MediaConvert、ライブは MediaLive です。
 
@@ -353,6 +456,8 @@ S3 に動画が届いたらジョブを実行する構成が定番です。
 
 ### Amazon Timestream {#timestream}
 
+[提供単位](resource-scope.md#two-axes): リージョン。Timestream for InfluxDB は VPC の中に置きます。
+
 時系列データベースです。詳しくは [専門データベース](databases-specialized.md) を参照してください。
 
 Timestream for LiveAnalytics はメンテナンスに移行しました（公表は 2025 年 6 月 20 日）。Timestream for InfluxDB を検討します。
@@ -360,6 +465,8 @@ Timestream for LiveAnalytics はメンテナンスに移行しました（公表
 ### Amazon Managed Blockchain {#managed-blockchain}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): リージョン。VPC の外で、VPC エンドポイントからつなぎます。
 
 パブリックの Ethereum と Bitcoin のノード、プライベートの Hyperledger Fabric のネットワークを提供します。
 
@@ -369,21 +476,31 @@ Timestream for LiveAnalytics はメンテナンスに移行しました（公表
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
+[提供単位](resource-scope.md#two-axes): リージョン。フリートはリージョンと Local Zones に置きます。
+
 セッション型のマルチプレイヤーゲームの専用サーバーを、デプロイ、運用、スケーリングします。旧称は Amazon GameLift です。
 
 リージョンと Local Zones に配置し、プレイヤーの近くで動かせます。SAP-C03 では範囲外です。
+
+- **例:** 日本のプレイヤーは東京のフリートに、米国のプレイヤーはオレゴンのフリートにつなぎ、対戦の遅延を抑えます。
 
 ### Amazon Braket {#braket}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
+[提供単位](resource-scope.md#two-axes): リージョン。量子デバイスごとに提供リージョンが異なります。VPC の外です。
+
 量子コンピューティングのマネージドサービスです。量子ハードウェアにアクセスし、アルゴリズムを試せます。
 
 自前のハードウェアなしで量子コンピューティングを評価するときに選びます。
 
+- **例:** 組み合わせ最適化のアルゴリズムを、まずシミュレーターで試し、結果がよければ量子デバイスで実行します。
+
 ### AWS Ground Station {#ground-station}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): リージョン。受信したデータの届け先は VPC の EC2 か S3 です。
 
 衛星との通信のためのアンテナをマネージドで提供します。
 
@@ -391,6 +508,8 @@ Timestream for LiveAnalytics はメンテナンスに移行しました（公表
 - 受信したデータは、リアルタイムなら EC2、非同期なら S3 へ届けます。
 - アンテナの利用時間は分単位で予約し、課金します。
 - オンデマンドは 15 分前から 7 日前までに予約します。
+
+- **例:** 10 分の衛星のパスを、開始の 1 時間前に予約します。開始の 10 分前では遅すぎます。
 
 ### AWS DeepComposer {#deepcomposer}
 

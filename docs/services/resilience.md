@@ -33,6 +33,9 @@
 - RPO は過去を、RTO は未来を見ます。
 - 短くするほど費用と複雑さが増えます。業務の損失と比べて決めます。
 
+- **例:** 1 時間の停止で 200 万円の損失が出る受注システムが、年に 1 回、4 時間止まると想定します。損失は年 800 万円です。DR の費用が年 300 万円で停止を 30 分に縮められるなら、損失は 100 万円に減り、合計 400 万円で済みます。
+- **誤ると:** 全システムに RTO 5 分を求めると、月次レポートのような止まってもよいシステムにも費用をかけます。逆に業務の損失を確かめずに決めると、障害のあとで「24 時間は長すぎた」と気づきます。
+
 ### 達成できるかの計算 {#rto-rpo-budget}
 
 **RPO の例**: 4 時間ごとのスナップショットの場合、最悪で直前の 3 時間 59 分を失います。RPO 15 分を求められたら、スナップショットの間隔では足りません。継続的バックアップやレプリケーションにします。
@@ -49,6 +52,8 @@
 | 合計 | 約 33 分 |
 
 RTO 30 分なら、この構成では足りません。判断を自動化するか、スケールを待たずに済むよう事前に容量を確保します。
+
+判断の 15 分を自動化すると合計は約 18 分になり、RTO 30 分を満たします。アプリの増強 10 分を事前の容量で省くと、さらに約 8 分に縮みます。
 
 ## 4 つの DR 戦略 {#dr-strategies}
 
@@ -75,6 +80,9 @@ flowchart TD
 
 **例**: 社内の日報システムで RTO 24 時間、RPO 24 時間です。毎日のバックアップを別リージョンにコピーし、CloudFormation で再作成します。
 
+- **復元の時間の例:** 2 TB を 200 MB/s で復元するなら、2,000,000 MB ÷ 200 MB/s = 10,000 秒で約 2.8 時間です。CloudFormation での再作成に 30 分かかれば合計約 3.3 時間で、RTO 4 時間は満たし、RTO 2 時間は満たしません。
+- **誤ると:** AMI をコピーし忘れると、DR リージョンで `InvalidAMIID.NotFound` になり、スタックの作成に失敗します。
+
 **落とし穴**: 復元を試していないバックアップは当てになりません。定期的に[復元テスト](#backup-testing)をします。
 
 ### パイロットライト {#pilot-light}
@@ -86,6 +94,9 @@ flowchart TD
 
 **例**: Aurora のセカンダリだけを動かし、Auto Scaling グループは希望 0 台にしておきます。障害時に希望を増やします。
 
+- **所要時間の例:** Aurora の昇格 5 分、12 台の起動 5 分、DNS の切り替え 1 分で合計約 11 分です。起動の間はリクエストを処理できません。
+- **誤ると:** DR リージョンのインスタンスのクォータが 4 台分しかないと、希望を 12 にしても 8 台は起動に失敗します。クォータは平常時に引き上げておきます。
+
 ### ウォームスタンバイ {#warm-standby}
 
 縮小した本番の完全なコピーが常に動いています。パイロットライトとの違いは、**すぐにリクエストを処理できる**ことです。容量が足りないだけなので、増やして全量にします。
@@ -94,11 +105,15 @@ flowchart TD
 
 **落とし穴**: 障害のときにスケールできるとは限りません。増やす操作はコントロールプレーンの操作です。容量やクォータも DR リージョンで事前に確認します。
 
+- **容量の例:** DR 2 台は本番 12 台の 2 ÷ 12 ≒ 17% です。増えるまでの間は、残り 83% のリクエストを断るか待たせる設計が要ります。
+
 ### マルチサイトアクティブ/アクティブ {#active-active}
 
 複数のリージョンで同時に動かし、どちらもトラフィックを処理します。フェイルオーバーという操作自体がなく、障害のリージョンを外すだけです。
 
 全量が動いていて 1 つのリージョンだけが処理するのが**ホットスタンバイ**です。
+
+- **例:** 全量に 12 台が必要なアプリを東京と大阪で 6 台ずつ動かすと、片方の障害で 6 台になり、容量は 50% に落ちます。増やさずに全量を処理するなら 12 台ずつ、計 24 台です。ホットスタンバイも同じ 24 台ですが、処理するのは片方だけです。
 
 ### 書き込みの戦略 {#write-patterns}
 
@@ -109,6 +124,10 @@ flowchart TD
 | Write global | 書き込みを 1 つのリージョンに集める。障害時に別を昇格 | Aurora Global Database |
 | Write local | 最も近いリージョンに書く | DynamoDB グローバルテーブル(最後の書き込みが優先) |
 | Write partitioned | パーティションキーで書くリージョンを決める | S3 の双方向レプリケーション |
+
+- **Write global の例:** 書き込みは東京の Aurora だけに送ります。大阪のアプリの書き込みはリージョン間の遅延の分だけ遅くなります。
+- **Write local の例:** 東京が 10:00:00.100 に在庫を 5 に、大阪が 10:00:00.200 に在庫を 7 に更新すると、最後の書き込みが優先され 7 になります。東京の更新は失われます。
+- **Write partitioned の例:** `customerId` の範囲で書くリージョンを分け、日本の顧客は東京、欧州の顧客はフランクフルトに書きます。同じ顧客の書き込みが競合しません。
 
 ### フェイルオーバーはデータプレーンで {#failover-data-plane}
 
@@ -121,9 +140,13 @@ flowchart TD
 | Route 53 のレコードを編集 | コントロールプレーン(us-east-1) | 復旧の手順に含めない |
 | 事前に容量を確保 | 操作なし | スケールに頼らない |
 
+- **例:** 復旧の手順に「Route 53 のレコードを大阪の ALB へ書き換える」と書くと、`us-east-1` のコントロールプレーンの障害時に実行できません。ヘルスチェックに基づくフェイルオーバーレコードを事前に作っておけば、編集せずに切り替わります。
+
 ## AWS Backup {#backup}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+[提供単位](resource-scope.md#two-axes): リージョン。プランとボールトはリージョンごとに作り、VPC の外です。
 
 複数のサービスのバックアップを一元管理します。対象は EBS、EC2、RDS、Aurora、DynamoDB、EFS、FSx、Storage Gateway のボリューム、S3 などです。リージョンごとに対象のサービスをオプトインします。
 
@@ -150,6 +173,16 @@ flowchart TD
 
 複数のルールの開始ウィンドウが重なると、**保持期間が長いルール**のバックアップが残ります。
 
+**重なりの例**（公式の例）: 「毎時、開始ウィンドウ 1 時間、1 日保持」と「12 時間ごと、開始ウィンドウ 8 時間、1 週間保持」のルールがあるとします。0 時〜8 時と 12 時〜20 時は 12 時間ごとのルールが優先されます。24 時間で、12 時間ごとの分が 2 個、毎時の分が 8 個できます。
+
+設定ごとの例です。
+
+- **頻度の例:** RPO 1 時間なら毎時のスナップショットにします。`cron(15 * ? * * *)` は毎時 15 分に取ります。RPO 15 分なら、スナップショットでは足りないので継続的バックアップです。
+- **開始ウィンドウ（`StartWindowMinutes`）の例:** 60 分以上にする必要があります。`cron(0 17 ? * * *)` は UTC の 17 時、日本時間の午前 2 時です。60 分なら午前 3 時までに始まらないジョブは取り消されます。
+- **完了ウィンドウ（`CompletionWindowMinutes`）の例:** 開始からの時間です。480 分なら、開始から 8 時間で終わらないジョブは取り消されます。
+- **継続的バックアップの例:** 14:33 に誤って行を消したなら、14:32:50 の時点に戻せます。保持は 1〜35 日で、36 日以上は指定できません。続けられない場合は自動でスナップショットに切り替わります。オンデマンドでは使えません。
+- **コールドの例:** `MoveToColdStorageAfterDays` が 30 なら、`DeleteAfterDays` は 30 + 90 = 120 以上にします。100 にするとコールドの最低 90 日を満たせません。
+
 **落とし穴**: データベース系は、メンテナンスウィンドウの 1 時間前からその間まで開始できません。FSx は 3 時間前から開始できません。この時間帯に予定したジョブは失敗します。
 
 ```json
@@ -163,7 +196,7 @@ flowchart TD
     "CompletionWindowMinutes": 480,
     "Lifecycle": {"DeleteAfterDays": 35},
     "CopyActions": [{
-      "DestinationBackupVaultArn": "arn:aws:backup:ap-northeast-3:123456789012:backup-vault:dr-vault",
+      "DestinationBackupVaultArn": "arn:aws:backup:ap-northeast-3:111122223333:backup-vault:dr-vault",
       "Lifecycle": {"DeleteAfterDays": 35}
     }]
   }]
@@ -182,6 +215,23 @@ aws backup create-backup-plan --backup-plan file://plan.json
 
 **例**: タグ `backup=daily` が付いたリソースを対象にすると、新しいリソースもタグだけで保護できます。
 
+```json
+{
+  "SelectionName": "daily-by-tag",
+  "IamRoleArn": "arn:aws:iam::111122223333:role/backup-role",
+  "ListOfTags": [{
+    "ConditionType": "STRINGEQUALS",
+    "ConditionKey": "backup",
+    "ConditionValue": "daily"
+  }]
+}
+```
+
+1 つの割り当てで指定できるのは、ワイルドカードなしの ARN が 500、ワイルドカードありの ARN が 30、条件が 30、タグが 30 です。
+
+- **例:** `NotResources` や条件のタグで `env=dev` を除くと、開発環境の費用を払わずに済みます。
+- **誤ると:** タグの綴りが `Backup=Daily` だと条件に合わず、保護されないままジョブのエラーも出ません。Backup Audit Manager で保護の漏れを確かめます。
+
 **落とし穴**: 対象のサービスがオプトインされていないと、割り当てても保護されません。
 
 ### バックアップボールト {#backup-vaults}
@@ -193,6 +243,9 @@ aws backup create-backup-plan --backup-plan file://plan.json
 | 暗号化 | ボールトごとの KMS キー |
 | アクセスポリシー | リソースベースのポリシー。例: 特定のロールに削除を拒否 |
 | 別アカウントからの操作 | `backup:CopyIntoBackupVault` 以外は拒否される |
+
+- **アクセスポリシーの例:** 運用ロールに `backup:DeleteRecoveryPoint` と `backup:UpdateRecoveryPointLifecycle` を `Deny` します。運用担当の認証情報が盗まれても、復旧ポイントを消せません。
+- **暗号化の例:** 東京の `prod-vault` はカスタマー管理キーの A で暗号化します。別のキーのボールトへコピーすると、そのボールトのキーで暗号化し直します。
 
 ### Vault Lock {#vault-lock}
 
@@ -208,6 +261,10 @@ WORM でバックアップを保護します。保持期間が終わるまで、
 | 最小保持期間(`MinRetentionDays`) | 短い保持のジョブを拒否 | 条件に合わないバックアップとコピーのジョブが失敗する |
 | 最大保持期間(`MaxRetentionDays`) | 長い保持のジョブを拒否 | 同上 |
 | 猶予期間(`ChangeableForDays`) | コンプライアンスモードで、確定までの日数。3 日(72 時間)以上 | 確定後は変更できない |
+
+- **最小、最大の例:** `MinRetentionDays` が 35、`MaxRetentionDays` が 3650 のボールトに、`DeleteAfterDays` が 30 や 4000 のジョブを送ると失敗します。35 や 3650 なら成功します。
+- **猶予期間の例:** 値は 3〜36,500 です。10 月 31 日に `--changeable-for-days 3` で設定すると、11 月 3 日に確定します。それまでは解除や変更ができます。
+- **猶予期間が短いと:** 誤った値に気づいたときには確定しているので、最初は 7 日などにして動作を確認します。
 
 ```bash
 aws backup put-backup-vault-lock-configuration \
@@ -229,7 +286,11 @@ aws backup put-backup-vault-lock-configuration \
 - 既定で AWS 所有キーで暗号化します。カスタマー管理キーも選べます。
 - AWS RAM や Multi-party approval で別のアカウントと共有し、そこから復元できます。ボールトのアカウントが侵害されたり閉鎖されたりしても、復旧の道を残せます。
 
+- 最小と最大の保持期間を指定します。最小より短い保持のバックアップはコピーできません。
+
 **例**: ランサムウェアで本番のアカウントごと乗っ取られた場合に備え、別アカウントのこのボールトにコピーを置きます。
+
+- **値の例:** 最小 30 日、最大 365 日のボールトへ、`DeleteAfterDays` が 90 のコピーを送ります。`DeleteAfterDays` が 7 のコピーは失敗します。
 
 ### リージョン間コピー {#backup-cross-region}
 
@@ -243,6 +304,10 @@ aws backup put-backup-vault-lock-configuration \
 
 **例**: 東京の本番を大阪のボールトにコピーします。コストを抑えるなら、毎回同じボールトに同じキーでコピーします。
 
+- **増分の例:** 500 GB の EBS で 1 日の変更が 5 GB なら、初回は 500 GB、翌日からは約 5 GB のコピーです。
+- **誤ると:** コピー先のキーを変えると EBS は全量のコピーになり、500 GB 分の転送と保存の費用がかかります。
+- **RPO の例:** コピーはバックアップの完了後に始まります。毎日 2 時のバックアップと 1 時間のコピーなら、大阪側の RPO は最大で約 25 時間です。
+
 ### アカウント間コピーと組織での管理 {#backup-cross-account}
 
 アカウントは同じ AWS Organizations に属している必要があります。
@@ -250,6 +315,7 @@ aws backup put-backup-vault-lock-configuration \
 | 機能 | 内容 |
 | --- | --- |
 | 別アカウントへのコピー | 送信先にボールトとアクセスポリシーを作り、`backup:CopyIntoBackupVault` を許可 |
+| 暗号化キー | 送信元がカスタマー管理キーなら、そのキーを送信先のアカウントへ共有する。AWS Backup が完全に管理するリソースなら、送信先のボールトはカスタマー管理キーか `aws/backup`。それ以外のリソースはカスタマー管理キーが必須で、AWS 管理キーはキーポリシーを変えられないのでアカウント間でコピーできない |
 | バックアップポリシー | 組織で定義して OU やアカウントに適用。子のポリシーは親と統合される |
 | クロスアカウントモニタリング | ジョブをまとめて確認 |
 | 委任管理者 | 管理アカウント以外に管理を任せる |
@@ -258,12 +324,18 @@ aws backup put-backup-vault-lock-configuration \
 
 **落とし穴**: カスタム IAM ロールでコピーするなら、`backup:CopyIntoBackupVault` がロールのポリシーと送信先のボールトポリシーの両方に必要です。
 
+- **バックアップポリシーの例:** 組織のルートに「毎日、7 日保持」、Finance の OU に「毎月、1 年保持」を付けます。Finance のアカウントには両方のルールが効きます。Finance でない OU には毎日のルールだけが効きます。
+
 ### 復元テストと監査 {#backup-testing}
 
 | 機能 | 内容 |
 | --- | --- |
 | 復元テスト | 定期的に自動で復元し、成否と所要時間を測る。実際の RTO の確認に使う |
 | Backup Audit Manager | バックアップがポリシーに沿っているかを監査し、レポートを作る |
+
+- **復元テストの例:** 毎週土曜に、直近 1 か月の復旧ポイントから RDS を自動で復元します。実測が 40 分なら、RTO 1 時間の根拠になります。2 時間なら計画を見直します。対象の復旧ポイントの範囲は 1〜365 日、1〜52 週、1〜12 か月、1 年から選びます。テストの後はリソースが自動で削除されます。
+- **誤ると:** 復元したリソースの `awsbackup-restore-test` タグを外すと自動で削除されず、手で消すまで費用が続きます。
+- **監査の例:** コントロールの「バックアップは毎日か」を「毎週か」に変えられます。レポートは 24 時間ごとに S3 へ届きます。先に AWS Config のリソース追跡を有効にします。停止中の EC2 は評価されません。
 
 ### ランサムウェアと誤削除の防止 {#immutable-compare}
 
@@ -274,9 +346,14 @@ aws backup put-backup-vault-lock-configuration \
 | バックアップ全般 | Vault Lock | ボールト内の復旧ポイントの WORM |
 | 組織全体 | 論理的にエアギャップされたボールト | 別アカウントからの復元 |
 
+- **例:** 監査で 7 年の保持を求められたバックアップは、Vault Lock のコンプライアンスモードで `MinRetentionDays` を 2557 にします。7 年 × 365 日 + うるう日 2 日です。
+- **スナップショットロックの例:** EBS スナップショットだけを 30 日守るなら、スナップショットロックです。ロック中は IAM の権限にかかわらず削除できません。
+
 ## AWS Elastic Disaster Recovery(DRS) {#drs}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): リージョン。レプリケーションサーバーと復旧インスタンスは指定したサブネット（AZ、VPC の中）に置きます。
 
 オンプレミスや他のクラウドのサーバー、別リージョンの EC2 を、ブロック単位で継続的に AWS へ複製します。**サーバー単位のパイロットライト**として使います。データベースのエンジンに依存しません。
 
@@ -304,15 +381,35 @@ sequenceDiagram
 | PIT の間隔 | 分は 10 分間隔で 60 分保持、時は 1 時間間隔で 24 時間保持(変更不可)、日は保持日数を変更可 | ランサムウェアの前の時点を選んで復旧 |
 | 通信 | TCP 443、TCP 1500 | 1500 が閉じていると複製できない |
 
+```bash
+aws drs update-replication-configuration \
+  --source-server-id s-1234567890abcdef0 \
+  --pit-policy \
+    enabled=true,interval=10,retentionDuration=60,ruleID=1,units="MINUTE" \
+    enabled=true,interval=1,retentionDuration=24,ruleID=2,units="HOUR" \
+    enabled=true,interval=1,retentionDuration=14,ruleID=3,units="DAY"
+```
+
+ルールは MINUTE、HOUR、DAY の 3 つちょうどで、変更できるのは DAY の日数だけです。
+
+- **時点の選び方の例:** 3:20 に暗号化が始まり 3:50 に気づいたなら、10 分間隔の 3:10 の時点を選びます。20 時間後に気づいたなら 1 時間間隔の時点、5 日後に気づいたなら 1 日間隔の時点です。
+- **保持の例:** 14 日保持で、15 日前に侵入されていたなら、きれいな時点が残っていません。潜伏の期間を見込んで日数を決めます。
+- **既定の設定の罠:** 既定のレプリケーション設定の変更は、そのあとに追加したサーバーにだけ効きます。追加済みのサーバーは個別に変えます。
+- **誤ると:** ファイアウォールで TCP 1500 を閉じていると、エージェントの登録は成功しても初回の同期が進みません。
+
 **RPO を守る条件**: ネットワークとステージングエリアが、書き込みより速く受け取れることです。10 MB/s で書くサーバーが 10 台なら、100 MB/s(約 800 Mbps)が必要です。足りないと RPO が伸びます。
 
 **整合性**: 復旧点はクラッシュ整合です。メモリにあってディスクに書かれていないデータは含まれません。
+
+- **例:** データベースのサーバーを複製した場合、起動時にエンジンのクラッシュリカバリが走ります。そのため、ログを使って自動で回復できるアプリに向きます。
 
 **試験の見分け方**: EC2 でないサーバーも含めて分単位で復旧するなら DRS、DB 単体なら Aurora Global Database や RDS のレプリカです。
 
 ## AWS Resilience Hub {#resilience-hub}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+[提供単位](resource-scope.md#two-axes): リージョン。評価するアプリのリソースは VPC の中でもかまいませんが、サービス自体は VPC の外です。
 
 アプリが目標の RTO、RPO を満たせるか評価し、改善を提案します。
 
@@ -339,9 +436,15 @@ sequenceDiagram
 
 **落とし穴**: RTO、RPO を 0 と指定できますが、評価の最小はほぼ 0 です。0 のままだと常に違反になることがあります。
 
+- **階層の例:** リアルタイムの取引システムは `Mission critical`、月次レポートは `Non-critical` にします。階層には Foundational IT core services、Mission critical、Critical、Important、Non-critical があります。
+- **判定の例:** AZ の障害の目標が RTO 1 時間で、評価の推定が 2 時間なら Policy breached です。推定が 30 分なら Policy met です。
+- **状態の例:** 評価の後にスタックを更新すると `Changes detected` になり、再評価するまで結果は古いままです。
+
 ## Amazon Application Recovery Controller(ARC) {#arc}
 
 [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+[提供単位](resource-scope.md#two-axes): 機能で異なります。ARC 全体はグローバルのサービスで、CLI の多くは `--region us-west-2` を指定します。ゾーンシフトは 1 つのリージョンの中で AZ を避ける操作です。VPC の外です。
 
 トラフィックを AZ やリージョンから移す機能の集まりです。
 
@@ -366,6 +469,23 @@ sequenceDiagram
 
 **落とし穴**: 残りの AZ で処理できる容量がないと、シフトで過負荷になります。Auto Scaling の最小容量を、1 つの AZ を失っても足りる値にします。
 
+```bash
+aws arc-zonal-shift start-zonal-shift \
+  --resource-identifier arn:aws:elasticloadbalancing:ap-northeast-1:111122223333:loadbalancer/app/web/0123456789abcdef \
+  --away-from apne1-az1 \
+  --expires-in 2h \
+  --comment "az1 でエラーが増加"
+```
+
+- **期限の例:** `--expires-in` は 1 分〜3 日で、`30m`、`2h`、`72h` のように分（`m`）か時間（`h`）で書きます。3 日を超えて外し続けるなら延長します。期限が来るとトラフィックは戻ります。
+- **容量の例:** 3 AZ に 10 台ずつ計 30 台で、20 台あれば足りるなら、1 つの AZ を外せます。20 台ずつ必要な負荷なら、残りが足りず過負荷になります。
+- **オプトインの罠:** リソースをゾーンシフトにオプトインしておかないと使えません。
+- **フェイルオープンの罠:** ロードバランサーの全ターゲットが異常でフェイルオープンの状態では、シフトしても効果がありません。
+- **クロスゾーンの罠:** 同じターゲットを共有する複数のロードバランサーがある場合、クロスゾーン有効の 1 つをシフトすると、シフトしていない他のロードバランサーからもターゲットの容量が減ります。
+- **練習実行の例:** 約週 1 回、1 つのリソースを 30 分だけ 1 つの AZ から外します。結果アラーム（必須）が `ALARM` になると、`FAILED` で打ち切ります。30 分間ならなければ `SUCCEEDED` です。
+- **ブロックの例:** 任意のブロックアラームが `ALARM` の間は練習実行が始まりません。セール当日は日付 `2026-11-27` をブロックし、毎週の集計は UTC で `MON-20:30-21:30` をブロックします。
+- **誤ると:** 結果アラームにアプリと無関係なメトリクスを選ぶと、容量不足でも `SUCCEEDED` になり、本番の自動シフトで初めて不足に気づきます。
+
 ### ルーティングコントロール {#arc-routing-control}
 
 DNS のフェイルオーバーを、オン/オフのスイッチで操作します。
@@ -381,6 +501,21 @@ DNS のフェイルオーバーを、オン/オフのスイッチで操作しま
 
 **アサーションの例**: 両方のリージョンを同時にオフにする操作を拒否します。全停止を防げます。
 
+```bash
+aws route53-recovery-cluster update-routing-control-state \
+  --routing-control-arn arn:aws:route53-recovery-control::111122223333:controlpanel/abcd1234/routingcontrol/ef567890 \
+  --routing-control-state Off \
+  --region us-west-2 \
+  --endpoint-url https://host-dddddd.us-west-2.example.com/v1
+```
+
+`--region` と `--endpoint-url` には、クラスターが返す Regional エンドポイントのものを使います（上の URL は形を示す例です）。
+
+- **アサーションの動きの例:** 東京オン、大阪オンの状態で東京をオフにするのは成功します。そのあと大阪もオフにする操作は、「少なくとも 1 つはオン」に反するので拒否されます。
+- **ゲーティングの例:** 全体のスイッチをオフにしておくと、対象のスイッチの変更をすべて拒否します。メンテナンスの間、自動化による切り替えを止められます。
+- **上書きの例:** 緊急時に安全ルールが切り替えを止めたら、`--safety-rules-to-override` にエラーで示されたルールの ARN を渡します。
+- **誤ると:** エンドポイントを 1 つしか手順に書いていないと、そのリージョンの障害で操作できません。複数の Regional エンドポイントを順に試す手順にします。
+
 **Route 53 のヘルスチェックとの違い**: エンドポイントを自動で見るのではなく、人や自動化の判断で切り替えます。誤った自動切り替えを避けたいときに向きます。
 
 ### Region switch {#arc-region-switch}
@@ -392,9 +527,14 @@ DNS のフェイルオーバーを、オン/オフのスイッチで操作しま
 - 各リージョンにデータプレーンがあり、切り離すリージョンに依存せず実行できます。
 - 手動のほか、CloudWatch アラームでも開始できます。
 
+- **例:** 大阪への切り替えの計画を、1 Aurora Global Database の切り替え、2 Auto Scaling を 2 台から 12 台へ、3 トラフィックの切り替えの順に定義します。1 と 2 が終わってから 3 に進むので、DB の準備前にトラフィックが届きません。
+- **誤ると:** 計画を試さないまま本番で使うと、DR 側の権限不足やクォータ不足で途中で止まります。定期的に実行して確かめます。
+
 ## AWS Fault Injection Service(FIS) {#fis}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+[提供単位](resource-scope.md#two-axes): リージョン。実験テンプレートはリージョンごとで、サービス自体は VPC の外です。対象のリソースは VPC の中でもかまいません。
 
 本物の AWS リソースに本物の障害を起こして、カオスエンジニアリングを行います。本番の前に検証環境で試し、計画を立てます。
 
@@ -435,9 +575,9 @@ DNS のフェイルオーバーを、オン/オフのスイッチで操作しま
   },
   "stopConditions": [{
     "source": "aws:cloudwatch:alarm",
-    "value": "arn:aws:cloudwatch:ap-northeast-1:123456789012:alarm:HighErrorRate"
+    "value": "arn:aws:cloudwatch:ap-northeast-1:111122223333:alarm:HighErrorRate"
   }],
-  "roleArn": "arn:aws:iam::123456789012:role/fis-role"
+  "roleArn": "arn:aws:iam::111122223333:role/fis-role"
 }
 ```
 
@@ -448,6 +588,15 @@ DNS のフェイルオーバーを、オン/オフのスイッチで操作しま
 | `aws:network:disrupt-connectivity` | サブネットの通信の遮断 |
 | `aws:fis:inject-api-internal-error` | AWS API のエラー |
 | `aws:ec2:asg-insufficient-instance-capacity-error` | Auto Scaling の容量不足 |
+
+設定ごとの例です。
+
+- **`selectionMode` の例:** 12 台の `env=staging` に対して、`COUNT(1)` は 1 台、`PERCENT(25)` は 3 台、`ALL` は 12 台です。
+- **`resourceTags` の例:** 複数のタグを指定すると、すべてに合うリソースだけが選ばれます（AND）。対象は開始時に決まり、見つからなければ実験は失敗します。
+- **`duration` の例:** `PT5M` は 5 分、`PT1H` は 1 時間です。実験とアクションの上限は 12 時間です。
+- **停止条件の例:** 「1 分間のエラー率が 5% を超える」アラームを指定すると、超えた時点で実験を止めます。テンプレートに 5 個まで指定できます。
+- **並列の例:** 1 つのテンプレートにアクションは 20 個、並列は 10 個までです。11 個を同時に動かすテンプレートは実行できません。
+- **誤ると:** `"selectionMode": "ALL"` と `env=prod` を組み合わせると、本番の全台が止まります。停止条件のないテンプレートでは、悪化しても止まりません。
 
 | シナリオ | 内容 |
 | --- | --- |
@@ -481,6 +630,10 @@ DNS のフェイルオーバーを、オン/オフのスイッチで操作しま
 - NAT ゲートウェイを 1 つの AZ だけに置くと、その AZ の障害で他の AZ の外向き通信も止まります。
 - NLB のクロスゾーン負荷分散は既定で無効です。ALB はロードバランサーのレベルで常に有効です。
 
+- **Multi-AZ の例:** RDS の Multi-AZ DB インスタンスのスタンバイにレポートのクエリを送ることはできません。Multi-AZ DB クラスターならリーダーエンドポイントで読めます。
+- **EBS の例:** 1a の EC2 と EBS は 1a の障害で止まります。スナップショットから 1c にボリュームを作って復旧します。
+- **NAT の例:** 1a と 1c に NAT ゲートウェイを 1 つずつ置き、各サブネットのルートを同じ AZ の NAT へ向けます。
+
 ## 高可用性のための Auto Scaling {#auto-scaling-ha}
 
 Auto Scaling は負荷の変動だけでなく、台数の維持と自己修復にも使います。基本の設定は [EC2 Auto Scaling](ec2-beanstalk.md#auto-scaling) を参照してください。
@@ -492,6 +645,11 @@ Auto Scaling は負荷の変動だけでなく、台数の維持と自己修復�
 | 猶予期間 | 起動中の誤判定を防ぐ | 短いと起動中に終了を繰り返す |
 | AZ の分散方式 | 下の表 | |
 | Capacity Rebalancing | 中断のリスクが高い Spot を先に置き換える | 無効だと中断後に置き換える |
+
+- **猶予期間の例:** `HealthCheckGracePeriod` の既定は、コンソールで作ると 300 秒、CLI や SDK で作ると 0 秒です。起動に 180 秒かかるアプリなら 300 秒にします。
+- **誤ると:** CLI で作って 0 秒のまま ELB ヘルスチェックを使うと、起動中に異常と判定され、終了と起動を繰り返します。
+- **ヘルスチェックの例:** `--health-check-type ELB` を付けると、ターゲットグループで異常になった台が置き換わります。
+- **AZ の例:** `--vpc-zone-identifier "subnet-0aaa,subnet-0bbb,subnet-0ccc"` で 3 AZ に分散します。1 つの AZ の障害でも 3 分の 2 が残ります。
 
 | AZ 分散方式 | 動作 | 向く場面 |
 | --- | --- | --- |
@@ -523,6 +681,24 @@ AZ あたりの台数 = 必要な台数 ÷ (AZ の数 - 1)
 | アクティブ/アクティブ | フェイルオーバー以外のルーティング(レイテンシー、加重など) | 異常なレコードを除いて返す |
 | 複雑な構成 | エイリアスを組み合わせたツリー | リージョンをレイテンシーで選び、中を加重で分ける |
 
+```json
+{
+  "Name": "shop.example.com",
+  "Type": "A",
+  "SetIdentifier": "tokyo",
+  "Failover": "PRIMARY",
+  "AliasTarget": {
+    "HostedZoneId": "Z14GRHDCWA56QT",
+    "DNSName": "web-tokyo.ap-northeast-1.elb.amazonaws.com",
+    "EvaluateTargetHealth": true
+  }
+}
+```
+
+セカンダリは同じ `Name` と `Type` で、`SetIdentifier` を変え、`Failover` を `SECONDARY` にします。
+
+- **誤ると:** `EvaluateTargetHealth` が `false` だと、ALB のターゲットが全滅しても東京を返し続けます。
+
 ```mermaid
 sequenceDiagram
     participant H as ヘルスチェッカー
@@ -549,6 +725,10 @@ sequenceDiagram
 
 **切り替えの所要時間**: 検知 + TTL です。30 秒間隔、3 回、TTL 60 秒なら最大約 2.5 分です。Fast なら約 1.5 分です。
 
+- **計算の例:** 30 秒 × 3 回 = 90 秒、TTL 60 秒を足して 150 秒、つまり 2.5 分です。Fast では 10 秒 × 3 回 = 30 秒、足して 90 秒、つまり 1.5 分です。
+- **TTL の例:** TTL を 300 秒のままにすると、30 秒間隔でも 90 + 300 = 390 秒、6.5 分かかります。
+- **計算ヘルスチェックの例:** 子が 3 つでしきい値が 2 なら、2 つ正常な間は正常です。1 つの依存先の不調では切り替わりません。
+
 **落とし穴**:
 
 - HTTPS のヘルスチェックは証明書を検証しません。証明書の期限切れでは異常になりません。
@@ -563,6 +743,8 @@ sequenceDiagram
 | 仕組み | DNS | 固定の IP アドレスと AWS のネットワーク |
 | 切り替え | TTL に依存 | DNS キャッシュの影響を受けない |
 | 向く場面 | 一般的な Web、低コスト | 固定 IP が必要、TCP や UDP、すばやい切り替え |
+
+- **例:** 取引先のファイアウォールに許可する IP を固定したいなら Global Accelerator です。ALB の IP は変わるので、許可リストに書けません。
 
 ## 静的安定性 {#static-stability}
 
@@ -582,6 +764,8 @@ sequenceDiagram
 | 動いている EC2 への通信 | データプレーン | 続く |
 | 新しい EC2 の起動 | コントロールプレーン | 失敗する可能性がある |
 
+- **計算の例:** 30 台が必要で、3 AZ なら 30 ÷ (3 - 1) = 15 台を AZ ごとに持ち、計 45 台です。1 AZ が止まっても 30 台が残るので、何も操作しません。余分な 15 台の費用が、静的安定性の代金です。
+
 ゾーンシフトも同じ考えで、事前の容量を前提にしています。
 
 ## 疎結合と耐障害性 {#loose-coupling}
@@ -598,6 +782,9 @@ sequenceDiagram
 | Step Functions | リトライ、失敗の分岐を定義 | 決済の手順 |
 
 **例**: 同期の API で注文処理が 2 秒止まると、受付も止まります。受付を SQS に書くだけにすれば、処理側が 10 分止まっても受付を続けられ、後から処理します。
+
+- **吸収の計算の例:** 毎秒 100 件の注文で処理側が 10 分止まると、100 × 600 = 60,000 件がキューにたまります。再開後に毎秒 200 件処理できるなら、減る速さは毎秒 100 件で、60,000 ÷ 100 = 600 秒で追いつきます。
+- **誤ると:** SQS の保持期間を処理の停止より短くすると、メッセージは処理されないまま消えます。
 
 **注意**: 同期の処理は依存先と同じ可用性になります。応答を待たなくてよいものは非同期にします。ただし古くなったメッセージは処理しても意味がないことがあるので、有効期限やデッドレターキューを設定します。
 
@@ -617,6 +804,9 @@ ECS と EKS のクラスターはリージョン単位です。リージョン�
 | 永続ストレージ | AWS Backup や EFS のレプリケーション |
 
 **例**: 静的安定性のためには、スタンバイのクラスターにも DR の容量を確保しておきます。障害時に Karpenter（EKS）や Auto Scaling で増やす設計なら、DR リージョンのクォータと容量を事前に確認します。
+
+- **イメージの例:** ECR のレプリケーションで東京から大阪へ複製します。設定を忘れると、DR 側でタスクを起動するときにイメージを取得できず、`CannotPullContainerError` で失敗します。
+- **容量の例:** 本番 20 タスクなら DR にも 20 タスク分のノードを用意します。Karpenter で増やす設計なら、DR 側の vCPU のクォータが足りるかを確かめます。
 
 ## 選び方の比較 {#choosing}
 
@@ -656,7 +846,7 @@ ECS と EKS のクラスターはリージョン単位です。リージョン�
 | Multi-AZ DB クラスターのフェイルオーバー | 通常 35 秒未満 |
 | Aurora Global Database | 最大 10 のセカンダリ |
 | DynamoDB MRSC | 3 リージョンのみ |
-| S3 RTC | 大半を数秒、99.99% を 15 分以内 |
+| S3 RTC | 大半を数秒、99.9%（専用ページと SLA の基準。公式の一部のページは 99.99% と記載）を 15 分以内 |
 
 ## 試験のポイント {#exam-points}
 

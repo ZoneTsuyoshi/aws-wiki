@@ -12,6 +12,8 @@
 
 順序付きのレコードをためて、複数の消費者が読めるようにするサービス。読んでもレコードは消えず、保持期間の間は何度でも読み直せる。
 
+提供単位はリージョンで、AZ は選ばない。VPC の外のサービスで、VPC 内からはインターフェイスエンドポイントか NAT を経由して呼ぶ（[リソースの提供単位](resource-scope.md#two-axes)）。
+
 | 用語 | 意味 |
 | --- | --- |
 | ストリーム | シャードの集まり |
@@ -20,6 +22,8 @@
 | パーティションキー | どのシャードに入れるかを決める値 |
 | シーケンス番号 | シャード内の順序を表す。Kinesis が割り当てる |
 | 保持期間 | 既定 24 時間、最大 8,760 時間（365 日）。24 時間を超えると追加料金 |
+
+- **例:** レコード `{"userId":"u-1","page":"/"}` を `PartitionKey="u-1"` で書くと、シャード `shardId-000000000002` に入り、シーケンス番号が応答で返る。`u-1` のレコードはシャードが変わらない限り同じシャードに入り続ける。
 
 ### シャードの容量 {#shards}
 
@@ -41,6 +45,9 @@
 
 レコードの最大サイズは、既定で 1 MiB。ストリームの設定（`MaxRecordSizeInKiB`、既存のストリームは `UpdateMaxRecordSize`）で最大 10 MiB まで上げられる。1〜10 MiB の大きなレコードはバースト容量で断続的に扱う前提で、シャードの平常の書き込み上限（1 MB/秒）は変わらない。AWS は大きなレコードを全トラフィックの 2% 未満に抑えることを勧めている。
 
+- **例（最大サイズ）:** 5 MiB の画像を時々送るなら、`MaxRecordSizeInKiB=10240` で 10 MiB まで広げられる。全体の 2% 未満に収める。常に 5 MiB を流すと、シャードの 1 MB/秒の上限で頭打ちになる。
+- **誤ると:** 上限を 1 MiB のまま 2 MiB のレコードを送ると、書き込みが失敗する。S3 に本体を置き、キーだけをレコードにする方法もある。
+
 ### シャード数の計算 {#shard-calculation}
 
 書き込みのサイズ、書き込みの件数、読み取りの 3 つを計算し、最も大きい値を使う。
@@ -61,6 +68,9 @@
 
 読み取りの回数の上限も効く。共有スループットは 1 シャードにつき 5 回/秒なので、5 つのアプリがそれぞれ毎秒 1 回読むと上限いっぱいになる。
 
+- **例（5 回/秒）:** 上の条件で 6 つのアプリが毎秒 1 回読むと 6 回/秒で、5 回/秒を超えてスロットリングされる。アプリを減らすか、読む間隔を伸ばすか、拡張ファンアウトにする。
+- **例（遊びを見る）:** ピークが平常の 2 倍なら、平常の値ではなくピークで計算する。平常 3 シャードでピークが 6 シャード相当なら、6 シャードにするか、ピークの前にリシャーディングする。
+
 ### パーティションキー {#partition-key}
 
 キーの MD5 ハッシュでシャードが決まる。キーは 256 文字までの Unicode 文字列。
@@ -74,6 +84,10 @@
 
 パーティションキーは 1 MB/秒の計算にも含まれる。
 
+- **例（順序と分散の両立）:** 注文の順序をユーザーごとに守るなら `PartitionKey=userId`。ユーザーが 10 万人いれば、4 シャードにほぼ均等に散る。
+- **例（`ExplicitHashKey`）:** ハッシュキーは 0〜2^128−1 の値で、シャードごとの範囲が決まっている。キーの偏りを自分で調整したいときに、特定のシャードの範囲の値を指定する。
+- **誤ると:** ランダムなキーにすると分散はするが、同じユーザーのレコードの順序は保証されなくなる。
+
 ### シーケンス番号 {#sequence-numbers}
 
 書き込むと Kinesis が割り当てて `PutRecord` の応答で返す。自分では指定しない。
@@ -82,6 +96,9 @@
 - 厳密に増える順序が必要なら、同じシャードに 1 つずつ書き、`SequenceNumberForOrdering` に前のレコードのシーケンス番号を渡す。
 - `PutRecords` にはこの指定がない。1 回のリクエストの中の順序は保証されないので、順序が重要なら `PutRecord` を使う。
 - 再試行すると同じデータが別の番号で書かれることがある。消費者で重複を扱う。
+
+- **例（重複）:** `PutRecord` の応答がタイムアウトして再送すると、最初の書き込みも成功していれば同じ内容が 2 レコードできる。本文に `eventId` を入れ、消費者が処理済みの ID を DynamoDB で確認する。
+- **誤ると:** 別のシャードの番号を比べて新旧を判断すると、誤った順序になる。比較は同じシャードの中だけにする。
 
 ```python
 seq = None
@@ -106,6 +123,10 @@ aws kinesis decrease-stream-retention-period --stream-name clicks --retention-pe
 - 24 時間を超えると追加料金がかかる。
 
 消費者が週末に止まっても読み直したい、バグの修正後に 3 日分を再処理したい、といった場面で延ばす。消費者が保持期間を超えて遅れると、レコードは読めずに失われる。`GetRecords.IteratorAgeMilliseconds` が保持期間に近づいたら危険のサイン。
+
+- **例（週末）:** 金曜 18 時に消費者が止まり、月曜 9 時に復旧すると 63 時間になる。既定の 24 時間なら、日曜 9 時より前の 39 時間分が消える。`--retention-period-hours 72` なら全部読める。
+- **例（アラーム）:** 保持期間が 24 時間なら 86,400,000 ミリ秒で失われ始める。`GetRecords.IteratorAgeMilliseconds` の 12 時間（43,200,000）にアラームを置くと、半分の時点で気づける。
+- **誤ると:** 23 時間のような 24 時間未満の値は指定できない。
 
 ```python
 import json
@@ -165,6 +186,11 @@ On-demand の例を示す。過去 30 日のピークが 50 MB/秒なら、100 M
 
 読み取りの容量は書き込みに比例して増え、書き込みの 2 倍以上が確保される。
 
+- **例（Provisioned）:** 毎秒 3 MB で安定した流量なら、シャードは 3 本で済む。流量が予測できるのでシャード時間の料金で見積もれる。
+- **例（On-demand Standard）:** ゲーム配信で平常 10 MB/秒、不定期に 40 MB/秒が来るなら、シャードの調整は要らない。過去 30 日のピークが 25 MB/秒以上なら、その 2 倍で 40 MB/秒は受けられる。
+- **誤ると（切り替え）:** 同じストリームのモードの切り替えは 24 時間に 2 回まで。3 回目はエラーになる。切り替え作業の手順に、この回数を入れておく。
+- **誤ると（キーの偏り）:** On-demand で 1 つのキーに 3 MB/秒を流すと、シャードが増えてもそのキーのシャードの 1 MB/秒で詰まる。
+
 ### シャードイテレーター {#shard-iterators}
 
 `GetRecords` はシャードイテレーターを受け取って読む。最初に `GetShardIterator` で取得し、以降は応答の `NextShardIterator` を使う。
@@ -199,6 +225,11 @@ while it:
 
 障害の後に読み直すつもりで `LATEST` を選ぶと、停止中のレコードを読み飛ばす。処理済みの続きからなら `AFTER_SEQUENCE_NUMBER`、最初からなら `TRIM_HORIZON` を使う。
 
+- **例（`LATEST`）:** 10:00 に止まり 11:00 に再起動すると、10:00〜11:00 のレコードは読まれない。リアルタイムの画面表示のように過去が不要な処理なら問題ない。
+- **例（`AT_TIMESTAMP`）:** 15:00（UTC）以降にバグが入ったなら、`ShardIteratorType="AT_TIMESTAMP"`、`Timestamp="2026-10-30T15:00:00Z"` で読み直す。
+- **例（`AT` と `AFTER`）:** 最後に処理した番号が `...123` のとき、`AT_SEQUENCE_NUMBER` は `...123` からなので 1 件を二重に処理する。`AFTER_SEQUENCE_NUMBER` はその次から読む。
+- **例（`Limit`）:** `Limit=1000` なら 1 回で最大 1,000 レコード。10 MB の上限の方が先に効くこともある。
+
 ### 消費者と拡張ファンアウト {#enhanced-fan-out}
 
 | | 共有スループット | 拡張ファンアウト |
@@ -216,6 +247,17 @@ while it:
 - `SubscribeToShard` の接続は最大 5 分。続けて受け取るには呼び直す。
 - 同じ消費者とシャードで 5 秒以内に呼び直すと `ResourceInUseException`。5 秒以上後なら古い接続を引き継ぐ。
 - 同時に `CREATING` 状態にできる消費者は 5 個まで。`RegisterStreamConsumer` は `ACTIVE` になるまで待ってから使う。
+
+- **例（選び方）:** 1 シャードに 1 MB/秒を書き、3 つのアプリが読むと 3 MB/秒必要で、共有の 2 MB/秒を超える。拡張ファンアウトなら 3 アプリがそれぞれ 2 MB/秒を使える。
+- **例（遅延）:** 5 つのアプリが共有で読むと遅延は約 1,000 ms、拡張ファンアウトなら約 70 ms。詐欺の検知のように秒未満で反応したいなら拡張ファンアウトにする。
+- **例（接続の更新）:** 接続は 5 分で切れるので、1 シャードを 1 時間読むと `SubscribeToShard` を 12 回呼ぶ。KCL やイベントソースマッピングならこの処理は任せられる。
+- **誤ると（登録）:** Provisioned で 21 個目の消費者は登録できない。登録直後の `CREATING` の間に `SubscribeToShard` を呼ぶと失敗する。
+
+```bash
+aws kinesis register-stream-consumer \
+  --stream-arn arn:aws:kinesis:ap-northeast-1:111122223333:stream/clicks \
+  --consumer-name fraud-check
+```
 
 ### KCL {#kcl}
 
@@ -236,6 +278,12 @@ while it:
 具体例を示す。シャードが 4 本でワーカーが 2 台なら、2 台で 4 本を分担する。ワーカーを 8 台に増やしても 1 シャードは同時に 1 台しか持てないので、半分のワーカーは担当がなく遊ぶ。チェックポイントを頻繁に書きすぎると、リーステーブルの消費が増える。
 
 再起動後は最後のチェックポイントから再開するので、そこまでに処理したレコードをもう一度受け取ることがある。処理は冪等にする。
+
+- **例（アプリ名）:** アプリ名 `clicks-analytics` のリーステーブルは `clicks-analytics` になる。同じ名前で別のアプリを動かすと、チェックポイントを奪い合って読み飛ばしや二重処理が起きる。
+- **例（`failoverTimeMillis`）:** 既定は 10,000 ミリ秒。ワーカーが落ちてから 10 秒ほどで、別のワーカーがリースを引き継げる。シャードが多いアプリでは、リーステーブルの読み書きが増えるので値を大きくする。
+- **例（`maxRecords`）:** 既定は 10,000。`idleTimeBetweenReadsInMillis` の既定 1,500 と組み合わせて、ポーリングの量を調整する。
+- **例（チェックポイント）:** 100 レコードごとに記録すると、落ちたときに最大 100 件を再処理する。毎レコード記録すると重複は減るが、DynamoDB の書き込みが増える。
+- **誤ると（権限）:** ロールに DynamoDB の権限がないと、リーステーブルを作れず、ワーカーが処理を始められない。
 
 ### リシャーディング {#resharding}
 
@@ -267,6 +315,17 @@ Provisioned モードでシャード数を変える操作。
 
 `CLOSED` のシャードも保持期間が切れるまで読める。`EXPIRED` になると読めず、シャードの一覧にも出なくなる。リシャーディング直後に子だけを読むと、親に残ったレコードより新しいレコードを先に処理してしまう。
 
+```bash
+aws kinesis update-shard-count --stream-name orders \
+  --target-shard-count 8 --scaling-type UNIFORM_SCALING
+```
+
+- **例（増やす）:** 4 シャードは 4 MB/秒。毎秒 7 MB になったら 8 シャードにする。`UpdateShardCount` は 2 倍までなので 8 は 1 回で届く。
+- **例（減らす）:** 20 シャードを 5 シャードにするなら、半分までの制限で 20 → 10 → 5 の 2 回に分ける。
+- **例（分割）:** 1 シャードだけ 1.8 MB/秒で溢れているなら、そのシャードに `SplitShard` を実行する。ハッシュキーの範囲を分ける値を `NewStartingHashKey` に指定する。
+- **例（結合）:** 夜間に 0.1 MB/秒しか流れない隣り合う 2 シャードを `MergeShards` でまとめ、シャード時間の料金を減らす。
+- **誤ると（24 時間）:** `UpdateShardCount` を 11 回目に呼ぶとエラーになる。自動スケールを自作するなら、回数を数える。
+
 ### 暗号化 {#kinesis-encryption}
 
 サーバー側の暗号化は KMS キーを使い、書き込みの前に暗号化して、読み出すときに復号する。
@@ -280,6 +339,14 @@ Provisioned モードでシャード数を変える操作。
 | 消費者 | `kms:Decrypt` |
 
 他のアカウントと共有するなら、キーポリシーと相手の IAM ポリシーの両方で許可する。権限が足りないと書き込みや読み取りが KMS の権限エラーになる。
+
+```bash
+aws kinesis start-stream-encryption --stream-name orders \
+  --encryption-type KMS --key-id alias/orders-key
+```
+
+- **例（既存のレコード）:** 保持期間が 24 時間のストリームで暗号化を有効にすると、それ以前の未暗号化レコードは 24 時間で消える。24 時間後には全レコードが暗号化された状態になる。
+- **誤ると（権限）:** 生産者に `kms:GenerateDataKey` がないと、暗号化を有効にした瞬間から書き込みが失敗する。切り替えの前に権限を付ける。
 
 ### エラーと監視 {#kinesis-errors}
 
@@ -297,6 +364,15 @@ Provisioned モードでシャード数を変える操作。
 `GetRecords` が 10 MB を返すと、次の 5 秒間は同じシャードの呼び出しが例外になる。1 シャードに複数のアプリがあると、誰かの大きな読み取りで他のアプリも失敗する。
 
 `GetShardIterator` を呼びすぎても同じ例外が出る。ループで毎回取り直さず `NextShardIterator` を使う。
+
+```bash
+aws kinesis enable-enhanced-monitoring --stream-name orders \
+  --shard-level-metrics IncomingBytes WriteProvisionedThroughputExceeded
+```
+
+- **例（ホットシャード）:** 10 シャードで全体は 3 MB/秒しかないのに例外が出る。シャードレベルで見ると、1 本に 1.5 MB/秒が集中していた。キーを変えるか、そのシャードを分割する。
+- **例（`IteratorAge`）:** 値が増え続けるのは、消費が書き込みに追いつかない状態。書き込みが毎秒 2,000 件で消費が毎秒 1,500 件なら、1 時間で (2,000 − 1,500) × 3,600 = 1,800,000 件遅れる。
+- **例（10 MB の読み取り）:** 1 回の `GetRecords` で 10 MB を返すと 5 秒間は読めない。平均すると 10 MB ÷ 5 秒 = 2 MB/秒で、シャードの読み取り上限と一致する。
 
 ## Lambda とストリーム {#lambda-streams}
 
@@ -346,6 +422,20 @@ Events:
 - 毒レコードで止めないように、再試行の上限、バッチ分割、失敗の記録先を組み合わせる。
 - 処理が追いつかなければ、`ParallelizationFactor` を上げるかシャードを増やす。並列数を上げてもパーティションキー単位の順序は保たれる。
 
+### 値を入れた例 {#lambda-streams-examples}
+
+- **例（`BatchSize`）:** 1 レコード 20 ms なら、100 件で 2 秒。関数のタイムアウトはその数倍の 10 秒以上にする。1 件 100 KB なら 100 件で 10 MB になり、同期呼び出しの 6 MB を超えるので、実際のバッチは 60 件未満になる。
+- **例（`MaximumBatchingWindowInSeconds`）:** 毎秒 10 件で `BatchSize=100`、ウィンドウ 5 秒なら、5 秒ごとに 50 件で呼ばれる。件数がそろわなくても呼ばれるので、遅延の上限を決められる。
+- **例（`ParallelizationFactor`）:** シャード 4 本、並列 2、バッチ 100 件を 1 秒で処理すると、4 × 2 × 100 = 800 件/秒を処理できる。並列 1 なら 400 件/秒。
+- **例（`StartingPosition`）:** 再処理なら `AT_TIMESTAMP` と `StartingPositionTimestamp` で開始時刻を指定する。
+- **例（`MaximumRetryAttempts`）:** 3 にすると、最初の 1 回と再試行 3 回の計 4 回で諦める。`DestinationConfig` があれば失敗の情報を送り、次のバッチに進む。
+- **例（`MaximumRecordAgeInSeconds`）:** 3,600 なら 1 時間より古いレコードは捨てて進む。-1 のままだと、毒レコード 1 件でそのシャードは保持期間が切れるまで止まる。AWS は既定の設定で最大 1 週間止まることがあると説明している。指定できる最小値は 60 秒。
+- **例（`BisectBatchOnFunctionError`）:** 100 件のバッチが失敗すると 50 件ずつに分けて再試行し、毒レコードを含まない方は成功する。残りをさらに分けて、原因を絞り込む。
+- **例（`DestinationConfig`）:** SQS や SNS の宛先に届くのは、シャード ID とシーケンス番号の範囲などのメタデータ。レコードの本文は入らないので、保持期間の間に元のストリームから読み直す。
+- **例（`ReportBatchItemFailures`）:** 100 件の 40 番目で失敗し、`{"batchItemFailures":[{"itemIdentifier":"<40 番目のシーケンス番号>"}]}` を返すと、40 番目以降だけ再試行する。空の配列なら全件成功の扱い。
+- **例（`TumblingWindowInSeconds`）:** 300 なら 5 分ごとの窓で集計する。関数が返した `state` が次の呼び出しに渡され、窓の終わりに合計を保存する。シャードごとの集計になる。
+- **誤ると（同時実行）:** シャード 100 本で `ParallelizationFactor=10` なら最大 1,000 同時実行で、アカウントの既定の枠を使い切る。他の関数がスロットリングされる。
+
 処理の詳細と部分バッチレスポンスは [Lambda](lambda.md) を参照する。
 
 ## Amazon Data Firehose {#firehose}
@@ -353,6 +443,8 @@ Events:
 [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 ストリーミングデータをためて、宛先に **届ける** マネージドサービス。自前の消費者コードやシャード管理が要らない。
+
+提供単位はリージョンで、AZ は選ばない。VPC の外のサービスで、VPC 内からはインターフェイスエンドポイントか NAT を経由して呼ぶ。VPC 内の OpenSearch へ配信するときは、指定したサブネットに ENI を置く（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 | 項目 | 内容 |
 | --- | --- |
@@ -366,6 +458,12 @@ Events:
 `PutRecordBatch` は部分的に失敗する。`FailedPutCount` が 0 より大きいなら、`RequestResponses` を見て失敗分だけ再送する。全部を再送すると重複が増える。
 
 Direct PUT の既定のクォータは、バージニア北部、オレゴン、アイルランドで 5 MiB/秒、それ以外で 1 MiB/秒。超えると Firehose が自動で引き上げるが、スロットリングは起こり得る。
+
+既定のクォータは全部で 3 つあり、同時に効く。バージニア北部、オレゴン、アイルランドでは 500,000 レコード/秒、2,000 リクエスト/秒、5 MiB/秒。それ以外のリージョンでは 100,000 レコード/秒、1,000 リクエスト/秒、1 MiB/秒。
+
+- **例（`PutRecordBatch`）:** 1,200 件なら 500 + 500 + 200 の 3 回に分ける。1 件 10 KiB なら、4 MiB ÷ 10 KiB = 409.6 なので 1 回 409 件までになる。
+- **例（部分失敗）:** 500 件中 `FailedPutCount` が 3 なら、`RequestResponses` のうち `ErrorCode` のある 3 件だけ再送する。
+- **例（Direct PUT）:** 東京で毎秒 3 MiB を送ると、既定の 1 MiB/秒を超えてスロットリングされることがある。Firehose が自動で引き上げるが、ピークが読めるなら事前に申請する。
 
 ### バッファ {#firehose-buffering}
 
@@ -392,6 +490,10 @@ aws firehose update-destination ... \
 - 時間を 60 秒未満にすると S3 にはマルチパートアップロードで配信し、`PUT` の料金が少し増える。
 - 時間を 0 秒にするとバッファせず数秒で届く。ただし動的パーティショニングでは使えない。
 
+- **例（上のコマンドの設定）:** `SizeInMBs=64`、`IntervalInSeconds=60` で、毎秒 2 MB なら 64 ÷ 2 = 32 秒でサイズが先に達する。毎秒 0.5 MB なら 60 秒で先に時間が来て、30 MB のオブジェクトになる。
+- **例（小さなファイル）:** 毎秒 1 KB で時間を 60 秒にすると、1 日に 1,440 個の 60 KB のファイルができる。Athena が遅くなるので、遅延が許されるなら 900 秒にする。96 個に減る。
+- **誤ると:** 「数秒で S3 に届く」想定で既定の 300 秒のままだと、流量が少ないとき最大 5 分遅れる。
+
 ### 配信の失敗の扱い {#firehose-failure}
 
 配信は少なくとも1回で、宛先ごとに再試行のしかたが違う。
@@ -413,6 +515,11 @@ S3 へのバックアップは次の 2 通り。
 | 全データ | 元のレコードも S3 に保存する。Lambda で変換する場合の元データの確保に使う |
 
 エラーは `ErrorOutputPrefix` の下に保存される。`!{firehose:error-output-type}` は `processing-failed` や `format-conversion-failed` などに置き換わる。S3 のキーのタイムスタンプは既定で UTC だが、`Asia/Tokyo` などを指定できる。
+
+- **例（`RetryOptions`）:** `{"RetryOptions":{"DurationInSeconds":600}}` の OpenSearch 宛てなら、20 分の障害で、再試行を 10 分続けた後のデータは S3 のバックアップへ送られる。後で入れ直す必要がある。
+- **例（S3 の 24 時間）:** Direct PUT で配信ロールの権限を誤ると、最大 24 時間は再試行される。24 時間以内に直せばデータは届き、過ぎると失われる。Kinesis Data Streams がソースで保持期間が 72 時間なら、72 時間の余裕がある。
+- **例（`ErrorOutputPrefix`）:** `errors/!{firehose:error-output-type}/!{timestamp:yyyy-MM-dd}/` なら、変換に失敗したデータは `errors/processing-failed/2026-10-31/` に入る。
+- **例（`CustomTimeZone`）:** 既定の UTC では、日本時間 2026-10-31 08:00 のデータは `2026-10-30T23:00` なので、`dt=2026-10-30` に入る。日本時間で分けたいなら `Asia/Tokyo` を指定する。
 
 ### Lambda による変換 {#firehose-transform}
 
@@ -454,6 +561,12 @@ Lambda の呼び出し自体が失敗すると、既定で 3 回再試行する�
 
 同期呼び出しの上限があり、リクエストと応答はそれぞれ 6 MB まで。変換で大きくなると応答が上限を超える。関数のタイムアウトを既定の短いままにすると、タイムアウトエラーになる。
 
+- **例（バッファ）:** 既定の 1 MB、60 秒なら、1 件 200 KB のレコードは約 5 件ずつ関数に渡る。毎秒 1 KB しかなければ、60 秒ごとに約 60 KB で呼ばれる。
+- **例（タイムアウト）:** 1 レコード 10 ms で 1,000 レコードなら 10 秒かかる。Lambda の既定の 3 秒のままなら全部タイムアウトする。60 秒にする。上限は 5 分。
+- **例（サイズ）:** 3 MB の入力が変換で 2.5 倍に膨らむと 7.5 MB で、応答の 6 MB を超えて失敗する。バッファを 1 MB にすれば 2.5 MB に収まる。
+- **例（`Dropped`）:** `DEBUG` レベルのログだけ捨てるなら `result` を `Dropped` にする。`ProcessingFailed` にすると、エラーとして `processing-failed` に溜まる。
+- **誤ると（`recordId`）:** 新しい ID を作って返すと、Firehose は変換の失敗として扱う。
+
 ### その他の機能 {#firehose-features}
 
 | 機能 | 内容 |
@@ -464,6 +577,9 @@ Lambda の呼び出し自体が失敗すると、既定で 3 回再試行する�
 
 **形式の変換** には AWS Glue Data Catalog のスキーマが必要。スキーマにない属性は変換後のデータから落ちる。ネストした JSON は `STRUCT` 型で定義する。
 
+- **例:** スキーマが `user_id` と `page` だけなら、`{"user_id":"u-1","page":"/","device":"ios"}` の `device` は Parquet に入らない。後から列を足したら、新しいデータから入る。
+- **誤ると:** スキーマと合わない JSON は `format-conversion-failed` の下に保存され、宛先のテーブルには入らない。
+
 **動的パーティショニング** は `customer_id` のような値でプレフィックスを分ける。アクティブなパーティションは既定で 500 個まで。バッファの時間内に現れるパーティションの数で決まるので、毎秒 3 個で 60 秒のバッファなら平均 180 個になる。リクエスト ID のように種類の多すぎる値は使わない。
 
 ```text
@@ -473,11 +589,18 @@ ErrorOutputPrefix: errors/!{firehose:error-output-type}/!{timestamp:yyyy-MM-dd}/
 
 上のように Hive 形式のプレフィックスにすると、Athena の `MSCK REPAIR TABLE` で読み込める。
 
+- **例（`partitionKeyFromQuery`）:** レコード `{"customer":"c-10","amount":1}` は `data/customer=c-10/dt=2026-10-31/` に入る。
+- **誤ると（500 個）:** 60 秒のバッファで毎秒 10 個のパーティションが現れると 10 × 60 = 600 個で、既定の 500 個を超える。バッファの時間を短くするか、キーの種類を減らすか、引き上げを申請する。
+
 **圧縮** は GZIP、Snappy、Zip、Hadoop 互換の Snappy から選ぶ。Redshift が宛先なら GZIP のみ。
+
+- **例:** Parquet に変換するなら、圧縮は Parquet 側の設定で行う。GZIP で JSON のまま保存すると Athena はファイル全体を読むが、スキャン量は小さくなる。
 
 **暗号化** はソースで異なる。ストリームがソースなら Kinesis 側の暗号化が使われる。Direct PUT なら `StartDeliveryStreamEncryption` で有効にする。カスタマーマネージドキーでは、呼び出し元とキーポリシーに `kms:GenerateDataKey` と `kms:Decrypt` が要る。
 
 料金はレコードのサイズを 5 KB 単位に切り上げて計算する。1 KB のレコードを別々に送ると割高になるので、まとめて送る。
+
+- **例:** 1 KB のレコード 1,000 件を別々に送ると、5 KB × 1,000 = 5,000 KB として数える。アプリで 5 件ずつ 1 レコードにまとめれば 200 レコードで、5 KB × 200 = 1,000 KB になる。
 
 ## Kinesis Data Streams、Firehose、SQS の選び方 {#choosing}
 
@@ -490,6 +613,10 @@ ErrorOutputPrefix: errors/!{firehose:error-output-type}/!{timestamp:yyyy-MM-dd}/
 | 容量管理 | シャード、または On-demand | 自動 | 自動 |
 | 遅延 | リアルタイム | バッファ分の遅れ | 消費者次第 |
 | 向いている場面 | クリックストリーム、ログの集計、複数アプリでの処理 | ログを S3 や OpenSearch へ保存 | 非同期ジョブ、個別の再試行 |
+
+- **例（Kinesis Data Streams）:** 同じクリックを、不正検知（遅延 1 秒以内）とレコメンド学習（5 分ごと）の 2 つのアプリが別々に読む。バグの修正後に 3 日分を読み直す。
+- **例（Firehose）:** 毎秒 5 MB のアクセスログを 5 分ごとに Parquet で S3 へ保存する。消費者のコードは書かない。
+- **例（SQS）:** 1 件ずつ独立した動画の変換ジョブを 200 台のワーカーで処理する。失敗したジョブだけやり直す。
 
 ```mermaid
 flowchart TD
@@ -507,6 +634,8 @@ flowchart TD
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 S3 のデータに標準 SQL で問い合わせるサーバーレスのサービス。インフラの管理が要らず、実行したクエリの分だけ払う。ログ分析やアドホックな調査に使う。
+
+提供単位はリージョンで、AZ は選ばない。VPC の外のサービスで、VPC 内からはインターフェイスエンドポイントか NAT を経由して呼ぶ。クエリの対象は同じリージョンの Data Catalog で管理する（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 ```sql
 -- パーティションを指定すると、スキャン量が減る
@@ -545,6 +674,9 @@ CloudTrail、CloudFront、ALB、Classic Load Balancer、VPC フローログな�
 | クエリ言語 | 専用の言語など | SQL |
 | 向いている場面 | 直近のログの調査 | 長期保管した大量のログの分析 |
 
+- **例（Logs Insights）:** 5 分前からの Lambda のエラーを `filter @message like /ERROR/` で探す。
+- **例（Athena）:** S3 に 3 年分保管した ALB のログから、月ごとの 5XX の件数を SQL で集計する。
+
 ### 速く、安くするコツ {#athena-performance}
 
 | 方法 | 効果 |
@@ -559,6 +691,9 @@ CloudTrail、CloudFront、ALB、Classic Load Balancer、VPC フローログな�
 - 新しい Hive 形式のパーティションは `MSCK REPAIR TABLE` で読み込む。CloudTrail や Firehose のような Hive 形式でないパスは `ALTER TABLE ADD PARTITION` で追加する。
 - 問い合わせ結果は S3 に自動で保存される。読むには `s3:GetObject` などが必要。
 - S3 以外のデータは Athena Federated Query で問い合わせできる。
+
+- **例（パーティション）:** `WHERE day = '2026/10/30'` なら、その日のフォルダだけを読む。全 365 日のうち 1 日なら、スキャン量は約 365 分の 1 になる。
+- **例（CTAS）:** CSV のログを Parquet に変換して別のテーブルにする。以後のクエリは新しいテーブルに対して実行する。
 
 ### パーティションの設定 {#athena-partitions}
 
@@ -603,6 +738,19 @@ ALTER TABLE clicks SET TBLPROPERTIES (
 
 射影を有効にすると、Glue に登録したパーティションのメタデータは無視される。
 
+射影の型は `enum`、`integer`、`date`、`injected` の 4 つ。
+
+| 型 | 例 | 使う場面 |
+| --- | --- | --- |
+| `date` | `'projection.dt.range' = '2026-01-01,NOW'` | 日付のパス |
+| `integer` | `'projection.hour.range' = '0,23'`、`'projection.hour.digits' = '2'` | `00`〜`23` のパス |
+| `enum` | `'projection.region.values' = 'ap-northeast-1,us-east-1'` | 値の種類が少ない |
+| `injected` | 型だけを指定する | 顧客 ID など。`WHERE` で値の指定が必須 |
+
+- **例（`date`）:** 2026-10-31 の時点で `2026-01-01,NOW` なら 304 日分が候補になる。`WHERE dt = '2026-10-30'` なら 1 日分だけを見る。
+- **誤ると（`injected`）:** `WHERE customer = 'c-1'` のような等価の条件がないクエリは失敗する。
+- **誤ると（テンプレート）:** `storage.location.template` が実際のパスと違うと、エラーなしで 0 件が返る。
+
 ### 形式と料金 {#athena-formats-cost}
 
 料金はスキャンしたデータ量で決まる。バージニア北部では 1 TB あたり 5 USD。
@@ -644,6 +792,11 @@ WITH (
 - `external_location` は空である必要がある。データがあるとエラーになる。
 - Parquet の既定の圧縮は GZIP。
 
+- **例（100 個の上限）:** 365 日分をパーティション化するなら、365 ÷ 100 = 3.65 で 4 回に分ける。最初の CTAS で 100 日分を作り、残りは `INSERT INTO` を 3 回実行する。
+- **例（最小料金）:** 1 MB しかスキャンしないクエリも 10 MB として数える。バージニア北部の料金の例では、10 MB ÷ 1,000,000 MB × 5 USD = 0.00005 USD。
+- **例（料金の表）:** 上の 900 GB は 0.9 TB × 5 USD = 4.5 USD。30 GB は 0.03 TB × 5 USD = 0.15 USD。
+- **誤ると（`external_location`）:** 前回の CTAS のファイルが残った場所を指定すると失敗する。別の場所を使うか、残ったファイルを消す。
+
 ### ワークグループ {#athena-workgroups}
 
 チーム、用途ごとに分けて、設定とコストを管理する単位。IAM でワークグループ単位のアクセスも制御できる。
@@ -660,9 +813,23 @@ WITH (
 
 **クライアント側の設定を上書き** がオンだと、`StartQueryExecution` の `OutputLocation` は無視される。結果が指定した場所に出ないときはこれを疑う。
 
+```bash
+aws athena update-work-group --work-group analysts --configuration-updates \
+  'BytesScannedCutoffPerQuery=107374182400,EnforceWorkGroupConfiguration=true'
+```
+
+- **例（`BytesScannedCutoffPerQuery`）:** 107,374,182,400 バイトは 100 GiB。バージニア北部の料金の例なら、1 クエリの費用は約 0.5 USD で止まる。下限は 10 MB。
+- **例（上書き）:** `EnforceWorkGroupConfiguration=true` でワークグループの結果の場所が `s3://team-a-results/` なら、`OutputLocation="s3://my-bucket/"` を指定しても `s3://team-a-results/` に出る。
+- **例（全体の制限）:** 1 日 10 TB のアラートを SNS に送る設定は、通知するだけでクエリを止めない。止めたいならクエリごとの制限を使う。
+
 `SELECT` と CTAS（DML）、`CREATE TABLE`（DDL）には、それぞれ同時実行の上限がある。実行中とキュー内の合計が上限を超えると `TooManyRequestsException` になるので、バックオフして再試行する。DML のタイムアウトは申請で最大 240 分まで延ばせる。上限はワークグループではなくアカウントで共有する。
 
+- **例（同時実行）:** DML の上限が 25 で、実行中とキュー内の合計が 25 のときに 26 個目を投げると `TooManyRequestsException` になる。ワークグループを分けても上限は共有される。
+
 同じクエリを何度も実行するなら **クエリ結果の再利用** を有効にする。同じワークグループの前回の結果を返し、スキャンの料金がかからない。結果が消されたり移動されたりしていると再利用されない。
+
+- **例（再利用）:** ダッシュボードが 5 分ごとに同じ 200 GB のクエリを実行する。`ResultReuseConfiguration={ResultReuseByAgeConfiguration={Enabled=true,MaxAgeInMinutes=60}}` なら、1 時間に 12 回のうちスキャンは 1 回で済む。最大経過時間を指定しないときの既定は 60 分。
+- **誤ると:** 1 分ごとに更新される売上の集計に 60 分を指定すると、最大 1 時間古い結果が表示される。
 
 **マネージドクエリ結果** を有効にすれば、結果用の S3 バケットの用意と管理が要らなくなる。
 
@@ -672,10 +839,15 @@ WITH (
 
 OpenSearch の検索と分析のクラスターを管理するサービス。全文検索、ログ分析、リアルタイムのアプリケーション監視、クリックストリーム分析に使う。OpenSearch Dashboards で可視化できる。
 
+ドメインの提供単位はリージョンで、データノードは AZ に置かれる。作成時に VPC アクセスかパブリックアクセスを選ぶ。Serverless は VPC の外にあり、VPC エンドポイントでプライベートに接続できる（[リソースの提供単位](resource-scope.md#two-axes)）。
+
 | 形態 | 特徴 |
 | --- | --- |
 | マネージドクラスター（ドメイン） | インスタンスの種類、数、ストレージを指定する |
 | OpenSearch Serverless | クラスターの設定なしで使う。コレクション単位で管理する |
+
+- **例（ドメイン）:** ログが 1 日 50 GB で量が安定している。インスタンスを選んで固定費で見積もる。
+- **例（Serverless）:** 検索の負荷が不定期で、インスタンスの選定をしたくない。OCU が自動で増減する。
 
 ### 開発者が知っておく用語と設定 {#opensearch-concepts}
 
@@ -688,6 +860,12 @@ OpenSearch の検索と分析のクラスターを管理するサービス。全
 | レプリカシャード | プライマリのコピー。読み取りと可用性を高める。プライマリとは別のノードに置かれる |
 
 プライマリ 5、レプリカ 1 のインデックスでは、書き込みは 10 シャードに届き、検索は 5 シャードに届く。
+
+シャードのサイズの目安は、検索の遅延を重視するなら 10〜30 GiB、ログ分析のように書き込みが多いなら 30〜50 GiB。シャード数は `(元データ + 増える分) × 1.1 ÷ 1 シャードの目標サイズ` で見積もる。
+
+- **例:** データが 66 GiB で増えないなら、66 × 1.1 ÷ 30 ≈ 2.4 で 3 シャード。1 年で 4 倍の 264 GiB になるなら、264 × 1.1 ÷ 30 ≈ 9.7 で 10 シャードにする。
+- **例（レプリカ）:** 66 GiB でレプリカ 1 なら、データは 2 重になるので 132 GiB 以上の容量が要る。
+- **誤ると（シャード数）:** プライマリの数は作成後に簡単には変えられない。1 シャードが 200 GiB に育つと遅くなる。逆に 1 GiB のシャードを数百作ると、クラスターの負荷が増える。
 
 REST API を HTTP で呼ぶ。大量に入れるときは `_bulk` を使う。
 
@@ -705,6 +883,34 @@ curl -XGET "$ENDPOINT/products/_search?q=title:shoes"
 | Index State Management | 古いインデックスの移動や削除を自動化するポリシー |
 | HTTP リクエストの上限 | インスタンスの種類で決まる。超えるなら `_bulk` を分割する |
 
+- **例（専用マスター）:** 3 台なら、1 台が落ちても残り 2 台で過半数（クォーラム 2）を保てる。2 台だと 1 台の障害で新しいマスターを選べない。4 台は 3 台より良くならない。
+- **例（マルチ AZ）:** スタンバイ付きの 3 AZ なら、1 つの AZ が止まってもスタンバイのノードに切り替わる。
+- **例（UltraWarm）:** 直近 10 日のログはホットで検索し、古いインデックスは UltraWarm に移す。読み取り専用になるが、保持の費用を下げられる。
+- **例（`_bulk`）:** HTTP リクエストの上限はインスタンスタイプで決まる。`m5.large.search` は 10 MiB、`m5.xlarge.search` は 100 MiB。上限が 100 MiB のインスタンスに 300 MB の `_bulk` を送ると拒否される。1 回を 100 MB 未満に分ける。
+
+```json
+{
+  "policy": {
+    "default_state": "hot",
+    "states": [
+      {
+        "name": "hot",
+        "actions": [],
+        "transitions": [{ "state_name": "warm", "conditions": { "min_index_age": "10d" } }]
+      },
+      {
+        "name": "warm",
+        "actions": [{ "warm_migration": {} }],
+        "transitions": [{ "state_name": "delete", "conditions": { "min_index_age": "90d" } }]
+      },
+      { "name": "delete", "actions": [{ "delete": {} }], "transitions": [] }
+    ]
+  }
+}
+```
+
+上の Index State Management のポリシーは、10 日で UltraWarm へ移し、90 日で削除する。
+
 アクセス制御は次を組み合わせる。
 
 | 種類 | 内容 |
@@ -716,18 +922,30 @@ curl -XGET "$ENDPOINT/products/_search?q=title:shoes"
 
 IAM のプリンシパルを指定したポリシーがあるドメインには、**署名付きのリクエスト**（SigV4）が必要で、署名なしの `curl` は拒否される。
 
+- **例（IP ベース）:** ドメインのポリシーで `aws:SourceIp` に `192.0.2.0/24` を指定すると、その範囲からだけ届く。VPC 内のドメインには使わず、セキュリティグループで絞る。
+- **例（きめ細かな制御）:** `support` ロールには `orders` インデックスの読み取りだけを許し、`card_number` フィールドを隠す。
+- **誤ると:** 署名なしの `curl` は `403` で拒否される。SigV4 に対応するクライアントかプロキシを使う。
+
 Serverless ではコレクションを作り、用途（ログ分析などの時系列、全文検索、ベクトル検索）を選ぶ。容量は OpenSearch Compute Unit（OCU）で測り、取り込みと検索で別々に自動で増える。1 OCU はメモリ 6 GiB とそれに応じた vCPU。
 
+- **例（OCU）:** 取り込みと検索は別々に増えるので、夜間の大量取り込みが増えても検索用の OCU は増えない。1 OCU はメモリ 6 GiB なので、4 OCU なら 24 GiB になる。
+
 スロークエリの調査には、検索とインデックスのスローログを CloudWatch Logs に出力する。
+
+- **例:** 検索の遅いしきい値を 5 秒に設定し、ログを CloudWatch Logs へ出す。遅いクエリを見つけて、ワイルドカードの多用を直す。ログの出力はドメインとインデックスの両方で有効にする。
 
 ### データの入れ方 {#opensearch-ingestion}
 
 | 経路 | 内容 |
 | --- | --- |
 | OpenSearch Ingestion | サードパーティなしで直接取り込む |
-| Data Firehose、CloudWatch Logs | OpenSearch を標準でサポート |
+| Data Firehose | OpenSearch を宛先に指定できる。ただし CloudWatch Logs のログは Firehose 経由で OpenSearch へ配信できない |
+| CloudWatch Logs | サブスクリプションフィルターで OpenSearch へ直接送る |
 | S3、Kinesis Data Streams、DynamoDB | Lambda で変換してインデックスする |
 | DynamoDB のゼロ ETL | OpenSearch Ingestion の DynamoDB プラグイン |
+
+- **例（Firehose）:** ログを 60 秒ごとに OpenSearch へ送り、失敗したドキュメントは S3 に残す。自前の配信コードは書かない。
+- **例（ゼロ ETL）:** DynamoDB の `products` テーブルを全文検索に同期する。Lambda で変換のコードを書かずに済む。
 
 ### データストアの選び方 {#specialized-store}
 
@@ -743,6 +961,8 @@ Serverless ではコレクションを作り、用途（ログ分析などの時
 | ミリ秒のキャッシュ | [ElastiCache](databases.md) |
 
 DynamoDB はキーと属性で検索する設計で、部分一致の全文検索には向かない。DynamoDB のデータを全文検索したいときは、OpenSearch に同期する。
+
+- **例:** 注文を `orderId` で 1 件取るなら DynamoDB。商品名に「軽量 シューズ」を含むものをあいまいに探すなら OpenSearch。先月の売上を 1 回だけ集計するなら、S3 に出したデータを Athena で見る。
 
 ## 既定値と上限のまとめ {#numbers}
 

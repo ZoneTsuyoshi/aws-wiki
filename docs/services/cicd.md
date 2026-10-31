@@ -18,6 +18,9 @@
 
 CloudFormation や SAM によるデプロイは [IaC](iac.md) で説明します。
 
+- **例:** `main` への push で CodePipeline が動き、CodeBuild が 3 分でテストとビルドをし、CodeDeploy が 6 台の EC2 に配布します。CodePipeline 自身はビルドも配布もしません。
+- **誤ると:** Lambda の段階的な切り替えを CodePipeline だけで作ろうとしても、トラフィックは移せません。切り替えは CodeDeploy の役割です。
+
 ## ソース管理 {#source-control}
 
 ### デプロイ環境でコードリポジトリを使う {#repositories}
@@ -35,6 +38,10 @@ CodePipeline のソースにできる代表的なものは次のとおりです�
 | S3 | IAM | EventBridge ルール。バージョニングが必要 |
 | ECR | IAM | EventBridge ルール |
 
+- **GitHub の例:** `my-org/my-app` の `main` を監視するなら、CodeConnections の接続の ARN を渡します。個人のアクセストークンは要りません。詳しくは [CodeConnections の接続](#codeconnections) を参照してください。
+- **S3 の例:** `s3://my-artifacts/app.zip` をソースにするなら、バケットのバージョニングを有効にします。無効だとソースのアクションを使えません。
+- **ECR の例:** `my-app:latest` のプッシュでパイプラインを起動し、ベースイメージの更新からデプロイまで流します。
+
 ### CodeCommit の現状 {#codecommit-status}
 
 [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
@@ -42,6 +49,8 @@ CodePipeline のソースにできる代表的なものは次のとおりです�
 CodeCommit は 2024 年に新規受付を止めましたが、**2025 年 11 月に一般提供へ戻り、新規利用者も使えるようになりました**。「CodeCommit は新規利用できない」という古い記述は現在は誤りです。なお、DVA-C02 と DVA-C03 の試験ガイドの対象サービス一覧に CodeCommit は載っていません（一覧は網羅的ではないとされています）。
 
 IAM、VPC エンドポイント、CloudTrail と統合できるため、AWS の中でソースを管理したい場合の選択肢です。Git リポジトリなので、頻繁に変わる大きなファイル、データベース、監査ログの置き場には向きません。
+
+**提供単位**: リポジトリはリージョン単位で、VPC の外にあります（[2 つの軸](resource-scope.md#two-axes)）。VPC からはインターフェイスエンドポイントでも接続できます。
 
 **古い情報に注意**: 2024 年以降の教材には「CodeCommit は使えない」と書かれていることがあります。2025 年 11 月の一般提供への復帰で、この記述は古くなりました。
 
@@ -64,17 +73,30 @@ git push origin v1.4.2
 
 パイプラインの起動条件に Git タグを指定すれば、タグを打ったときだけ本番へのリリースを始められます。
 
+- **ブランチの例:** `feature/login` を `develop` にマージすると結合テストが動き、`main` にマージすると本番のパイプラインが動きます。
+- **Git タグの例:** `v1.4.2` を打つと、パイプラインの起動条件 `v*` に合います。
+- **コンテナイメージタグの例:** コミット `abc1234` から作ったイメージに `git-abc1234` と付けると、本番のイメージからコミットをたどれます。
+- **Lambda の例:** エイリアス `prod` をバージョン `7` から `6` へ向け直すと、コードをビルドし直さずに戻せます。
+- **誤ると:** タグを打ち直して別のコミットを指すと、`v1.4.2` が何を指すのかが分からなくなります。タグは動かしません。
+
 ### コミットでビルド・テスト・デプロイを起動する {#commit-triggers}
 
 流れは「コミットをプッシュする → トリガーが発火する → CodePipeline がその版を取得する → CodeBuild がビルドしてテストする → デプロイする」です。人がコマンドを実行する必要はありません。
 
 CodeBuild だけで済む場合は、プロジェクトに Webhook を設定してプッシュや PR で直接ビルドを始めることもできます。承認や複数環境への展開が必要になったら CodePipeline を使います。
 
+- **CodeBuild だけの例:** PR ごとに `pytest` を走らせて結果を GitHub に返すだけなら、Webhook で足ります。
+- **CodePipeline の例:** テスト、ステージングへのデプロイ、手動承認、本番へのデプロイと続くなら、ステージに分けます。
+
 ## CodeBuild {#codebuild}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 フルマネージドのビルドサービスです。ビルドごとに新しい環境を用意するので、ビルドサーバーの管理が不要です。ビルド時の権限はプロジェクトのサービスロールで決まります。
+
+**提供単位**: プロジェクトはリージョン単位です。ビルドは既定で VPC の外で動き、`vpcConfig` で自分の VPC に接続できます（[2 つの軸](resource-scope.md#two-axes)、[VPC の設定](#codebuild-vpc)）。
+
+- **例:** 東京のプロジェクトは東京のコンソールに出ます。東京の RDS に接続するテストなら、`vpcConfig` に RDS へ届くサブネットを指定します。
 
 ### buildspec の構成 {#buildspec}
 
@@ -153,6 +175,25 @@ cache:
 
 エクスポートできるのは `install` から `post_build` までに更新した値です。`AWS_` で始まる変数や、プロジェクトに定義したシークレットはエクスポートできません。
 
+キーごとの例です。
+
+- **`version` の例:** `0.1` では次の 2 行が別のシェルで動くので、`npm ci` は `src` の外で動いて失敗します。`0.2` なら `src` の中で動きます。
+
+```yaml
+commands:
+  - cd src
+  - npm ci
+```
+
+- **`run-as` の例:** 全体に `run-as: builder` と書き、`install` にだけ `run-as: root` と書くと、`install` は `root` で、他は `builder` で動きます。
+- **`env.shell` の例:** `shell: {linux: bash}` と書くと、Linux では `bash` を使います。`[[ ... ]]` を使うスクリプトに必要になります。
+- **`env.variables` の例:** `APP_ENV: staging` は buildspec にそのまま残ります。パスワードを書くと、リポジトリに平文で残ります。
+- **`env.parameter-store` の例:** `API_URL: /myapp/staging/api-url` で、ビルド中に `$API_URL` として読めます。
+- **`env.exported-variables` の例:** `IMAGE_TAG` を挙げて `namespace` を `BuildVariables` にすると、次のアクションで `#{BuildVariables.IMAGE_TAG}` として読めます。
+- **`env.git-credential-helper` の例:** プライベートなサブモジュールを取得するビルドに `yes` を使います。公開リポジトリの Webhook で起動したビルドでは使えません。
+- **`proxy` の例:** 明示的なプロキシの背後にある VPC で、成果物をアップロードできないなら `upload-artifacts: yes` にします。ログも同様に `logs: yes` です。
+- **`phases` の例:** `test` という名前のフェーズは作れません。テストは `build` か `pre_build` に書きます。
+
 #### secrets-manager の指定 {#buildspec-secrets}
 
 ```yaml
@@ -166,6 +207,10 @@ JSON キーを省くとシークレット全体を取得します。別のアカ
 
 **症状**: サービスロールに読み取り権限がないと、ビルドは値を取得できずに権限エラーで失敗します。カスタマー管理キーで暗号化しているなら `kms:Decrypt` も確認します。
 
+- **JSON キーの例:** `prod/db` の中身が `{"password":"..."}` なら、`prod/db:password` で値だけを読みます。`prod/db` だけなら JSON 全体が `DB_PASSWORD` に入り、DB への接続に失敗します。
+- **`version-stage` の例:** `prod/db:password:AWSPREVIOUS` は、ローテーション前の値を読みます。
+- **`version-id` の例:** `prod/db:password::<バージョン ID>` のように、ステージを空にして指定します。
+
 #### on-failure と finally {#buildspec-on-failure}
 
 | `on-failure` の値 | 動作 |
@@ -178,6 +223,29 @@ JSON キーを省くとシークレット全体を取得します。別のアカ
 | `RETRY-<回数>-<正規表現>` | 両方を指定 |
 
 CodeBuild 提供のイメージの EC2 コンピュートでだけ動き、Lambda コンピュートとリザーブドキャパシティでは使えません。`finally` は `commands` が失敗しても動きます。
+
+```yaml
+phases:
+  pre_build:
+    on-failure: CONTINUE
+    commands:
+      - ./lint.sh
+  build:
+    on-failure: RETRY-3-.*connection timed out.*
+    commands:
+      - npm ci
+    finally:
+      - ./cleanup.sh
+```
+
+- **`ABORT` の例:** `pre_build` のテストが失敗した時点で止めます。`build` に進みません。
+- **`CONTINUE` の例:** 上の `lint.sh` が失敗しても `build` に進みます。
+- **`RETRY` の例:** どのメッセージでも最大 3 回です。
+- **`RETRY-<回数>` の例:** `RETRY-8` は 8 回です。101 は範囲外です。
+- **`RETRY-<正規表現>` の例:** `RETRY-.*Error: Unable to connect to database.*` は、メッセージが一致すれば最大 3 回です。一致しないテストの失敗では再試行しません。
+- **`RETRY-<回数>-<正規表現>` の例:** 上の `build` は、`connection timed out` を含むときだけ 3 回です。
+- **`finally` の例:** `commands` が 3 つで最初が失敗すると、残り 2 つを飛ばして `finally` を動かします。この場合、フェーズは失敗のままです。
+- **誤ると:** `on-failure` を書いた buildspec を Lambda コンピュートで使っても、指定どおりには動きません。
 
 #### artifacts と cache のキー {#buildspec-artifacts-cache}
 
@@ -195,6 +263,30 @@ CodeBuild 提供のイメージの EC2 コンピュートでだけ動き、Lambd
 
 **例**: `files: ["**/*"]`、`base-directory: dist` なら `dist` の中身だけが、`dist/` を付けずに ZIP に入ります。
 
+- **`discard-paths` の例:** `dist/js/app.js` が `yes` では `app.js` になります。`dist/a/index.js` と `dist/b/index.js` は同じ名前になり、片方が残りません。
+- **`exclude-paths` の例:** `**/*.map` でソースマップを除きます。
+- **`name` の例:** `name: app-$(date +%Y-%m-%d)` で日付入りの名前にします。
+- **`s3-prefix` の例:** `s3-prefix: builds/orders` で、成果物をこの接頭辞の下に置きます。
+- **`enable-symlinks` の例:** `node_modules/.bin` のシンボリックリンクを、ZIP の中でもリンクのまま残します。
+- **`secondary-artifacts` の例:** `web` と `api` の 2 つに分けます。buildspec のキーは、プロジェクトの `secondaryArtifacts` の識別子と合わせます。
+
+`cache` には、S3 キャッシュの版を分けるキーもあります。
+
+```yaml
+cache:
+  key: npm-key-$(codebuild-hash-files package-lock.json)
+  fallback-keys:
+    - npm-key-
+    - npm-
+  action: restore
+  paths:
+    - "node_modules/**/*"
+```
+
+- **`key` の例:** 完全一致で探します。`package-lock.json` が変わるとハッシュも変わり、新しいキャッシュになります。
+- **`fallback-keys` の例:** `key` で見つからないと、上から順に接頭辞で探します。5 個までです。`key` がなければ無視されます。
+- **`action` の例:** `restore` は読むだけ、`save` は保存するだけです。PR のビルドで本線のキャッシュを汚したくないなら `restore` です。
+
 #### batch {#buildspec-batch}
 
 | キー | 動作 |
@@ -206,6 +298,12 @@ CodeBuild 提供のイメージの EC2 コンピュートでだけ動き、Lambd
 | `batch.build-fanout` | テストを分割して並列実行 |
 
 **例**: Python 3.11 と 3.12 の両方でテストするなら `build-matrix`、A のビルドの後で B を動かすなら `build-graph` の `depend-on` を使います。
+
+- **`fast-fail` の例:** 既定は `false` で、1 つが失敗しても他は続きます。`true` なら、5 並列のうち 1 つが失敗した時点で残りを止めます。
+- **`build-list` の例:** `lint` と `test` を依存なしで同時に動かします。
+- **`build-matrix` の計算例:** Python が 2 種類、OS のイメージが 3 種類なら、2 × 3 = 6 ビルドです。
+- **`build-fanout` の例:** `parallelism: 5` で、テストを 5 つのビルドに分けます。1,000 件を 5 分割すれば、1 つあたり約 200 件です。
+- **`ignore-failure` の例:** 既定は `false` です。`true` のタスクは失敗しても、バッチ全体は成功できます。
 
 ### ビルドフェーズ {#build-phases}
 
@@ -235,6 +333,15 @@ flowchart TD
 
 `UPLOAD_ARTIFACTS` は `BUILD` が失敗しても試行されます。`post_build` などで成否を判定したいときは、環境変数 `CODEBUILD_BUILD_SUCCEEDING`（`1` は成功、`0` は失敗）を見ます。
 
+- **`install` の例:** `runtime-versions: {python: 3.12}` を書き、`pip install -r requirements.txt` を実行します。
+- **`pre_build` の例:** `aws ecr get-login-password ...` で ECR にログインし、`pytest` で単体テストを動かします。
+- **`build` の例:** `docker build -t my-app .` を実行します。
+- **`post_build` の例:** `docker push` の後で `imagedefinitions.json` を作ります。ビルドの成否を見ずにプッシュすると壊れたイメージが出るので、次のように判定します。
+
+```bash
+if [ "$CODEBUILD_BUILD_SUCCEEDING" = "1" ]; then docker push "$IMAGE"; fi
+```
+
 ### プロジェクトの設定 {#codebuild-project}
 
 | 設定 | 既定値、範囲 | 説明 |
@@ -261,11 +368,24 @@ flowchart TD
 
 **症状**: 特権モードが無効で `docker build` を動かすと、`Cannot connect to the Docker daemon` になります。
 
+- **`environment.type` の例:** `ARM_CONTAINER` は Graviton で動きます。ARM 用のイメージをビルドしたいときに使います。
+- **`environment.computeType` の例:** メモリ不足で `npm run build` が落ちるなら、`BUILD_GENERAL1_SMALL` を `BUILD_GENERAL1_MEDIUM` に上げます。ローカルキャッシュは `BUILD_GENERAL1_2XLARGE` では使えません。
+- **Lambda コンピュートの例:** `BUILD_LAMBDA_1GB` は 1 分の単体テストの起動が速くなります。次の用途には使えません。15 分を超えるビルド、`docker build`、VPC への接続、キャッシュ、独自のタイムアウト、特権モードです。
+- **`environment.image` の例:** 標準の `aws/codebuild/standard:7.0` には多くの言語が入っています。独自のツールが要るなら、自分の ECR イメージを指定します。
+- **`imagePullCredentialsType` の例:** 別アカウントの ECR や非公開のレジストリのイメージは `SERVICE_ROLE` が必須です。CodeBuild 提供のイメージは `CODEBUILD` が必須です。
+- **`queuedTimeoutInMinutes` の例:** 値が 30 なら、同時実行の上限で 30 分待つとビルドは実行されずに終わります。
+- **`serviceRole` の例:** ロールに `s3:PutObject` がなければ、`UPLOAD_ARTIFACTS` で失敗します。
+- **`logsConfig` の例:** CloudWatch Logs で直近を検索し、S3 に長期保存するなど、両方に出せます。
+- **`concurrentBuildLimit` の例:** 値が 3 で 3 つが動いていると、4 つ目は動きません。同じ DB を使う結合テストの衝突を防げます。
+
 #### VPC の設定 {#codebuild-vpc}
 
 CodeBuild は既定では VPC の中のリソースに届きません。RDS にアクセスするテストなら `vpcConfig` を指定します。
 
 **落とし穴**: サブネットはプライベートにして、NAT ゲートウェイか VPC エンドポイントを用意します。これがないと、ソースのダウンロードや `pip install` が失敗します。
+
+- **`vpcConfig` の例:** `vpcId`、`subnets`、`securityGroupIds` を指定します。1a と 1c のプライベートサブネットを指定し、セキュリティグループの送信を許可し、RDS 側で 3306 の受信を許可します。
+- **誤ると:** パブリックサブネットを指定しても、インターネットには出られません。CodeBuild はインターネットゲートウェイの代わりに NAT を必要とします。
 
 #### Webhook とフィルターグループ {#codebuild-webhook}
 
@@ -294,6 +414,25 @@ GitHub などのイベントでビルドを始めます。**1 つのグループ
 
 **落とし穴**: `HEAD_REF` の `main` と書くと、`refs/heads/main-old` にも一致します。`^refs/heads/main$` と書きます。
 
+フィルターごとの例です。
+
+- **`EVENT` の例:** `PUSH, PULL_REQUEST_CREATED, PULL_REQUEST_UPDATED` のようにカンマで並べると、どれかで動きます。
+- **`HEAD_REF` の例:** `^refs/tags/v.*` なら、`v1.4.2` のタグのプッシュで動きます。
+- **`BASE_REF` の例:** PR のイベントと組み合わせて `^refs/heads/main$` にすると、`main` 宛ての PR だけで動きます。
+- **`FILE_PATH` の例:** `^services/orders/.*` なら、`services/orders/app.py` の変更で動き、`README.md` だけの変更では動きません。
+- **`ACTOR_ACCOUNT_ID` の例:** `^12345678$` のように GitHub のユーザー ID を指定し、外部からの PR で勝手にビルドが動くのを防ぎます。
+- **`COMMIT_MESSAGE` の例:** `\[skip\]` と `excludeMatchedPattern: true` で、`docs: fix typo [skip]` のコミットでは動きません。
+- **AND と OR の例:** 次の設定は「`main` への push」または「`main` 宛ての PR の作成」で動きます。
+
+```json
+{"filterGroups": [
+  [{"type": "EVENT", "pattern": "PUSH"},
+   {"type": "HEAD_REF", "pattern": "^refs/heads/main$"}],
+  [{"type": "EVENT", "pattern": "PULL_REQUEST_CREATED"},
+   {"type": "BASE_REF", "pattern": "^refs/heads/main$"}]
+]}
+```
+
 #### 組み込みの環境変数 {#codebuild-built-in-vars}
 
 | 変数 | 内容 |
@@ -305,6 +444,12 @@ GitHub などのイベントでビルドを始めます。**1 つのグループ
 | `CODEBUILD_SRC_DIR` | ソースのディレクトリ |
 | `CODEBUILD_WEBHOOK_EVENT` | Webhook のイベント |
 
+- **`CODEBUILD_RESOLVED_SOURCE_VERSION` の例:** `IMAGE_TAG=${CODEBUILD_RESOLVED_SOURCE_VERSION:0:7}` で、`abc1234` のような短いタグを作ります。
+- **`CODEBUILD_BUILD_ID` の例:** `orders:` に続く ID の形で、ログや通知にビルドを特定する値として書きます。
+- **`CODEBUILD_SOURCE_VERSION` の例:** ブランチの指定で起動すれば `main`、PR なら `pr/12` のような値です。解決後のコミット ID を使うなら `CODEBUILD_RESOLVED_SOURCE_VERSION` です。
+- **`CODEBUILD_SRC_DIR` の例:** `cd "$CODEBUILD_SRC_DIR/services/orders"` のように、ソースのルートからの相対で移動します。
+- **`CODEBUILD_WEBHOOK_EVENT` の例:** `PULL_REQUEST_CREATED` のときだけ結合テストを省く、といった分岐に使います。
+
 ### 環境変数とシークレット {#build-env}
 
 | 定義先 | 向いているもの | 注意 |
@@ -315,6 +460,10 @@ GitHub などのイベントでビルドを始めます。**1 つのグループ
 | `env.exported-variables` | 後続のパイプラインアクションへ渡す値 | `install` から `post_build` の間に更新できる |
 
 Parameter Store と Secrets Manager から取得した値はログでマスクされます。ただしマスクは保存値との完全一致です。Base64 にするなど値を加工して出力すると隠れません。
+
+- **マスクの例:** 値が `s3cret` のとき、`echo $DB_PASSWORD` のログは `***` です。`echo $DB_PASSWORD | base64` のログには `czNjcmV0Cg==` と出ます。値が変換されるとマスクされません。
+- **優先順位の例:** buildspec の `APP_ENV: staging` より、プロジェクトの `APP_ENV=qa` が優先され、ビルド開始時の `APP_ENV=prod` はさらに優先されます。
+- **誤ると:** `env.variables` にパスワードを書くと、buildspec のあるリポジトリを読める全員に見えます。
 
 ### アーティファクト {#build-artifacts}
 
@@ -329,6 +478,9 @@ Parameter Store と Secrets Manager から取得した値はログでマスク�
 
 CodePipeline では、この成果物がパイプラインの S3 バケットを経由して次のアクションに渡ります。
 
+- **例:** `packaged.yaml` だけを `files` に書くと、次の CloudFormation のアクションはこのファイルだけを受け取ります。
+- **誤ると:** `base-directory: dist` で `files: ["dist/**/*"]` と書くと、`dist/dist/...` を探すことになり、成果物が空になるか失敗します。
+
 ### キャッシュ {#build-cache}
 
 | 種類 | 保存先 | 向いている場面 |
@@ -339,6 +491,12 @@ CodePipeline では、この成果物がパイプラインの S3 バケットを
 | ローカル: カスタム | ビルドホスト | buildspec の `cache.paths` で指定した依存関係 |
 
 Docker イメージをビルドするプロジェクトでは特権モード（privileged）を有効にします。
+
+- **S3 キャッシュの例:** `pip` の依存関係を `s3://my-cache/orders/` に置きます。別のビルドホストでも読めますが、取得と保存の時間がかかります。
+- **`LOCAL_SOURCE_CACHE` の例:** 大きな Git リポジトリの取得を差分だけにします。
+- **`LOCAL_DOCKER_LAYER_CACHE` の例:** ベースイメージのレイヤーを再利用します。Linux と特権モードが必須です。
+- **`LOCAL_CUSTOM_CACHE` の例:** buildspec の `cache.paths` に `/root/.cache/pip/**/*` を書きます。
+- **誤ると:** ローカルキャッシュは同じビルドホストに当たったときだけ効きます。毎回速くなることを前提にすると、たまに遅いビルドが出ます。
 
 ### テストレポート {#build-reports}
 
@@ -359,17 +517,27 @@ Docker イメージをビルドするプロジェクトでは特権モード（p
 
 レポートグループは名前を書くと `プロジェクト名-グループ名` で作られます。1 プロジェクトに 5 グループまでです。
 
+- **`file-format` の例:** `pytest --junitxml=reports/unit.xml` なら `JUNITXML` です。カバレッジの `coverage.xml` なら `COBERTURAXML` です。形式が合わないと、レポートは読み取れません。
+- **グループ名の例:** プロジェクト `orders` に `unit-tests` と書くと、`orders-unit-tests` です。
+- **`base-directory` の例:** `base-directory: reports`、`files: ["unit.xml"]` で `reports/unit.xml` を読みます。
+- **期限の例:** 10 月 1 日のレポートは 10 月 31 日に期限切れです。監査で 1 年残すなら、S3 へエクスポートします。
+
 ### ログ {#build-logs}
 
 ビルドログは CloudWatch Logs、S3、またはその両方に出力できます。失敗時は、コンソールのフェーズ詳細でどのフェーズが落ちたかを確認し、そのログを読みます。
 
 VPC 内でビルドすると、インターネットへ出る経路がなければ依存関係の取得に失敗します。NAT ゲートウェイや VPC エンドポイントを確認します。
 
+- **例:** CloudWatch Logs は `groupName: /codebuild/orders`、S3 は `location: my-logs/orders` に出します。
+- **誤ると:** サービスロールに `logs:CreateLogStream`、`logs:PutLogEvents` がないと、CloudWatch Logs にログが出ません。
+
 ## CodeDeploy {#codedeploy}
 
 [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 アプリケーションのリビジョンを、EC2、オンプレミス、Lambda、ECS へ配布するサービスです。
+
+**提供単位**: アプリケーションとデプロイグループはリージョン単位で、CodeDeploy 自体は VPC の外にあります（[2 つの軸](resource-scope.md#two-axes)）。配布先の EC2 は AZ のサブネットにあるので、エージェントから CodeDeploy へ出る経路が必要です。
 
 ### 構成要素 {#codedeploy-concepts}
 
@@ -388,6 +556,16 @@ VPC 内でビルドすると、インターネットへ出る経路がなけれ�
 | `deploymentReadyOption.actionOnTimeout` | `CONTINUE_DEPLOYMENT` か `STOP_DEPLOYMENT`。切り替えを手動で待つときは後者 |
 | `terminateBlueInstancesOnDeploymentSuccess.action` | `TERMINATE` か `KEEP_ALIVE` |
 | `terminationWaitTimeInMinutes` | 元のインスタンスを終了するまでの待ち時間。上限は 48 時間 |
+
+用語と設定の例です。
+
+- **アプリケーションの例:** `aws deploy create-application --application-name web --compute-platform Lambda` です。プラットフォームは `Server`、`Lambda`、`ECS` です。
+- **デプロイグループの例:** EC2 のタグ `Env=prod` で 6 台を選びます。タグを付け忘れた新しいインスタンスには配布されません。
+- **リビジョンの例:** EC2 なら `s3://my-artifacts/web-1.4.2.zip` です。中のルートに `appspec.yml` が必要です。
+- **デプロイタイプの例:** 6 台のインプレースは既存の台を更新します。Blue/Green は別の 6 台を用意してトラフィックを移します。Lambda と ECS はインプレースを使えません。
+- **`actionOnTimeout` の例:** `STOP_DEPLOYMENT` で `waitTimeInMinutes: 60` なら、新しいインスタンスを用意した後、60 分以内に `ContinueDeployment` を呼びます。呼ばないとデプロイは `Stopped` です。`CONTINUE_DEPLOYMENT` はすぐに登録します。
+- **`terminateBlueInstancesOnDeploymentSuccess.action` の例:** `TERMINATE` で 60 分なら、切り替えの 1 時間後に旧インスタンスを終了します。`KEEP_ALIVE` は動かし続けるので、料金は続きます。ロードバランサーとデプロイグループからは外れます。
+- **`terminationWaitTimeInMinutes` の範囲:** 上限は 2,880 分（48 時間）です。
 
 ### AppSpec ファイル {#appspec}
 
@@ -495,6 +673,18 @@ permissions:
 
 `--file-exists-behavior` のエラーは、以前のデプロイに含まれないファイルが配置先にあるときに起きます。
 
+- **`source`、`destination` の例:** `source: /build`、`destination: /var/www/app` なら、バンドルの `build/index.html` は `/var/www/app/index.html` に置かれます。
+- **`pattern`、`except` の例:** `pattern: "*.sh"`、`mode: 755` でスクリプトだけに実行権限を付けます。`except: ["debug.sh"]` で除外します。`pattern` は文字列を `""` で囲みます。
+- **`owner`、`group` の例:** `owner: www-data`、`group: www-data` です。指定しないと、コピーした元の所有者のままです。
+- **`type` の例:** `file` だけなら、ディレクトリには適用しません。
+- **`acls`、`context` の例:** Linux の ACL と SELinux のコンテキストを設定します。macOS のインスタンスでは使えず、デプロイが失敗します。
+- **`location` の例:** `location: scripts/stop.sh` はバンドルのルートからの相対です。
+- **`runas` の例:** `runas: www-data` で実行します。省くとエージェントと同じユーザー（通常は root）で動くので、最小権限なら指定します。
+- **`timeout` の計算例:** `AfterInstall` のスクリプトが 2 つで、`timeout` が 2,000 秒ずつだと、合計 4,000 秒で 3,600 秒を超えます。そのインスタンスのデプロイは失敗します。
+- **`OVERWRITE` の例:** 手で置いた `/var/www/app/config.json` を、リビジョンの版で置き換えます。
+- **`RETAIN` の例:** 上の `config.json` を残して、次のデプロイの一部として扱います。
+- **`DISALLOW` の例:** 既定の動作で、同じファイルがあるとデプロイは失敗します。
+
 **落とし穴**: 1 つのイベントのスクリプトの合計が 3,600 秒を超えると、そのインスタンスのデプロイは失敗します。
 
 #### AppSpec の項目(ECS) {#appspec-ecs}
@@ -509,6 +699,12 @@ permissions:
 | `CapacityProviderStrategy` | 任意 | キャパシティプロバイダー |
 
 Lambda の AppSpec は `Name`、`Alias`、`CurrentVersion`、`TargetVersion` の 4 つです。
+
+- **`ContainerName`、`ContainerPort` の例:** `web` と `8080` は、タスク定義の `name` と `containerPort` に合わせます。違うとデプロイが失敗します。
+- **`PlatformVersion` の例:** `"1.4.0"` のように指定します。
+- **`NetworkConfiguration` の例:** `Subnets`、`SecurityGroups`、`AssignPublicIp: DISABLED` を指定します。
+- **`CapacityProviderStrategy` の例:** `FARGATE_SPOT` に `Weight: 1` を指定します。
+- **Lambda の例:** `Alias: live`、`CurrentVersion: "6"`、`TargetVersion: "7"` は、`live` をバージョン 6 から 7 へ移します。
 
 ### ライフサイクルイベントの順序 {#lifecycle-hooks}
 
@@ -567,6 +763,19 @@ ECS では、テストリスナーへ流したトラフィックで検証して�
 
 なお、AWS は現在、ECS のブルー/グリーンには CodeDeploy ではなく [ECS 組み込みのデプロイ](containers.md#ecs-blue-green) を勧めています。
 
+各フックの場面です。
+
+- **`BeforeBlockTraffic` の例:** ロードバランサーから外す前に、処理中のジョブを止める準備をします。
+- **`AfterBlockTraffic` の例:** 外れた後で、残りの接続が終わるのを待ちます。
+- **`ApplicationStop` の例:** `systemctl stop web` を実行します。初回デプロイでは動きません。
+- **`BeforeInstall` の例:** 設定ファイルのバックアップを取ります。
+- **`AfterInstall` の例:** `chown -R www-data /var/www/app` で権限を変えます。
+- **`ApplicationStart` の例:** `systemctl start web` を実行します。
+- **`ValidateService` の例:** `curl -f http://localhost:8080/health` を実行します。失敗すると、このインスタンスのデプロイは失敗です。
+- **`BeforeAllowTraffic`、`AfterAllowTraffic` の例:** Lambda なら、切り替え前にテスト呼び出しをし、切り替え後に 5XX の数を確かめます。
+- **`AfterAllowTestTraffic` の例:** ECS で、テストリスナーの 8443 にリクエストを送って確かめます。
+- **`ApplicationStop` の誤り:** 前の版の `stop.sh` が壊れていると、新しい版で直しても失敗します。`--ignore-application-stop-failures` で続けます。
+
 ### デプロイ設定 {#deployment-configs}
 
 | プラットフォーム | 定義済みの設定 | 動作 |
@@ -594,6 +803,29 @@ Lambda と ECS のカナリアや線形は独自の設定も作成できます�
 
 名前の頭には `CodeDeployDefault.` が付きます。ECS の 1 分の線形だけ `Minutes` と複数形です。
 
+9 台の EC2 での動きを比べます。
+
+| 設定 | 同時に配布する台数 | 全体が成功する条件 |
+|---|---|---|
+| `AllAtOnce` | できるだけ多く(9 台) | 1 台以上に成功 |
+| `HalfAtATime` | 4 台(端数切り捨て) | 5 台以上に成功(端数切り上げ) |
+| `OneAtATime` | 1 台 | 全台に成功。最後の 1 台の失敗は全体の成功を妨げない |
+
+Lambda と ECS の時間も計算できます。
+
+- **`LambdaCanary10Percent15Minutes` の例:** 10% を移して 15 分待ち、残り 90% を移します。
+- **`LambdaLinear10PercentEvery3Minutes` の例:** 3 分ごとに 10% なので、全部で 30 分ほどかかります。
+- **`ECSLinear10PercentEvery1Minutes` の例:** 毎分 10% なので、10 分ほどです。
+- **独自の設定の例:** 25% を移して 45 分待つ設定を作ります。
+
+```bash
+aws deploy create-deployment-config --deployment-config-name Canary25Percent45Minutes \
+  --traffic-routing-config "type=TimeBasedCanary,timeBasedCanary={canaryPercentage=25,canaryInterval=45}" \
+  --compute-platform Lambda
+```
+
+- **誤ると:** Network Load Balancer の ECS で `ECSCanary10Percent5Minutes` は使えません。`ECSAllAtOnce` だけです。
+
 #### 最小正常ホスト {#minimum-healthy-hosts}
 
 EC2 の設定は `minimumHealthyHosts` の `type`(`HOST_COUNT` か `FLEET_PERCENT`)と `value` で決まります。
@@ -613,6 +845,11 @@ aws deploy create-deployment-config \
 **計算例**: 10 台で `FLEET_PERCENT` が 85 なら、更新中の 1 台がオフラインで正常は 90% です。ここで 1 台でも失敗すると、失敗の 1 台とオフラインの 1 台で 80% になり、85% を下回るので全体が失敗します。
 
 **落とし穴**: 値が 0 でも、最低 1 台の成功は必要です。Blue/Green では、この値は置き換え先の環境に適用されます。ただし、元のインスタンスの登録解除が 1 台でも失敗すると、全体が失敗になります。
+
+- **`HOST_COUNT` の例:** 9 台で 6 なら、同時に 3 台まで配布します。6 台以上に成功すれば全体が成功です。
+- **`FLEET_PERCENT` の例:** 9 台で 40 なら、同時に 5 台まで配布します。4 台以上に成功すれば全体が成功です。
+- **AZ ごとの例:** `--zonal-config` で、AZ ごとの最小正常台数と、次の AZ へ進むまでの待ち時間 `monitorDurationInSeconds` を指定できます。3,600 なら、1 つの AZ が終わってから 1 時間見ます。
+- **誤ると:** `HOST_COUNT` を台数と同じ 9 にすると、1 台も止められません。
 
 ### CodeDeploy のロールバック {#codedeploy-rollback}
 
@@ -645,6 +882,12 @@ aws deploy update-deployment-group \
 
 **ロールバック時の既存ファイル**: エージェントは、前回のデプロイで入れたファイルを消します。それ以外のファイルが配置先にあれば、失敗、上書き、保持のいずれかになります。
 
+- **`DEPLOYMENT_FAILURE` の例:** リビジョン 7 のデプロイが失敗すると、リビジョン 6 を新しいデプロイ ID で配布します。履歴には失敗の 7 と、成功の 6 が並びます。
+- **`DEPLOYMENT_STOP_ON_ALARM` の例:** `web-5xx` が `ALARM` になるとデプロイが止まり、前のリビジョンを配布します。`events` に書かないと、止まるだけです。
+- **`DEPLOYMENT_STOP_ON_REQUEST` の例:** `aws deploy stop-deployment` で止めたときにも戻します。
+- **`ignorePollAlarmFailure` の例:** `true` なら、CloudWatch からアラームの状態を読めなくてもデプロイを続けます。`false` なら、そこで止まります。
+- **保持の誤りの例:** 前のデプロイで `RETAIN` で残したファイルも、失敗した `OVERWRITE` のデプロイで消えると、ロールバックの後にも戻りません。
+
 ### CodeDeploy エージェント {#codedeploy-agent}
 
 エージェントが必要なのは EC2 とオンプレミスだけです。Lambda と ECS では不要です。
@@ -663,11 +906,20 @@ aws deploy update-deployment-group \
 
 Auto Scaling と組み合わせると、新しいインスタンスへ自動でデプロイします。同じデプロイグループに同時に実行できるデプロイは 1 つです。
 
+- **`:verbose:` の例:** `true` にすると、デバッグメッセージがログに出ます。調査が終わったら戻します。
+- **`:wait_between_runs:` の例:** 配布の確認の間隔です。エージェント 2.0 系の既定は 30 秒です。
+- **`:max_revisions:` の例:** 2 にすると、古いリビジョンの保存を減らして、ディスクの空きを保てます。
+- **`:proxy_uri:` の例:** プロキシ経由でしか 443 に出られない環境で指定します。
+- **同時デプロイの例:** `prod` へのデプロイの実行中に 2 つ目を始めると、エラーになります。Auto Scaling のスケールアウトでの配布と重なることもあります。
+- **誤ると:** エージェントが止まっていると、すべてのライフサイクルイベントが `Skipped` になり、`HEALTH_CONSTRAINTS` のエラーでデプロイが失敗することがあります。イベントの実行中に止まると、`Failed` と表示されるまで最大 1 時間かかることがあります。
+
 ## CodePipeline {#codepipeline}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 ソースから本番までの流れを定義し、自動で進めるサービスです。自身はビルドや配布を行わず、CodeBuild や CodeDeploy などを呼び出します。
+
+**提供単位**: パイプラインはリージョン単位で、VPC の外にあります（[2 つの軸](resource-scope.md#two-axes)）。アクションごとに別のリージョンを指定できます。パイプラインの名前はリージョンごとに一意です。
 
 ### ステージとアクション {#pipeline-structure}
 
@@ -688,6 +940,15 @@ Auto Scaling と組み合わせると、新しいインスタンスへ自動で�
 | `QUEUED` | 到着順に 1 つずつ処理 | V2 のみ |
 | `PARALLEL` | 実行どうしが独立して同時に動く（ステージのロールバックは不可） | V2 のみ |
 
+実行 A が `Deploy` にあり、B と C が続けて来たときの動きです。
+
+- **`SUPERSEDED` の例:** `Build` の出口で B が待っているところに C が来ると、B は置き換えられます。A の次に `Deploy` へ進むのは C です。B はデプロイされません。
+- **`QUEUED` の例:** A、B、C の順に 1 つずつ進みます。すべてのコミットを順に本番へ出す監査要件に向きます。同時実行は 50 までです。
+- **`PARALLEL` の例:** A、B、C が同時に動きます。機能ブランチごとの検証環境に向きます。1 つの実行の中で同時に動くアクションは 5 個までです。
+- **`runOrder` の例:** `Lint` と `Unit` を 1、`Package` を 2 にすると、2 つが並列に終わってから `Package` が動きます。範囲は 1〜999 です。
+- **遷移の例:** `Prod` の手前の遷移を無効にすると、障害の対応中は本番へ進みません。
+- **誤ると:** 同じステージに `Deploy` を 2 つ置いて同じ `runOrder` にすると、同時に動きます。順序があるなら値を変えます。
+
 ### パイプラインタイプ {#pipeline-types}
 
 | 機能 | V1 | V2 |
@@ -702,6 +963,23 @@ Auto Scaling と組み合わせると、新しいインスタンスへ自動で�
 | ソースリビジョンの上書き | 不可 | 可 |
 
 既定の実行モードは `SUPERSEDED` です。`QUEUED` と `PARALLEL` の同時実行は 50 までです。
+
+- **パイプラインレベルの変数の例:** 実行時に値を渡します。`Default` がなければ必須で、渡さないと実行は失敗します。50 個までです。
+
+```bash
+aws codepipeline start-pipeline-execution --name orders \
+  --variables name=Stage,value=prod
+```
+
+- **ソースリビジョンの上書きの例:** 古いコミットを指定して出し直します。
+
+```bash
+aws codepipeline start-pipeline-execution --name orders \
+  --source-revisions actionName=Source,revisionType=COMMIT_ID,revisionValue=abc1234
+```
+
+- **Commands アクションの例:** ビルドプロジェクトを作らず、`npm test` を実行します。ビルドのタイムアウトは 55 分です。
+- **誤ると:** V1 のパイプラインに `QUEUED` やステージ条件を設定することはできません。先に V2 へ変えます。
 
 ### アクションの設定 {#pipeline-actions}
 
@@ -737,9 +1015,16 @@ Auto Scaling と組み合わせると、新しいインスタンスへ自動で�
 | CloudFormation | 3 日 |
 | Lambda の呼び出し | 24 時間 |
 | Step Functions | 7 日 |
-| 手動承認 | 7 日 |
+| 手動承認 | 既定 7 日。アクションの `timeoutInMinutes` で 5 分〜60 日に変更可 |
 
 **落とし穴**: CodeBuild のアクションに複数の入力を渡すなら `PrimarySource` が必要です。buildspec はこの入力から探します。CodeDeploy のアクションには `appspec.yml` を含む出力を渡します。入力名の誤りはパイプラインの作成か実行で失敗します。
+
+- **`category`、`provider` の例:** `Deploy` の `CloudFormation` なら `ActionMode: CREATE_UPDATE` などを指定します。`Approval` の `Manual` ならソースは要りません。
+- **`namespace` の例:** 上の `BuildVariables` なら、後続で `#{BuildVariables.IMAGE_TAG}` と書きます。
+- **`inputArtifacts` の例:** 上の `SourceOutput` は、`Source` アクションの `outputArtifacts` の名前と同じにします。
+- **`region` の例:** 東京のパイプラインから `us-east-1` にデプロイするなら、アクションに `"region": "us-east-1"` を書き、そのリージョンのアーティファクトバケットを用意します。
+- **`roleArn` の例:** `arn:aws:iam::111122223333:role/CrossAccountDeploy` を書くと、そのアカウントのロールでアクションを動かします。
+- **タイムアウトの例:** CodeBuild のアクションは最長 36 時間です。プロジェクトの `timeoutInMinutes` が 60 なら、60 分で先にビルドが失敗します。
 
 ### 変数 {#pipeline-variables}
 
@@ -752,7 +1037,14 @@ Auto Scaling と組み合わせると、新しいインスタンスへ自動で�
 
 **例**: `Source` の `namespace` を `SourceVariables` とすると、次の承認アクションの `CustomData` に `#{SourceVariables.CommitId}` を入れて、確認するコミットを示せます。
 
+- **アクション出力の例:** CodeConnections のソースは `CommitId`、`BranchName` などを出力します。ソースの `namespace` が `SourceVariables` なら `#{SourceVariables.BranchName}` は `main` です。
+- **パイプラインレベルの例:** `--variables name=Stage,value=prod` で起動すると、`#{variables.Stage}` は `prod` です。
+- **実行 ID の例:** `#{codepipeline.PipelineExecutionId}` を CloudFormation のパラメータに渡し、どの実行で作ったかをタグに残します。
+- **誤ると:** `namespace` を書かないアクションの変数は参照できません。
+
 ### CodeConnections の接続 {#codeconnections}
+
+**提供単位:** リージョン。接続は VPC の外にあるリソースで、ARN にリージョンが入ります（[提供単位の一覧](resource-scope.md)）。
 
 CodeConnections は、AWS のサービスと外部の Git リポジトリをつなぐ機能です。接続は ARN を持つ AWS リソースで、CodePipeline や CodeBuild などに渡して使います。
 
@@ -768,7 +1060,7 @@ flowchart TD
 
 | 項目 | 内容 |
 |---|---|
-| 対応先 | GitHub.com、GitHub Enterprise Cloud と Server、GitLab.com と自己管理、Bitbucket Cloud、Azure DevOps |
+| 対応先 | GitHub.com、GitHub Enterprise Cloud と Server、GitLab.com と自己管理、Bitbucket Cloud、Azure DevOps。ただし CodePipeline のソースアクションの説明に Azure DevOps は載っていない |
 | 自社環境に置く Git | GitHub Enterprise Server や自己管理の GitLab は、先に「ホスト」を作る |
 | 状態 | CLI や CloudFormation で作ると `PENDING`。コンソールで認可を完了すると `AVAILABLE` |
 | 利用の権限 | `codeconnections:UseConnection`。CodePipeline のサービスロールなどに付ける |
@@ -823,10 +1115,10 @@ Configuration:
 | 値 | 動き | 使う場面 |
 |---|---|---|
 | `true` | コミットで自動起動する | 通常の CI/CD |
-| `false` | コミットでは起動しない | 手動やスケジュールで起動する夜間リリース |
+| `false` | 変更検知ではコミットで起動しない。フィルター付きのトリガーがあれば、その条件で起動する | 手動やスケジュールで起動する夜間リリース |
 
 - **例:** 毎日 22 時にだけ本番へ出すなら `false` にし、EventBridge のスケジュールから `StartPipelineExecution` を呼びます。
-- **誤ると:** `false` のまま忘れると、push しても動かず、エラーも出ません。
+- **誤ると:** トリガーを付けずに `false` のまま忘れると、push しても動かず、エラーも出ません。
 
 #### OutputArtifactFormat {#connection-output-format}
 
@@ -880,16 +1172,36 @@ triggers:
 
 アクションの `BranchName` は 1 つのブランチだけです。複数のブランチはトリガーで指定します。ポーリング(`PollForSourceChanges`)のパイプラインはリージョンあたり 300 までで、イベント方式が勧められています。
 
+- **`branches.includes` の例:** `release/**` は `release/1.4` と `release/2026/10` に一致します。`main` には一致しません。
+- **`filePaths.excludes` の例:** 上の設定で `services/orders/README.md` だけを変えても起動しません。
+- **Git タグの例:** `push: [{tags: {includes: ["v*"]}}]` なら、`v1.4.2` のプッシュで起動します。
+- **上限の例:** `includes` と `excludes` はそれぞれ 8 個までです。1 つのソースアクションに置けるトリガーは 1 つです。
+- **`DetectChanges` との関係:** フィルター付きのトリガーを追加すると、アクションの変更検知は `false` の扱いになります。この場合の起動はトリガーが担います。トリガーがなく `false` なら、コミットでは起動しません。
+- **誤ると:** ファイルパスのフィルターがあると、ブランチを初めてプッシュしたときはパイプラインが動きません。変更したファイルの一覧を取得できないためです。プッシュと PR のトリガーが重なると、PR のマージで 2 回動くことがあります。
+
 ### 手動承認 {#manual-approval}
 
 Approval アクションを置くと、そこでパイプラインが止まります。
 
 - 承認すると次へ進む
-- 却下、または **7 日以内に応答がないと**アクション失敗と同じ扱いになる
+- 却下、または **7 日(既定)以内に応答がないと**アクション失敗と同じ扱いになる
 - 同じリージョンの SNS トピックへ通知し、確認用 URL とコメントを付けられる
 - 承認者には `codepipeline:PutApprovalResult` の権限が必要
 
 **手動承認の設定**: 設定項目は、SNS トピックの ARN、`CustomData`(コメント)、`ExternalEntityLink`(確認用 URL)です。承認アクションの中で `#{...}` の変数を使えます。
+
+```json
+"configuration": {
+  "NotificationArn": "arn:aws:sns:ap-northeast-1:111122223333:release-approval",
+  "ExternalEntityLink": "https://staging.example.com",
+  "CustomData": "コミット #{SourceVariables.CommitId} を確認してください"
+}
+```
+
+- **期限の例:** 既定なら、10 月 1 日 9 時に止まった承認は、10 月 8 日 9 時までに応答がなければ失敗です。`timeoutInMinutes: 1440` なら 1 日で失敗です。
+- **却下の例:** 却下はアクションの失敗と同じなので、次のステージへ進みません。
+- **`PutApprovalResult` の例:** 承認者のロールに、`Resource` を `arn:aws:codepipeline:ap-northeast-1:111122223333:orders/Approval/Manual` に絞って許可すると、このアクションだけ承認できます。
+- **誤ると:** サービスロールに SNS への `sns:Publish` がないと、通知が届きません。
 
 ### 複数環境への展開 {#multi-environment}
 
@@ -911,6 +1223,11 @@ flowchart TD
 | 別リージョンへデプロイ | アクションにリージョンを指定。リージョンごとにアーティファクトバケットが必要 |
 | 条件を満たしたときだけ進める | ステージ条件（CloudWatch アラームなどのルール） |
 
+- **環境ごとの設定の例:** `ParameterOverrides` に `{"Stage": "prod"}` を渡し、同じテンプレートを別のスタックに適用します。
+- **別アカウントの例:** パイプラインのアカウント `111122223333` からデプロイ先のロールを引き受けます。既定の AWS 管理キーではデプロイ先のアカウントが成果物を復号できないので、カスタマー管理キーを使い、キーポリシーとバケットポリシーで許可します。
+- **別リージョンの例:** 東京のパイプラインから大阪へデプロイするなら、大阪にもアーティファクトバケットを置きます。
+- **誤ると:** KMS キーをエイリアスで指定すると、別アカウントからは解決できません。キー ID か ARN を指定します。
+
 ### ステージのロールバック {#pipeline-rollback}
 
 CodePipeline は、以前に成功した実行の版を使ってステージを戻せます。
@@ -920,6 +1237,16 @@ CodePipeline は、以前に成功した実行の版を使ってステージを�
 | 手動 | コンソールまたは `RollbackStage` API |
 | 失敗時に自動 | ステージの On Failure 条件で結果を Rollback にする |
 | 成功後の確認で戻す | On Success 条件のルールで結果を Rollback にする |
+
+- **手動の例:** 実行 ID を指定して `Prod` を戻します。
+
+```bash
+aws codepipeline rollback-stage --pipeline-name orders --stage-name Prod \
+  --target-pipeline-execution-id <前回成功した実行 ID>
+```
+
+- **使われる内容の例:** 戻す先の実行の成果物と変数を使います。Git の `main` が進んでいても、リビルドはしません。
+- **誤ると:** ソースのステージは戻せません。パイプラインの構造を変える前の実行にも戻せません。ロールバックの実行を戻す先にはできません。
 
 ### ステージ条件 {#stage-conditions}
 
@@ -940,11 +1267,25 @@ CodePipeline は、以前に成功した実行の版を使ってステージを�
 
 **例**: `Prod` ステージの On Success に `CloudWatchAlarm` のルールを置きます。デプロイの後に 5XX のアラームが `ALARM` になれば、前回成功した実行の版へ戻します。`PARALLEL` モードでは、ステージのロールバックも Rollback の結果を持つ条件も使えません。
 
+ルールごとの例です。
+
+- **`CloudWatchAlarm` の例:** `AlarmName: web-5xx`、`WaitTime: 20` で、状態の変化を 20 分待ってから判定します。
+- **`DeploymentWindow` の例:** `Cron: 0 0 9-17 ? * MON-FRI *` は、月曜から金曜の日中に配置を許します。`TimeZone` を書かないと UTC です。`TimeZone` なしで日本時間の 9 時を意図すると、9 時間ずれます。
+- **`VariableCheck` の例:** `Variable: #{SourceVariables.BranchName}`、`Operator: EQ`、`Value: main` です。
+- **`LambdaInvoke` の例:** 関数で今日のリリース凍結の有無を読み、凍結中なら失敗を返します。
+- **`CodeBuild`、`Commands` の例:** `Prod` に入る前に `./smoke.sh` を実行し、失敗なら入りません。
+- **Entry の `Fail` の例:** アラームが `ALARM` なら、ステージに入らず失敗します。
+- **Entry の `Skip` の例:** `VariableCheck` で `feature/*` ならステージを飛ばします。`Skip` で使えるルールは `LambdaInvoke` と `VariableCheck` だけです。
+- **On Failure の例:** `Prod` のデプロイが失敗すると `Rollback` します。自動の再試行とは併用できません。
+- **On Success の `Fail` の例:** デプロイは成功したがアラームが鳴ったときに、ステージを失敗にして次へ進ませません。
+
 ロールバックの実行は新しい実行として記録され、履歴には `rollback` の種類で表示されます。
 
 ## CodeArtifact {#codeartifact}
 
 [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
+**提供単位:** リージョン。ドメインとリポジトリはリージョンごとに作り、VPC の外にあります（[提供単位の一覧](resource-scope.md)）。VPC からはインターフェイスエンドポイントでも接続できます。
 
 npm、pip、Maven、NuGet などのパッケージを保管する私設リポジトリです。社内ライブラリの共有や、公開パッケージの取得元を一本化したいときに使います。
 
@@ -1062,7 +1403,7 @@ flowchart TD
 |---|---|
 | 公開パッケージだけを使う小さなプロジェクト | なくてよいことが多い。ロックファイルで十分 |
 | 社内ライブラリを複数のチームで共有する | 向いている |
-| インターネットに出られない VPC でビルドする | 向いている。インターフェイス VPC エンドポイントで接続し、公開パッケージは CodeArtifact 経由で取得する |
+| インターネットに出られない VPC でビルドする | 向いている。インターフェイス VPC エンドポイントで接続し、公開パッケージは CodeArtifact 経由で取得する。Python と Swift 以外は、アセットの取得に S3 ゲートウェイエンドポイントも要る |
 | 使えるパッケージや取得元を組織で管理したい | 向いている |
 | すでに GitHub Packages などを使っている | 同じ役割なので、IAM で統一したいなどの理由がなければ増やさなくてよい |
 
@@ -1084,6 +1425,13 @@ Git リポジトリと接続し、ブランチごとに Web アプリをビル�
 | 環境変数 | ブランチごとに値を変えられる |
 
 典型的な使い方は、`main` を本番、`develop` を結合テスト用とする構成です。Web プレビューも含めて、ブランチ数はアプリあたり 50 のクォータがあるので、不要な PR は閉じます。
+
+**提供単位**: アプリはリージョン単位で作り、VPC の外にあります（[2 つの軸](resource-scope.md#two-axes)）。
+
+- **自動検出の例:** パターンが `release*` なら `release-1.4` が自動でデプロイされます。`*` は全ブランチです。`release*, feature*` と複数も書けます。
+- **Web プレビューの例:** PR #12 に一意の URL が付き、レビュアーはマージ前に動きを確認します。
+- **環境変数の例:** `API_URL` を `main` では `https://api.example.com`、`develop` では `https://dev-api.example.com` にします。
+- **クォータの計算例:** 本番と検証の 2 ブランチ、機能ブランチ 40 本、開いている PR 8 本で 50 です。次の PR のプレビューは作れません。増やすこともできません。
 
 ### ビルド設定と環境変数 {#amplify-build-settings}
 
@@ -1132,6 +1480,14 @@ test:
 
 **落とし穴**: `AWS` で始まる環境変数は作れません。シークレットを環境変数に入れないでください。Gen 2 のアプリなら Secret management を使います。
 
+- **`artifacts.baseDirectory` の例:** `npm run build` の出力が `build/` なのに `dist` と書くと、公開するファイルが見つかりません。
+- **`cache.paths` の例:** `node_modules/**/*` で 2 回目以降の `npm ci` を速くします。プロジェクトのルートの外は指定できません。サイズは 5 GB までです。
+- **`USER_DISABLE_TESTS` の例:** 全ブランチで `true` にすると、テストの手順を飛ばします。特定のブランチだけ飛ばすなら、全体を `false` にして、そのブランチだけ `true` に上書きします。
+- **`AWS_BRANCH` の例:** `if [ "$AWS_BRANCH" = "main" ]; then npm run build:prod; fi` のように分岐します。
+- **`AWS_PULL_REQUEST_SOURCE_BRANCH` の例:** `feature/login` から `main` への PR のプレビューでは、値が `feature/login` です。
+- **ブランチのアクセス制御の例:** `develop` にユーザー名とパスワードを設定し、公開前の画面を社外に見せません。ブランチとグローバルの両方にあれば、ブランチの設定が優先です。
+- **誤ると:** `NEXT_PUBLIC_API` のようなフロントエンド用の変数に API キーを入れると、ブラウザに配信されます。
+
 ## アプリケーション環境の作成と管理 {#app-environments}
 
 結合テストでは、**承認済みの同じ版**を環境ごとに名前で指す仕組みが役立ちます。
@@ -1144,6 +1500,11 @@ test:
 | API Gateway のステージ | `dev`、`prod` のステージとステージ変数 | [API Gateway](api-gateway.md) |
 | CloudFormation / SAM | 同じテンプレートをパラメータ違いで別スタックに | [IaC](iac.md) |
 | Elastic Beanstalk の環境 | アプリケーションバージョンを環境へ割り当てる | [EC2 と Elastic Beanstalk](ec2-beanstalk.md) |
+
+- **Lambda のエイリアスの例:** `staging` がバージョン 7、`prod` がバージョン 6 です。ステージングで確かめた後、下のコマンドで `prod` を 7 へ向けます。コードはビルドし直しません。
+- **イメージタグの例:** 本番のタスク定義は `my-app:git-abc123` を指します。`latest` を指すと、何が動くかがプッシュの時点で変わります。
+- **API Gateway の例:** ステージ変数 `lambdaAlias` を `dev` と `prod` で変え、同じ API の定義から別のエイリアスを呼びます。
+- **CloudFormation の例:** 同じテンプレートから `orders-staging` と `orders-prod` の 2 つのスタックを作ります。
 
 ```bash
 # ステージングで検証済みのバージョン 7 を本番へ昇格する
@@ -1183,6 +1544,18 @@ aws lambda update-alias --function-name orders --name prod --function-version 7
 - 少数の利用者で実データを確認したい: カナリア
 - 問題を段階的に検知しながら広げたい: 線形
 
+10 台の EC2 と 1,000 リクエスト毎秒の Web アプリで比べます。
+
+| 戦略 | 更新中の様子 | 新版に当たるリクエスト |
+|---|---|---|
+| 一括 | 10 台を同時に更新。処理能力が一時的に落ちる | すぐに全部 |
+| ローリング(2 台ずつ) | 8 台で処理を続ける | 2 台分ずつ増える |
+| Blue/Green | 20 台が一時的に動く | 切り替えで一度に全部 |
+| カナリア(10%、5 分) | 新旧が同時に動く | 最初の 5 分は毎秒 100 件 |
+| 線形(毎分 10%) | 新旧が同時に動く | 毎分、毎秒 100 件ずつ増える |
+
+- **誤ると:** 新版と旧版を同時に動かせないアプリに、ローリングやカナリアを選ぶと、更新中に片方の版でエラーになります。たとえば、新版だけが読める形式でセッションを保存する場合です。
+
 ## ロールバックの方法 {#rollback}
 
 | サービス | 自動 | 手動 |
@@ -1196,6 +1569,12 @@ aws lambda update-alias --function-name orders --name prod --function-version 7
 | ECS | デプロイサーキットブレーカー | 以前のタスク定義でサービスを更新 |
 
 「ロールバックを自動化する」問題では、**カナリアや線形でトラフィックを移し、CloudWatch アラームで発火させる**構成が定番です。データベースのスキーマ変更は戻せないことがあるので、新旧どちらの版でも動く形で進めます。
+
+- **CodeDeploy の例:** デプロイ ID `d-EXAMPLE` が失敗すると、前のリビジョンを新しい ID で配布します。
+- **Lambda の例:** `aws lambda update-alias --function-name orders --name prod --function-version 6` で、ビルドし直さずに戻せます。
+- **API Gateway の例:** ステージの `deploymentId` を前のデプロイへ戻します。
+- **ECS の例:** `aws ecs update-service --cluster prod --service web --task-definition web:12` で前のリビジョンに戻します。
+- **スキーマの例:** 列を削除する変更を先に出すと、旧版に戻せません。新しい列を足し、新旧の両方で動く版を出した後、次のリリースで古い列を消します。
 
 ## デプロイ失敗の診断 {#troubleshooting-deployments}
 
@@ -1217,6 +1596,11 @@ aws lambda update-alias --function-name orders --name prod --function-version 7
 | CloudFormation のアクションが失敗 | スタックイベント | 最初の `CREATE_FAILED` または `UPDATE_FAILED` の理由 |
 | パイプラインが起動しない | トリガー設定、接続の状態 | フィルターの不一致、接続が保留のまま |
 
+- **切り分けの例:** パイプラインの `Deploy` が赤いなら、リンクからデプロイ `d-EXAMPLE` を開きます。`ValidateService` が失敗なら、インスタンスの `scripts.log` を読みます。`curl: (7) Failed to connect` なら、アプリが起動していないと分かります。
+- **`DownloadBundle` の例:** インスタンスプロファイルに `s3:GetObject` がないと、`AccessDenied` のログが出ます。
+- **`AllowTraffic` の例:** ヘルスチェックのパスが `/health` なのに `/` を見ていて、`/` が 404 を返すと、ターゲットが正常になりません。
+- **`file already exists` の例:** 手で置いた `index.html` が配置先にあると起きます。`--file-exists-behavior OVERWRITE` を付けます。
+
 EC2 へのデプロイのログは、インスタンスで直接見るか、CloudWatch エージェントで CloudWatch Logs に集約して見ます。CodeDeploy の **Lambda と ECS のデプロイにはこの種のログはない**ので、関数やタスク自体のログとデプロイのイベントを確認します。
 
 !!! tip "切り分けの順序"
@@ -1236,7 +1620,7 @@ EC2 へのデプロイのログは、インスタンスで直接見るか、Clou
 | 元のインスタンスの終了待ち | 最大 48 時間 |
 | インプレースのデプロイ | 最長 12 時間 |
 | Lambda のデプロイ | 最長 50 時間(移行の開始から終了まで 48 時間) |
-| 手動承認 | 7 日 |
+| 手動承認 | 既定 7 日(5 分〜60 日に変更可) |
 | パイプラインの同時実行(`QUEUED`、`PARALLEL`) | 50 |
 | パイプラインのアクション | 1 ステージに並列 100、順次 100 |
 | ソースのアーティファクト | S3 は 7 GB、CodeCommit と GitHub は 1 GB |
@@ -1260,7 +1644,7 @@ EC2 へのデプロイのログは、インスタンスで直接見るか、Clou
 | 問題発生時に自動で戻したい | CodeDeploy の自動ロールバックと CloudWatch アラーム |
 | CodeDeploy のロールバックの実体は | 以前のリビジョンの新規デプロイ（新しい ID） |
 | 本番前に人の確認を入れたい | CodePipeline の Approval アクション（SNS で通知） |
-| 承認されないまま放置すると | 7 日後に失敗扱い |
+| 承認されないまま放置すると | 既定で 7 日後に失敗扱い |
 | GitHub からパイプラインを起動したい | CodeConnections の接続 |
 | 特定のタグやパスの変更だけで起動したい | V2 パイプラインのトリガーフィルター |
 | 別アカウントへデプロイしたい | クロスアカウントロールとカスタマー管理 KMS キー |

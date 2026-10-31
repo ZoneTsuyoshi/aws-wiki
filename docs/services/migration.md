@@ -52,9 +52,14 @@
 
 **落とし穴**: 大規模な移行で最初から Refactor を選ぶと、複雑さのため期限に間に合いません。問題文に「期限が短い」「手を加えない」とあれば Rehost です。
 
+- **振り分けの例:** 300 台で期限が 6 か月なら、Retire 40 台を先に除いて 260 台にし、1 か月 50 台のウェーブで 5.2 か月かかる見積もりにします。Refactor を混ぜると 1 台あたりの期間が読めなくなります。
+- **Retain の例:** データの所在の規制で国外に移せない 15 台は Retain にし、規制が変わるまで元の場所で動かします。
+
 ## AWS Migration Hub {#migration-hub}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational }
+
+[提供単位](resource-scope.md#two-axes): ホームリージョン 1 つに追跡データを保存します。VPC の外です。
 
 **現在の状況**: 2025 年 11 月 7 日に新規受付を終了しました。既存のお客様は進行中のプロジェクトを続けられます。新機能は追加されず、セキュリティ更新は続きます。後継の AWS Transform へのデータ移行は不要です。
 
@@ -64,9 +69,13 @@
 - **関連機能**: Strategy Recommendations、Orchestrator、Refactor Spaces があります。
 - **見分け方**: Migration Hub 自体はデータを移しません。実際の移行は MGN や DMS が行います。
 
+- **ホームリージョンの例:** ホームを `us-west-2`、移行先を `ap-northeast-1` にできます。移行先のリージョンとは別でかまいません。
+
 ## Application Discovery Service {#application-discovery}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate }
+
+[提供単位](resource-scope.md#two-axes): リージョン。コレクターとエージェントはオンプレミスに置きます。AWS 側は VPC の外です。
 
 **現在の状況**: 新規受付を終了しました。後継は AWS Transform です。
 
@@ -80,9 +89,13 @@
 
 **落とし穴**: Agentless Collector は VM の中を見ないので、実行中のプロセスがわかりません。依存関係を詳しく調べるならエージェントです。
 
+- **間隔の例:** 300 台の VMware は Agentless Collector で約 60 分ごとに集めます。依存関係が複雑な 20 台だけ Discovery Agent を入れ、約 15 秒間隔で接続とプロセスを集めます。
+
 ## Migration Evaluator {#migration-evaluator}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational }
+
+[提供単位](resource-scope.md#two-axes): コレクターをオンプレミスに置きます。AWS の VPC にリソースは作りません。
 
 移行の費用対効果(ビジネスケース)を作るサービスです。依存関係の調査ではなく、コストの比較に使います。
 
@@ -96,11 +109,15 @@
 | AWS に移すといくら節約できるか | Migration Evaluator |
 | どのサーバーがどれに依存しているか | AWS Transform(既存のお客様は Application Discovery Service) |
 
+- **例:** 200 台の使用率を集めると、CPU のピークが 10% のサーバーは小さいインスタンスタイプに対応付けられます。構成どおりの大きさで比べるより、AWS 側の費用が下がります。
+
 新規受付を止めたという記載は、公式のページでは確認できませんでした(2026 年 10 月時点)。
 
 ## AWS Transform {#transform}
 
 [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): リージョン。ワークスペースを作って使い、VPC の外です。
 
 AI エージェントを使って、移行とモダナイズを進めるサービスです。2025 年 5 月に始まり、Migration Hub の機能を引き継いでいます。追加料金はかかりません。
 
@@ -124,9 +141,14 @@ AI エージェントを使って、移行とモダナイズを進めるサー�
 | Contributor | ジョブの開始と停止。重要な操作の承認は不可 |
 | Reader | 閲覧のみ |
 
+- **ロールの例:** 移行担当は Contributor、本番へのデプロイを承認する責任者は Approver、監査は Reader にします。Contributor はジョブを開始できますが、本番へのデプロイは承認できません。
+- **誤ると:** 全員を Administrator にすると、承認の仕組みが意味をなさず、コネクタも誰でも変更できます。
+
 ## AWS Transform MGN(旧 Application Migration Service) {#mgn}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): リージョン。レプリケーションサーバーと起動する EC2 は指定したサブネット（AZ、VPC の中）に置きます。
 
 物理、仮想、他のクラウドのサーバーを、**ブロック単位の継続的な複製**で EC2 へ移します。切り替えの停止は通常、分単位です。AWS Application Migration Service から名前が変わり、試験ガイドでも両方の名前が使われます。API やコンソールの URL では今も `mgn` です。
 
@@ -152,6 +174,9 @@ sequenceDiagram
 | 元のサーバー → ステージングエリアのサブネット | TCP 1500 | 初回の同期が進まない |
 | ステージングエリア → AWS のサービス | TCP 443 | レプリケーションサーバーが準備できない |
 
+- **ファイアウォールの例:** 元のサーバーのある `192.0.2.0/24` から、ステージングエリアのサブネット `10.0.50.0/24` への TCP 1500 を許可します。
+- **誤ると:** 443 だけ開けると、エージェントのインストールは成功しますが、状態が `Not ready` のまま進みません。
+
 ### 3 つのテンプレート {#mgn-templates}
 
 テンプレートの設定は新しく追加するサーバーに適用されます。追加済みのサーバーには影響しません。サーバーごとに上書きできます。
@@ -163,6 +188,12 @@ sequenceDiagram
 | 起動後 | Systems Manager のアクションなど | 監視エージェントを入れる |
 
 **例**: 書き込みが多いサーバーで複製が遅れるなら、そのサーバーのレプリケーションサーバーだけ `t3.small` から `m5.large` に変えます。
+
+- **サブネットの例:** すべてのウェーブで 1 つの専用サブネットにします。数千台の移行のように特別な場合だけ複数にします。複数にするとレプリケーションサーバーが増え、費用も増えます。サブネットを変えても複製は止まらず、数分遅れる程度です。
+- **帯域の例:** 1 Gbps の回線を 50 台で分けるなら、1 台の上限（Data routing and throttling）を 20 Mbps にすると 50 × 20 = 1,000 Mbps です。営業時間の回線を守れますが、初回の同期は遅くなります。
+- **経路の例:** 複製をインターネットに出したくないなら、プライベート IP での転送にして Direct Connect や VPN を通します。
+- **起動テンプレートの例:** テストは `t3.medium` と隔離されたサブネットで起動し、カットオーバーは本番のインスタンスタイプとサブネットに変えます。
+- **誤ると:** テンプレートを直しても追加済みのサーバーには効きません。すでに複製中のサーバーは個別に変更します。
 
 ### ライフサイクル {#mgn-lifecycle}
 
@@ -179,11 +210,15 @@ sequenceDiagram
 
 大規模な移行では、サーバーをアプリに、アプリをウェーブにまとめ、まとめて操作します。
 
+- **例:** Web 2 台と DB 1 台を `shop` アプリに、`shop` を第 3 ウェーブにまとめ、土曜の 22 時にまとめてカットオーバーします。Web だけ先に切り替えて、DB との遅延が増える事故を防げます。
+
 **落とし穴**: vCenter のエージェントレス複製は、新規のデプロイでは使えなくなりました。古い資料で「エージェントを入れられないなら agentless」とあっても、今はエージェントでの複製が推奨です。
 
 ## AWS DMS {#dms}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): リージョン。レプリケーションインスタンスはサブネット（AZ、VPC の中）に置きます。Serverless も VPC に接続します。
 
 データベースを移行するサービスです。移行中も元のデータベースを使い続けられます。
 
@@ -198,6 +233,10 @@ sequenceDiagram
 
 **例**: インスタンスの大きさを見積もりたくない、負荷が変わるなら Serverless です。最小 DCU は省略すると 1 で、最大は例えば 16 にします。Serverless はすべてのエンドポイントに対応しているわけではなく、S3 や Secrets Manager などへは VPC エンドポイントが必要です。
 
+- **DCU の値:** 1、2、4、8、16、32、64、128、192、256、384 から選びます。1 DCU は 2 GB の RAM です。最大（`MaxCapacityUnits`）だけが必須です。
+- **計算の例:** 最大 16 DCU は 16 × 2 = 32 GB までです。最小を 1 にしておくと、活動のない間は小さく動きます。
+- **誤ると:** 最大を 3 のような一覧にない値にするとエラーになります。
+
 ### 移行タイプ {#dms-migration-types}
 
 | コンソール | API の値 | 動作 | 使う場面 |
@@ -205,6 +244,23 @@ sequenceDiagram
 | Migrate existing data | `full-load` | 既存データを一括で移す | 停止時間を取れる |
 | Migrate existing data and replicate ongoing changes | `full-load-and-cdc` | 全ロードの後、変更を流し続ける | 停止を最小にする |
 | Replicate data changes only | `cdc` | 変更だけを流す | 別の方法で初期データを入れた後 |
+
+```json
+{
+  "rules": [{
+    "rule-type": "selection",
+    "rule-id": "1",
+    "rule-name": "sales-all",
+    "object-locator": {"schema-name": "sales", "table-name": "%"},
+    "rule-action": "include"
+  }]
+}
+```
+
+`--table-mappings` に渡すファイルです。`sales` スキーマの全テーブルを移します。
+
+- **タイプの例:** 土曜に 4 時間止められる 100 GB の DB は `full-load` です。止められない 2 TB の注文 DB は `full-load-and-cdc` で、遅延が 0 に近づいてからアプリを切り替えます。
+- **`cdc` の例:** ネイティブのダンプで初期データを入れ、ダンプの時点から `cdc` で流します。開始位置は `--cdc-start-time` などで指定します。
 
 ```mermaid
 flowchart TD
@@ -218,9 +274,9 @@ flowchart TD
 ```bash
 aws dms create-replication-task \
   --replication-task-identifier orders-migration \
-  --source-endpoint-arn arn:aws:dms:ap-northeast-1:123456789012:endpoint:SOURCE \
-  --target-endpoint-arn arn:aws:dms:ap-northeast-1:123456789012:endpoint:TARGET \
-  --replication-instance-arn arn:aws:dms:ap-northeast-1:123456789012:rep:INSTANCE \
+  --source-endpoint-arn arn:aws:dms:ap-northeast-1:111122223333:endpoint:SOURCE \
+  --target-endpoint-arn arn:aws:dms:ap-northeast-1:111122223333:endpoint:TARGET \
+  --replication-instance-arn arn:aws:dms:ap-northeast-1:111122223333:rep:INSTANCE \
   --migration-type full-load-and-cdc \
   --table-mappings file://table-mappings.json
 ```
@@ -236,6 +292,13 @@ DMS はソースのトランザクションログから変更を読みます。�
 | PostgreSQL | 論理レプリケーションスロットを使う |
 | RDS 全般 | 自動バックアップを有効にし、変更ログを十分保持する。通常 24 時間で足りる |
 
+```sql
+call mysql.rds_set_configuration('binlog retention hours', 24);
+```
+
+- **MySQL の例:** `binlog_format` は `ROW`、`binlog_row_image` は `FULL` にします。RDS for MySQL のバイナリログは、自動バックアップを有効にすると有効になります。
+- **誤ると:** `binlog_format` が `STATEMENT` や `MIXED` だと、ターゲットのデータが不整合になることがあります。
+
 **例**: RDS for MySQL で CDC のタスクがログを読めないなら、バックアップの保持期間とバイナリログの形式を確認します。
 
 **落とし穴**:
@@ -243,6 +306,8 @@ DMS はソースのトランザクションログから変更を読みます。�
 - CDC はリアルタイムの複製ではありません。遅延の SLA はなく、数分以上になることもあります。
 - ビューは全ロードのタスクでしか移せません。
 - ログを保持する時間が短いと、タスクが止まっている間に必要なログが消えて再開できません。
+
+- **保持の計算の例:** 週末の 36 時間、タスクを止める計画なら、`binlog retention hours` は 24 では足りません。48 にします。
 
 ### 主なタスクの設定 {#dms-task-settings}
 
@@ -260,13 +325,44 @@ DMS はソースのトランザクションログから変更を読みます。�
 | 検証 | 有効にする | ソースとターゲットを比較する。検証だけのタスクも作れる |
 | Multi-AZ | 有効にする | 別の AZ に同期のスタンバイを置く。CDC を使うなら有効にする |
 
+```json
+{
+  "TargetMetadata": {
+    "LimitedSizeLobMode": true,
+    "LobMaxSize": 64
+  },
+  "FullLoadSettings": {
+    "TargetTablePrepMode": "DO_NOTHING",
+    "MaxFullLoadSubTasks": 16,
+    "CommitRate": 10000,
+    "TransactionConsistencyTimeout": 600
+  }
+}
+```
+
+- **`TargetTablePrepMode` の例:** 値は `DO_NOTHING`、`DROP_AND_CREATE`、`TRUNCATE_BEFORE_LOAD` です。SCT で索引まで作ったターゲットに `DROP_AND_CREATE` を使うと、索引が消えます。
+- **`MaxFullLoadSubTasks` の例:** 既定は 8、最大は 49 です。同じ大きさの 80 テーブルなら、同時に 8 テーブルで 10 回分の時間、16 にすると 5 回分の時間が目安です。増やすとソースの負荷も増えます。
+- **`ParallelLoadThreads` の罠:** サブタスク数と掛け算で効きます。16 × 8 = 128 スレッドにするとメモリが足りず、タスクが失敗することがあります。
+- **`CommitRate` の例:** 既定は 10,000、最大は 50,000 です。一度に転送するレコード数の上限です。
+- **`TransactionConsistencyTimeout` の例:** 既定は 600 秒です。開いたトランザクションを最大 10 分待ってから全ロードを始めます。
+- **`BatchApplyEnabled` の例:** 既定は `false` です。`true` にすると変更をまとめて適用し、CDC の遅延を縮められます。ソースに主キーか一意キーがないと、更新と削除はバッチになりません。
+- **`LobChunkSize` の例:** Full LOB mode の分割サイズで、推奨は 64 KB です。ネットワークの最大パケットより大きいと切断エラーになります。
+
 **例**: 最大 2 MB の LOB がある表を Limited LOB mode の上限 32 KB で移すと、切り詰められます。上限を 2 MB 以上にするか、Full LOB mode にします。
+
+- **`LobMaxSize` の例:** 値は KB 単位で、最大 102,400 KB（100 MB）です。2 MB なら 2,048 です。超えた LOB は切り詰められ、ログに警告が出ます。
+- **確認の例:** 移す前に `SELECT MAX(LENGTH(body)) / 1024 FROM orders;` で最大の KB を調べ、その値以上にします。
+- **メモリの例:** 全ロードのメモリは、`LobMaxSize` × `CommitRate` × LOB の列数です。2,048 KB × 10,000 × 1 列 = 20,480,000 KB（約 20 GB）で、大きな表ではスワップして遅くなります。63 KB を超える値では注意します。
+- **Inline LOB の例:** 大半が小さく一部だけ大きいなら、`InlineLobMaxSize` を指定し、小さい LOB はインライン、大きい LOB は Full LOB mode で移します。
+- **主キーの罠:** CDC では、LOB 列のある表に主キーか一意インデックスが必要です。
 
 **落とし穴**: DMS はテーブルと主キーなど基本の作成だけを行います。セカンダリインデックス、制約、トリガーなどは SCT か手作業で作ります。全ロードの前に索引やトリガーを外し、後で作ると速くなります。
 
 ## AWS SCT と DMS Schema Conversion {#sct}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): AWS SCT は自分の PC で動くアプリです。DMS Schema Conversion はリージョンの機能で、VPC のデータベースに接続します。
 
 エンジンが異なる移行(異種間移行)で、スキーマとコードを変換します。データは移しません。データは DMS で移します。
 
@@ -285,9 +381,14 @@ DMS はソースのトランザクションログから変更を読みます。�
 
 変換できない機能は、評価レポートに残ります。拡張パックは、変換できない機能を Lambda 関数や Python ライブラリで補います。
 
+- **例:** Oracle から Aurora PostgreSQL への評価で「95% を自動変換できる」と出たら、残り 5% のパッケージを手で書き直す工数を見積もります。
+- **誤ると:** SCT だけ実行してもデータは移りません。スキーマを適用したあと、DMS を `DO_NOTHING` で実行します。
+
 ## AWS DataSync {#datasync}
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+[提供単位](resource-scope.md#two-axes): リージョン。エージェントは転送元の近くに置きます。サービスのエンドポイントはパブリックか VPC（PrivateLink）です。
 
 ファイルやオブジェクトを転送する、マネージドのオンラインサービスです。増分転送、圧縮、暗号化、整合性の検証を自動で行います。
 
@@ -300,6 +401,8 @@ DMS はソースのトランザクションログから変更を読みます。�
 | S3、EFS、FSx | S3、EFS、FSx | 不要 |
 | 他のクラウドのストレージ | S3 | Basic モードのみ必要 |
 | 他のクラウドのストレージ | EFS、FSx | 必要 |
+
+- **エージェントの例:** オンプレミスの NFS から S3 へならエージェントが必要で、S3 から EFS へなら不要です。S3 からリージョンをまたいで S3 へも不要です。
 
 ### タスクの設定 {#datasync-task-settings}
 
@@ -315,16 +418,25 @@ DMS はソースのトランザクションログから変更を読みます。�
 
 **落とし穴**: タスクモードは作成後に変更できません。
 
+- **フィルターの例:** `*.tmp|*.temp` は一時ファイルを除きます。`/folderA|/folderB` は転送元のパスからの相対パスです。先頭の `/` がないと意図どおりに一致しません。
+- **スケジュールの例:** `cron(0 12 ? * SUN,WED *)` は日曜と水曜の UTC 12 時です。`rate(12 hours)` は 12 時間ごとです。`rate(30 minutes)` は 1 時間より短いので作れません。
+- **`BytesPerSecond` の例:** 100 Mbps = 12,500,000 バイト/秒です。`-1` は上限なしです。実行中のタスクは `update-task-execution` で変えられます。
+- **`VerifyMode` の例:** `ONLY_FILES_TRANSFERRED` は転送した分だけ、`POINT_IN_TIME_CONSISTENT` は全データ、`NONE` は検証なしです。Enhanced は転送分だけです。
+- **`TransferMode` の例:** `CHANGED` は差分だけ、`ALL` は毎回すべてです。10 TB で 1% の変更なら、`CHANGED` は 100 GB で済みます。
+- **`PreserveDeletedFiles` の例:** `PRESERVE` は転送元で消したファイルを転送先に残します。`REMOVE` は消します。転送元の誤削除を転送先へ伝えたくないなら `PRESERVE` です。
+
 ```bash
 aws datasync create-task \
-  --source-location-arn arn:aws:datasync:ap-northeast-1:123456789012:location/loc-source \
-  --destination-location-arn arn:aws:datasync:ap-northeast-1:123456789012:location/loc-dest \
+  --source-location-arn arn:aws:datasync:ap-northeast-1:111122223333:location/loc-source \
+  --destination-location-arn arn:aws:datasync:ap-northeast-1:111122223333:location/loc-dest \
   --task-mode ENHANCED \
   --schedule 'ScheduleExpression=rate(24 hours)' \
   --options BytesPerSecond=12500000
 ```
 
 **例**: 営業時間に回線を圧迫するので、夜間のスケジュールにし、`BytesPerSecond` で帯域を抑えます。
+
+- **計算の例:** 10 TB を 100 Mbps（12.5 MB/s）で送ると、10,000,000 MB ÷ 12.5 MB/s = 800,000 秒です。24 時間なら約 9.3 日、夜間 8 時間（28,800 秒）だけなら約 27.8 日です。
 
 ### 速度を上げる {#datasync-performance}
 
@@ -340,9 +452,14 @@ aws datasync create-task \
 
 回線が足りないときは、期間を限定した Direct Connect のホスト接続と組み合わせます。
 
+- **分割の例:** 30 Gbps の回線で `/a`、`/b`、`/c` の 3 タスクにすると、エージェントありなら各 10 Gbps まで使えます。
+- **誤ると:** タスクの実行履歴は 30 日で消えます。監査用にはタスクレポートを S3 に残します。
+
 ## AWS Transfer Family {#transfer-family}
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): リージョン。エンドポイントは公開か VPC の中（サブネットごと）を選びます。サーバーの本体は VPC の外です。
 
 SFTP、FTPS、FTP、AS2、ブラウザでの転送を受け付け、S3 または EFS に保存するマネージドサービスです。取引先のツールや設定を変えずに、自前のファイルサーバーをなくせます。
 
@@ -364,9 +481,17 @@ SFTP、FTPS、FTP、AS2、ブラウザでの転送を受け付け、S3 または
 
 **落とし穴**: 公開エンドポイントは SFTP だけで、セキュリティグループでは制限できません。FTPS は VPC でホストします。
 
+- **ポートの例:** VPC の SFTP サーバーで、取引先が 22 番を開けられないなら、22000 番で受けます。FTPS は制御 21、データ 8192〜8200 をセキュリティグループで許可します。
+- **ID の例:** 取引先 20 社なら、サービスマネージドで社ごとにユーザーと SSH 公開鍵を登録します。既存の LDAP を使うなら、Lambda のカスタム ID プロバイダーで確認します。
+- **S3 の範囲の例:** ユーザーのホームを `/partner-a-bucket/inbox` にし、IAM ロールでそのプレフィックスだけ許可します。
+- **ホストキーの例:** 移行前のサーバーの秘密鍵を登録すると、取引先に「ホストキーが変わった」という警告を出さずに切り替えられます。
+- **誤ると:** FTPS で 8192〜8200 を閉じると、ログインはできるのにファイルの一覧と転送が止まります。
+
 ## AWS Storage Gateway {#storage-gateway}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): リージョン。ゲートウェイはオンプレミスの VM か、EC2（AZ、VPC の中）に置きます。保存先は VPC の外です。
 
 オンプレミスに置くアプライアンスで、ローカルのアプリと AWS のストレージをつなぎます。ESXi、KVM、Hyper-V、Nutanix AHV の VM、ハードウェアアプライアンス、EC2 にデプロイできます。
 
@@ -396,6 +521,12 @@ SFTP、FTPS、FTP、AS2、ブラウザでの転送を受け付け、S3 または
 
 **落とし穴**: キャッシュ型の 16 TiB を超えるボリュームのスナップショットは、Storage Gateway のボリュームには復元できますが、EBS ボリュームには復元できません。
 
+- **ボリュームの例:** キャッシュ型で 40 TiB を使うなら、32 TiB の上限があるので 2 本に分けます（例: 32 + 8）。保管型なら 16 TiB が上限で、3 本（16 + 16 + 8）です。
+- **合計の例:** 32 TiB × 32 本 = 1,024 TiB がキャッシュ型の上限、16 TiB × 32 本 = 512 TiB が保管型の上限です。
+- **キャッシュの例:** S3 File Gateway で 1 日に読み書きするのが 500 GB なら、キャッシュはそれ以上にします。足りないと、読み取りのたびに S3 から取得して遅くなります。
+- **テープの例:** 200 TiB を 15 TiB のテープに書くと 14 本です（15 × 14 = 210）。ゲートウェイの合計は 1 PiB までで、超える分はアーカイブして外します。
+- **誤ると:** Tape Gateway のキャッシュとアップロードバッファが 150 GiB 未満だと、ゲートウェイを有効にできません。
+
 | 問い | 答え |
 | --- | --- |
 | 1 回きり、または定期にデータを AWS へ移す | DataSync |
@@ -406,19 +537,23 @@ SFTP、FTPS、FTP、AS2、ブラウザでの転送を受け付け、S3 または
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate }
 
+[提供単位](resource-scope.md#two-axes): デバイスを現地に置くサービスで、ジョブはリージョンに作ります。VPC の外です。
+
 **現在の状況**: Snow Family のデバイスは新規のお客様に提供されません。既存のお客様は使い続けられ、AWS はセキュリティと可用性の改善を続けています。
 
 | 元の用途 | 代わりに使うもの |
 | --- | --- |
 | オンラインで送れるデータの移行 | DataSync。必要なら期間限定の Direct Connect を組み合わせる |
 | 回線に乗らないデータ | Data Transfer Terminal、パートナーのオフライン転送(Seagate、Tsecond など) |
-| エッジでの処理(Compute Optimized) | Outposts のサーバー(2U)、ラック(42U)。接続が切れても最大 7 日動作 |
+| エッジでの処理(Compute Optimized) | Outposts ラック(42U)。接続が切れても最大 7 日動作。Outposts サーバー(1U、2U)は販売を終了し、新規のお客様を受け付けない |
 
 SAA の試験ガイドの対象一覧には Snow Family が残っています。「回線が細く、データが数十 TB 以上でオフラインの転送を選ぶ」という位置付けを覚えておきます。実務で新しく始めるなら、上の代替を検討します。
 
 ## AWS Data Transfer Terminal {#data-transfer-terminal}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): AWS の物理的な施設に機器を持ち込みます。送り先は S3 などのリージョンのサービスで、VPC は使いません。
 
 高速回線につながった AWS の施設に、自分のストレージ機器を持ち込んでアップロードするサービスです。デバイスが届くのを待つ Snow とは逆で、データを持っていく形です。
 
@@ -429,9 +564,13 @@ SAA の試験ガイドの対象一覧には Snow Family が残っています。
 - **場所**: 予約後、施設の公開名がメールで届きます。入館には身分証明が必要です。
 - **向く場面**: 撮影や車載の収集など、すでに可搬の機器にデータがあるとき。
 
+- **例:** 100 TB の SSD を持ち込み、100 Gbps、利用率 80% なら約 2.8 時間です。[計算は下](#transfer-formula)のとおりで、SSD の読み出しが 10 Gbps なら 10 倍の約 28 時間かかるので、機器の読み出しも確認します。
+
 ## App2Container {#app2container}
 
 [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
+
+[提供単位](resource-scope.md#two-axes): 自分のサーバーや PC で動くコマンドラインツールです。作ったイメージは ECR（リージョン）に置きます。
 
 **現在の状況**: 新規受付を終了しました。後継は AWS Transform のコンテナ化です。
 
@@ -444,9 +583,13 @@ SAA の試験ガイドの対象一覧には Snow Family が残っています。
 
 **見分け方**: ソースコードがないアプリのコンテナ化なら App2Container、ソースコードから進めるなら AWS Transform です。
 
+- **例:** ソースが見つからない Java の WAR を動かす Linux サーバーで、既存のお客様なら `app2container inventory` で一覧を取り、`containerize` でイメージを作ります。
+
 ## VMware の移行 {#vmware}
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate }
+
+[提供単位](resource-scope.md#two-axes): EVS は VPC の中の EC2 ベアメタル（AZ）で動きます。
 
 VMware の環境と運用を変えずに AWS へ移す Relocate の選択肢です。
 
@@ -457,6 +600,8 @@ VMware の環境と運用を変えずに AWS へ移す Relocate の選択肢で�
 | AWS Transform と MGN | AWS | VMware をやめて EC2 へリホストする |
 
 **例**: VMware の運用手順、IP アドレス、スキルをそのまま残したいなら EVS です。VMware のライセンスをやめたいなら Transform で EC2 へ移します。
+
+- **配置:** EVS は VPC の中の EC2 ベアメタルで動きます。Transform と MGN で移した先も VPC の中の EC2 です。VMware Cloud on AWS は Broadcom の製品です。
 
 ## 転送方法の選び方と時間の計算 {#choosing-transfer}
 

@@ -4,6 +4,8 @@
 
 暗号鍵を作成、管理し、データの暗号化と復号に使うためのサービスです。AWS サービスのデータを保存時に暗号化するときも、アプリで独自に暗号化するときも、鍵の管理を任せられます。
 
+**提供単位:** KMS キーはリージョンのリソースで、VPC の外にあります（[提供単位の一覧](resource-scope.md#scope-regional-outside)）。マルチリージョンキーも、各リージョンの別々のキーとして存在します。VPC から呼ぶときは、インターフェイスエンドポイントか NAT を通します。
+
 [![KMS を使う主なサービス](../assets/diagrams/kms-services.png)](../assets/diagrams/kms-services.png)
 
 ## 保存時と転送時の暗号化 {#at-rest-in-transit}
@@ -17,12 +19,17 @@
 
 保存時と転送時は別の対策なので、両方必要です。
 
+- **例:** SSE-KMS の S3 バケットでも、`http://` で取得すれば、復号された本文がネットワークを平文で流れる。`aws:SecureTransport` の拒否を足して、初めて転送時も守れる。
+- **例:** TLS で RDS に接続しても、ストレージが未暗号化ならスナップショットから読める。作成時にキーを指定する。
+
 | サービス | 保存時 | 転送時の強制の例 |
 | --- | --- | --- |
 | S3 | 新規オブジェクトは既定で SSE-S3 | バケットポリシーで `aws:SecureTransport` が `false` のリクエストを拒否 |
 | DynamoDB | 常に暗号化。既定は AWS 所有キー | SDK は HTTPS を使用 |
 | RDS | 作成時に KMS キーを指定 | クライアントから TLS で接続 |
 | Lambda | 環境変数は常に暗号化 | 暗号化ヘルパーで追加の保護 |
+
+- **誤ると:** 次のバケットポリシーがないと、`http://` での取得も通る。止めるには、Allow の条件ではなく `Deny` で書く。
 
 ```json
 {
@@ -53,6 +60,11 @@ TLS の証明書については [証明書と WAF](certificates.md) を参照し
 
 キーポリシーやローテーションを自分で管理したいとき、暗号 API を直接呼びたいとき、クロスアカウントで共有したいときは、カスタマー管理キーを選びます。CloudTrail での監査は AWS 管理キーでもできます。
 
+- **カスタマー管理キーの例:** `alias/orders` を作り、`OrdersRole` にだけ `kms:Decrypt` を許可する。監査人にキーの使用履歴を CloudTrail で示せる。
+- **AWS 管理キーの例:** S3 で `aws/s3` を選ぶ。キーポリシーは AWS が管理するので、別のアカウントに許可できない。
+- **AWS 所有キーの例:** DynamoDB の既定。料金はかからず何も設定しないが、CloudTrail にも一覧にも出ない。
+- **誤ると:** AWS 管理キーの ARN を `Encrypt` に直接渡すと、サービス経由に限るキーなので `AccessDeniedException` になる。
+
 用途では次のように分かれます。
 
 | 種類 | 用途 | 主な操作 |
@@ -63,6 +75,12 @@ TLS の証明書については [証明書と WAF](certificates.md) を参照し
 | HMAC | メッセージ認証コード | `GenerateMac`, `VerifyMac` |
 
 キーの仕様は作成後に変更できません。データキーの生成には対称キーが必要です。また、複数リージョンで同じ鍵を使う場合は、マルチリージョンキー（ID が `mrk-` で始まる）があります。
+
+- **対称の例:** S3 や RDS の暗号化、`GenerateDataKey`。
+- **RSA の例:** 取引先に公開鍵を渡し、AWS アカウントがなくても `RSAES_OAEP_SHA_256` で暗号化してもらう。復号は `kms:Decrypt` を持つ人だけ。
+- **楕円曲線の例:** `ECC_NIST_P256` と `ECDSA_SHA_256` で、ファームウェアに署名する。公開鍵を持つ端末が KMS を呼ばずに検証する。
+- **HMAC の例:** `HMAC_256` で Webhook の本文に `GenerateMac` し、受け側が `VerifyMac` で確認する。
+- **誤ると:** 非対称キーで `GenerateDataKey` を呼ぶと、`InvalidKeyUsageException` になる。
 
 ## キーポリシー、IAM、グラント {#access-control}
 
@@ -96,6 +114,10 @@ KMS キーの権限は、キーポリシーが中心です。他の多くのリ�
 
 グラントは、`CreateGrant` で作り、`RetireGrant` や `RevokeGrant` で削除します。作成直後は結果整合性の影響で反映に時間がかかることがあり、グラントトークンを使うとすぐに利用できます。
 
+- **例:** alice に `kms:Decrypt` を渡す方法は 3 つある。キーポリシーに alice を書く、ルートの文を残して IAM ポリシーで許可する、グラントで渡す。
+- **例:** EBS の暗号化ボリュームを付けると、EC2 がそのキーのグラントを作り、ボリュームを使う間だけ復号に使う。利用者には `kms:CreateGrant` が要る。
+- **誤ると:** 利用者が `kms:ViaService` で `s3.ap-northeast-1.amazonaws.com` に絞られていると、同じキーを Secrets Manager 経由で使えない。
+
 ## 主な API {#api-operations}
 
 | API | 動作 | 必要な権限 | 注意点 |
@@ -108,6 +130,10 @@ KMS キーの権限は、キーポリシーが中心です。他の多くのリ�
 | `DescribeKey` | キーの情報を取得 | `kms:DescribeKey` | |
 
 非対称キーでの `Encrypt` は、さらに上限が小さくなります。たとえば `RSA_2048` と `RSAES_OAEP_SHA_256` の組み合わせでは 190 バイトです。
+
+- **例:** 3 KB の API キーは `Encrypt` で暗号化できる。5 KB の設定ファイルは 4,096 バイトを超えるので、`ValidationException` になる。エンベロープ暗号化に変える。
+- **例:** `GenerateDataKeyWithoutPlaintext` は、100 台のワーカーへ配る暗号化済みのキーの準備に使う。各ワーカーは使うときに `Decrypt` する。
+- **例:** `ReEncrypt` は、`alias/old` の暗号文を `alias/new` に移すのに使う。呼び出し元には `kms:ReEncryptFrom`（元のキー）と `kms:ReEncryptTo`（先のキー）の両方が要る。
 
 ```python
 import boto3
@@ -189,6 +215,13 @@ def decrypt(item: dict) -> bytes:
 | 同じ暗号化済みキーの復号 | KMS の権限がある人だけ |
 | キーの `KeySpec` | `AES_128` か `AES_256` |
 
+**呼び出し回数の計算**です。100 万個の 1 MB のファイルを暗号化するとします。
+
+- `Encrypt` なら、そもそも 4,096 バイトを超えるので使えない。
+- ファイルごとに `GenerateDataKey` を呼ぶと、書き込みで 100 万回。
+- データキーをキャッシュし、1 つのキーを 1,000 ファイルで再利用すると、1,000,000 ÷ 1,000 = 1,000 回で済む。その代わり、1 つのキーが漏れると 1,000 ファイルが読まれる。
+- **誤ると:** 平文のデータキーを暗号文の隣に保存すると、暗号化の意味がなくなる。保存するのは `CiphertextBlob` のほう。
+
 ## 暗号化コンテキスト {#encryption-context}
 
 暗号化コンテキストは、暗号化のときに渡す秘密でないキーと値の組で、追加認証データとして暗号文に結び付けられます。対称キーでのみ使えます。
@@ -211,6 +244,11 @@ def decrypt(item: dict) -> bytes:
 
 S3 や Secrets Manager など、多くの AWS サービスも独自の暗号化コンテキストを使います。
 
+- **例:** `{"app": "billing"}` で暗号化した暗号文を、`{"app": "Billing"}` で復号すると `InvalidCiphertextException` になる。大文字と小文字も区別する。キーの順序は関係ない。
+- **例:** テナントごとに `{"tenant": "a"}` を付けると、テナント B の処理がテナント A の暗号文を渡しても復号に失敗する。CloudTrail で誰がどのテナントのデータを読んだかも分かる。
+- **例:** S3 の SSE-KMS は `{"aws:s3:arn": "arn:aws:s3:::my-bucket/a.csv"}` を使う。バケットキーを有効にすると、値はバケットの ARN になる。
+- **誤ると:** `{"user_email": "alice@example.com"}` のように個人情報を入れると、CloudTrail に平文で残る。
+
 ## ThrottlingException とキャッシュ {#throttling}
 
 リクエストが上限を超えると、KMS は `ThrottlingException` を返します（HTTP 400）。
@@ -232,6 +270,20 @@ RSA と楕円曲線のキーは、それぞれ別枠で 1,000 です。クロス
 3. データキーをキャッシュする。AWS Encryption SDK のデータキーキャッシュや Hierarchical keyring を使う。
 4. Service Quotas で上限の引き上げを申請する。
 
+**計算の例**です。東京リージョンの上限は秒間 20,000 回です。
+
+| 処理 | KMS の呼び出し（秒間） |
+| --- | --- |
+| S3 の SSE-KMS の `GetObject` | 12,000 |
+| DynamoDB のカスタマー管理キー | 3,000 |
+| アプリの `GenerateDataKey` | 7,000 |
+| 合計 | 22,000 |
+
+22,000 は 20,000 を超えるので、2,000 回分が `ThrottlingException` になる可能性があります。S3 バケットキーで `GetObject` の分が大きく減れば、合計は上限に収まります。
+
+- **例:** 別のアカウントのキーを `444455556666` のロールが使う場合、この回数は `444455556666` の枠に数える。キーを持つアカウントの枠は減らない。
+- **誤ると:** S3 への `PutObject` の失敗を S3 の性能の問題と考えても解決しない。SSE-KMS では KMS の呼び出しも同じ処理に含まれるので、KMS のメトリクスも確認する。
+
 ### データキーキャッシュ {#data-key-caching}
 
 AWS Encryption SDK は、既定では暗号化のたびに新しいデータキーを作ります。キャッシュすると再利用できますが、同じ鍵で暗号化するデータが増えるトレードオフがあります。
@@ -241,6 +293,8 @@ AWS Encryption SDK は、既定では暗号化のたびに新しいデータキ�
 | データキーを再利用できる | キャッシュの最大有効期間 |
 | 大量のデータキーを生成する | 1 つのキーで暗号化する最大バイト数 |
 | KMS の呼び出しが遅い、高い、上限に近い | 1 つのキーで暗号化する最大メッセージ数 |
+
+- **例:** 最大有効期間 300 秒、最大メッセージ数 100 にすると、5 分経つか 100 回使うと新しいデータキーを取得する。秒間 10 メッセージなら、100 ÷ 10 = 10 秒ごとに `GenerateDataKey` を 1 回呼ぶ。キャッシュがなければ 10 秒で 100 回なので、呼び出しは 100 分の 1 になる。
 
 ## クライアント側とサーバー側の暗号化 {#client-vs-server-side}
 
@@ -253,6 +307,9 @@ AWS Encryption SDK は、既定では暗号化のたびに新しいデータキ�
 | 向いている場面 | 多くの場合の標準 | AWS にも平文を見せたくない要件 |
 | 例 | SSE-S3、SSE-KMS、DynamoDB、EBS | AWS Encryption SDK、S3 Encryption Client |
 
+- **サーバー側の例:** RDS の暗号化は、SQL で `WHERE` を使ったまま保存時だけ暗号化できる。
+- **クライアント側の例:** クレジットカード番号をアプリで暗号化してから DynamoDB に入れる。DynamoDB の管理者にも読めないが、その属性では検索できない。
+
 ### S3 の暗号化オプション {#s3-encryption}
 
 | 方式 | 鍵の管理 | 使う場面 |
@@ -262,6 +319,18 @@ AWS Encryption SDK は、既定では暗号化のたびに新しいデータキ�
 | DSSE-KMS | KMS キーで 2 層 | 2 層の暗号化が求められるとき |
 | SSE-C | リクエストごとに自分の鍵を渡す | 鍵を AWS に保存したくないとき |
 | クライアント側 | アプリが管理 | S3 に平文を渡したくないとき |
+
+ヘッダーでの指定の例です。
+
+```bash
+# SSE-KMS でアップロード
+aws s3 cp a.csv s3://my-bucket/ --sse aws:kms --sse-kms-key-id alias/orders
+```
+
+- **SSE-S3 の例:** `x-amz-server-side-encryption: AES256`。何も指定しなくても新しいオブジェクトはこの形になる。
+- **SSE-KMS の例:** `x-amz-server-side-encryption: aws:kms`。キーを読めない人は、`s3:GetObject` があっても読めない。
+- **DSSE-KMS の例:** `x-amz-server-side-encryption: aws:kms:dsse`。
+- **SSE-C の例:** アップロードもダウンロードも、`x-amz-server-side-encryption-customer-key` で同じ鍵を渡す。鍵をなくすと読めない。
 
 ### AWS Encryption SDK {#encryption-sdk}
 
@@ -286,6 +355,10 @@ plaintext, _ = client.decrypt(source=ciphertext, key_provider=provider)
 
 新しい版では、キーリングを使う方法も選べます。Encryption SDK は他のライブラリと形式の互換性がなく、DynamoDB Encryption Client や S3 のクライアント側暗号化で作った暗号文は復号できません。
 
+- **例:** `key_ids` に東京と大阪のキーを並べると、データキーが両方で暗号化され、どちらのリージョンの権限でも復号できる。
+- **例:** `CommitmentPolicy.REQUIRE_ENCRYPT_REQUIRE_DECRYPT` は既定かつ最も厳しい設定で、古い形式のメッセージの復号は失敗する。移行中だけ `REQUIRE_ENCRYPT_ALLOW_DECRYPT` を使う。
+- **誤ると:** `StrictAwsKmsMasterKeyProvider` の `key_ids` に別のキーしかないと、暗号文に含まれるキーを使わず、`DecryptKeyError` になる。
+
 ## 暗号鍵でのデータの暗号化と復号 {#use-keys}
 
 用途ごとの選び方です。
@@ -298,6 +371,8 @@ plaintext, _ = client.decrypt(source=ciphertext, key_provider=provider)
 | 別のキーへの切り替え | `ReEncrypt` |
 | 署名と検証 | 非対称キーで `Sign` と `Verify` |
 | AWS サービス上のデータ | サービスの暗号化設定でキーを指定 |
+
+- **例:** 2 KB の API トークンは `Encrypt`、500 MB のログは Encryption SDK、ライセンスの署名は `RSA_2048` の `Sign` を選ぶ。
 
 ## Lambda 環境変数の暗号化 {#lambda-env-encryption}
 
@@ -332,6 +407,10 @@ DB_PASSWORD = kms.decrypt(
 
 データベースの認証情報は、環境変数ではなく [Secrets Manager](secrets.md) に置くのが AWS の推奨です。
 
+- **例:** 関数の設定で `KMSKeyArn` に `arn:aws:kms:ap-northeast-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab` を指定する。監査人は誰が復号したかを CloudTrail で追える。
+- **誤ると:** カスタマー管理キーを無効にすると、関数の起動時に `KMSDisabledException` で失敗する。
+- **誤ると:** ヘルパーを使っているのに実行ロールに `kms:Decrypt` がないと、コードの `decrypt` が `AccessDeniedException` になる。`EncryptionContext` を省いても `InvalidCiphertextException` になる。
+
 ## アカウントをまたぐ暗号化 {#cross-account}
 
 別のアカウントのキーを使うには、次の両方が必要です。
@@ -361,6 +440,8 @@ DB_PASSWORD = kms.decrypt(
 - 使えるのは暗号操作と `CreateGrant`、`DescribeKey`、`GetKeyRotationStatus`、`GetPublicKey`、`ListGrants`、`RetireGrant`、`RevokeGrant` などに限られる。`ScheduleKeyDeletion` のような管理操作を許可しても効かない。
 - AWS 管理キーのポリシーは変更できないので、共有できない。共有するならカスタマー管理キーで暗号化する。
 - たとえば RDS のスナップショットを共有するなら、AWS 管理キーではなくカスタマー管理キーが必要。
+- **誤ると:** `aws/rds` で暗号化したスナップショットは、別のアカウントに共有できない。カスタマー管理キーで暗号化し直すコピーを作ってから共有する。
+- **誤ると:** キーポリシーで `444455556666:root` に許可しただけだと、そのアカウントのロールは使えない。ロールの IAM ポリシーでも許可する。
 
 ## キーのローテーション {#key-rotation}
 
@@ -392,6 +473,9 @@ kms.disable_key_rotation(KeyId=key_id)                           # 無効化
 - ローテーションは既存のデータを再暗号化しない。流出したデータキーの影響も消えない。
 - 実行すると EventBridge に `KMS CMK Rotation` イベントが、CloudTrail に `RotateKey` イベントが記録される。
 - 料金は、最初の 2 回のローテーションで増え、それ以降は増えない。
+- **例:** 2026 年 1 月に有効化すると、365 日の設定なら 2027 年 1 月に新しい鍵素材になる。アプリの `Decrypt` はそのままで動き、KMS が暗号文のメタデータから古い鍵素材を選ぶ。
+- **例:** 監査の前に確認のために 1 回だけ回すなら、`rotate_key_on_demand` を使う。上限 25 回のうち 1 回を消費し、年次の予定は動かない。
+- **誤ると:** データキーが漏えいしたときに KMS キーをローテーションしても、そのデータキーで作った暗号文は読まれたまま。データを新しいデータキーで暗号化し直す。
 
 ## 別名とキーの削除 {#aliases}
 
@@ -404,6 +488,10 @@ kms.disable_key_rotation(KeyId=key_id)                           # 無効化
 - 別のアカウントのキーは、別名 ARN で指定する。
 
 キーの削除はすぐには実行されません。`ScheduleKeyDeletion` で 7〜30 日（既定 30 日）の待機期間を置き、その間は `CancelKeyDeletion` で取り消せます。削除すると、そのキーの暗号文は復号できなくなります。迷ったら `DisableKey` で無効化します。
+
+- **別名の例:** アプリは `alias/orders` を使う。新しいキーを作ったら `aws kms update-alias --alias-name alias/orders --target-key-id <新しいキー ID>` だけで、以後の暗号化が新しいキーになる。
+- **誤ると:** 別名を切り替えたあとに古いキーを削除すると、古いキーで作った暗号文は読めなくなる。暗号文の中身は古いキーを指しているからだ。別名を切り替えても、古いキーは残す。
+- **誤ると:** IAM ポリシーの `Resource` に別名の ARN を書いても、暗号操作の対象はキーなので効かない。`kms:RequestAlias` を使う。
 
 ## サービスでの KMS の利用 {#service-integration}
 
@@ -422,6 +510,10 @@ S3 バケットキーを有効にすると、暗号化コンテキストはオ�
 
 SSE-KMS のオブジェクトを読むには、`s3:GetObject` に加えて KMS キーの `kms:Decrypt` も必要です。権限エラーの原因としてよく問われます。
 
+- **例:** 表の値の使い方です。DynamoDB のテーブルを `AWS_OWNED_KMS_KEY` からカスタマー管理キーに切り替えられる。RDS は作成時のキーのまま変更できないので、スナップショットを別のキーでコピーして復元する。
+- **例:** Parameter Store の `SecureString` をスタンダードの 4 KB で `aws/ssm` に入れると、`Encrypt` で直接暗号化される。
+- **誤ると:** `s3:GetObject` だけのロールで SSE-KMS のオブジェクトを読むと、`kms:Decrypt` の `AccessDenied` になる。S3 のエラーでも、メッセージは KMS の操作を示している。
+
 ## キーの作成時の設定 {#key-creation-settings}
 
 `CreateKey` は引数なしでも動き、対称の暗号化キーができます。
@@ -435,6 +527,18 @@ SSE-KMS のオブジェクトを読むには、`s3:GetObject` に加えて KMS �
 | `Policy` | 既定のキーポリシー | 未指定なら「IAM を有効にする文」のみ |
 | `BypassPolicyLockoutSafetyCheck` | `false` | 自分が管理できなくなるポリシーの拒否を飛ばす。通常は使わない |
 
+パラメータごとの例です。
+
+```bash
+aws kms create-key --description "orders" --key-spec RSA_2048 --key-usage SIGN_VERIFY
+```
+
+- **`KeySpec` と `KeyUsage` の例:** `RSA_2048` なら `ENCRYPT_DECRYPT` か `SIGN_VERIFY` を選ぶ。`ENCRYPT_DECRYPT` で作ったキーで `Sign` を呼ぶと `InvalidKeyUsageException` になり、後から用途は変えられない。
+- **`Origin` の例:** `EXTERNAL` は自分の鍵素材を入れるとき。`AWS_CLOUDHSM` は専用の HSM に鍵を置くとき。
+- **`MultiRegion` の例:** `true` にすると ID が `mrk-` で始まる。後から `true` にはできないので、必要なら作り直して暗号文を移す。
+- **`Policy` の例:** 指定しないと IAM を有効にする文だけになる。自分の許可を書かないポリシーを渡すと、安全チェックで `MalformedPolicyDocumentException` になる。
+- **`BypassPolicyLockoutSafetyCheck` の例:** `true` で上のチェックを飛ばせるが、誰も管理できないキーができる恐れがある。回復には AWS サポートへの相談が必要になる。
+
 ### キーの仕様 {#key-specs}
 
 | 仕様 | 用途 | 備考 |
@@ -444,6 +548,9 @@ SSE-KMS のオブジェクトを読むには、`s3:GetObject` に加えて KMS �
 | `ECC_NIST_P256`, `ECC_NIST_P384`, `ECC_NIST_P521`, `ECC_SECG_P256K1` | 署名と検証、または鍵共有 | |
 | `ECC_NIST_EDWARDS25519` | 署名と検証 | |
 | `HMAC_224`, `HMAC_256`, `HMAC_384`, `HMAC_512` | `GenerateMac`, `VerifyMac` | `KeyUsage` の指定が必須 |
+
+- **選び方の例:** 署名の検証を社外の端末で行うなら `ECC_NIST_P256`、古い端末で RSA しか扱えないなら `RSA_2048`、ビットコイン系の署名なら `ECC_SECG_P256K1`、Webhook の認証なら `HMAC_256`。
+- **誤ると:** `HMAC_256` を作るときに `--key-usage GENERATE_VERIFY_MAC` を省くと、エラーになる。
 
 ### 対称と非対称の違い {#symmetric-vs-asymmetric}
 
@@ -456,6 +563,8 @@ SSE-KMS のオブジェクトを読むには、`s3:GetObject` に加えて KMS �
 | 自動ローテーション | 対象 | 対象外 |
 
 外部のシステムが AWS の認証情報を持てず、データを暗号化して送ってくる場合は、RSA キーの公開鍵を渡します。AWS の認証情報があるなら、対称キーが標準です。
+
+- **例:** 非対称キーの `Decrypt` で `KeyId` と `EncryptionAlgorithm` を省くと失敗する。対称キーは暗号文のメタデータから分かるので、`KeyId` なしで通る。
 
 ## キーポリシーの詳細 {#key-policy-details}
 
@@ -478,6 +587,10 @@ SSE-KMS のオブジェクトを読むには、`s3:GetObject` に加えて KMS �
 
 キーポリシーの `Principal` を `*` にして条件を付けないと、全アカウントの全員に許可するので避けます。
 
+- **キー管理者の例:** `KmsAdmin` に管理の文を許可する。`kms:ScheduleKeyDeletion` はできるが、`kms:Decrypt` はないので、データは読めない。
+- **キー利用者の例:** `OrdersRole` に利用者の文を許可する。`kms:DisableKey` はできない。
+- **統合の文の例:** 利用者が EBS でこのキーを使うと、EBS がグラントを作る。この文がないと、EBS の暗号化ボリュームのアタッチが失敗する。
+
 ### kms:ViaService {#via-service}
 
 特定のサービス経由に限定します。AWS サービスが利用者の代理で呼ぶとき（フォワードアクセスセッション）に効きます。
@@ -499,6 +612,9 @@ SSE-KMS のオブジェクトを読むには、`s3:GetObject` に加えて KMS �
 
 このロールは S3 を通してならキーを使えますが、アプリから直接 `kms:Decrypt` を呼ぶと拒否されます。値には `<サービス>.<リージョン>.amazonaws.com` の形で、リージョンを含めます。
 
+- **誤ると:** 値を `s3.amazonaws.com` と書くと、リージョンが入っていないので一致せず、S3 経由でも拒否される。
+- **誤ると:** 値のリージョンを `ap-northeast-1` にしたままマルチリージョンキーのレプリカのポリシーをコピーすると、`us-west-2` の S3 から使えない。
+
 ### 主な条件キー {#kms-condition-keys}
 
 | キー | 用途 |
@@ -508,6 +624,13 @@ SSE-KMS のオブジェクトを読むには、`s3:GetObject` に加えて KMS �
 | `kms:EncryptionContext:キー`, `kms:EncryptionContextKeys` | 暗号化コンテキストの値、キーで絞る |
 | `kms:GrantIsForAWSResource` | AWS サービスと統合されたグラントだけ許可 |
 | `kms:RequestAlias`, `kms:ResourceAliases` | 別名に基づく制御。IAM の `Resource` に別名は書けない |
+
+- **`kms:CallerAccount` の例:** `111122223333` と `kms:ViaService` を組み合わせると、AWS 管理キーと同じ「アカウントのサービス経由だけ」の形になる。
+- **`kms:EncryptionContext:` の例:** `kms:EncryptionContext:department` を `finance` にすると、`{"department": "finance"}` を渡した呼び出しだけが通る。
+- **`kms:EncryptionContextKeys` の例:** `ForAllValues:StringEquals` で `["department"]` にすると、他のキーを含むコンテキストを拒否する。
+- **`kms:GrantIsForAWSResource` の例:** 真のときだけ `kms:CreateGrant` を許可すると、EBS などの統合サービスには渡せるが、人が自分でグラントを作れない。
+- **`kms:ResourceAliases` の例:** `ForAnyValue:StringLike` で `alias/finance-*` のキーだけを使わせる。キーに別名を足すだけで権限を与えられる。
+- **`kms:RequestAlias` の例:** `alias/finance` という別名を指定した呼び出しだけを許可する。キー ID で呼ぶと一致しない。
 
 ### グラントの設定 {#grant-settings}
 
@@ -528,6 +651,11 @@ aws kms create-grant \
 | `RetiringPrincipal` | グラントを退役できる主体 |
 | `Name` | 再試行の重複を防ぐ名前 |
 | 上限 | キーあたり 50,000 |
+
+- **`Operations` の例:** `Decrypt` だけを渡す。`GenerateDataKey` を呼ぶと拒否される。`ScheduleKeyDeletion` は指定できる操作にないので、検証エラーになる。
+- **`Constraints` の例:** `EncryptionContextEquals={Purpose=Test}` は、コンテキストが `{"Purpose": "Test"}` と完全一致のときだけ通る。`EncryptionContextSubset` なら、`{"Purpose": "Test", "Team": "a"}` も通る。
+- **`Name` の例:** `--name batch-20261031` を付けて再試行すると、同じグラントが 2 つできない。
+- **`RetiringPrincipal` の例:** `Admin` を指定すると、`Admin` は `RetireGrant` で削除できる。受け手の `Worker` も、`RetireGrant` を操作に含めていなければ削除できない。
 
 **結果整合性**: 反映は通常数秒以内ですが、すぐに使うならレスポンスの `GrantToken` をリクエストの `GrantTokens` に渡します。トークンは秘密ではありません。
 
@@ -556,6 +684,10 @@ aws kms replicate-key --key-id mrk-1234abcd12ab34cd56ef1234567890ab \
 
 プライマリキーを削除するには、先にレプリカを削除します。その間の状態は `PendingReplicaDeletion` です。プライマリの待機期間は、最後のレプリカが削除されたときから始まります。
 
+- **例:** `mrk-1234...` のレプリカを `us-west-2` に作ると、キーポリシーはレプリカごとに別なので、オレゴンのロールへの許可をレプリカ側に書く必要がある。
+- **誤ると:** 東京のキーのポリシーだけ直しても、レプリカの権限は変わらない。オレゴンで `AccessDeniedException` になる。
+- **誤ると:** レプリカを無効にしてもプライマリは動く。状態は同期しないので、片方を無効にしても全体は止まらない。
+
 ## ローテーションの設定 {#rotation-settings}
 
 ```bash
@@ -571,6 +703,9 @@ aws kms enable-key-rotation --key-id <id> --rotation-period-in-days 180
 
 既存の暗号文やデータキーは再暗号化されません。データキーを再度暗号化したいなら、`ReEncrypt` を使います。
 
+- **`RotationPeriodInDays` の例:** `30` は 90 未満なので拒否される。`90` なら年に約 4 回、365 ÷ 90 ≒ 4.06 回。
+- **オンデマンドの例:** 26 回目の `RotateKeyOnDemand` はエラーになる。引き上げられないので、頻繁に回す用途には使わない。
+
 ## キーの無効化と削除 {#disable-delete}
 
 | 操作 | 効果 | 戻せるか | 暗号操作でのエラー |
@@ -582,6 +717,11 @@ aws kms enable-key-rotation --key-id <id> --rotation-period-in-days 180
 実際の削除は、指定より最大 24 時間ほど遅れることがあります。正確な日時は `DescribeKey` で確認します。
 
 待機中に誰かがキーを使おうとしたことを検知するには、CloudTrail のイベントから CloudWatch アラームを作ります。
+
+- **例:** `aws kms schedule-key-deletion --key-id <id> --pending-window-in-days 7` なら、7 日後に消える。待機中にアプリの `Decrypt` が失敗してアラームが鳴れば、`cancel-key-deletion` と `enable-key` で元に戻せる。
+- **例:** 使っていないと思うキーは、まず `DisableKey` で 1 か月様子を見る。`DisabledException` が出なければ、削除の予約に進む。
+- **誤ると:** `--pending-window-in-days 3` は範囲外でエラーになる。`CancelKeyDeletion` の後は `Disabled` のままなので、`EnableKey` を忘れると `DisabledException` が続く。
+- **誤ると:** 待機期間の 30 日が過ぎてからは戻せない。S3 のオブジェクトも EBS のスナップショットも読めなくなる。
 
 ## 鍵素材のインポート {#imported-key-material}
 
@@ -602,6 +742,9 @@ aws kms enable-key-rotation --key-id <id> --rotation-period-in-days 180
 鍵素材が期限切れや削除になると、キーの状態が `PendingImport` になり、使えなくなります。
 
 待機期間なしで鍵素材を消せるのが、インポートを選ぶ主な理由です。
+
+- **例:** `ImportKeyMaterial` で `ValidTo` を `2027-06-30T00:00:00Z` にすると、その時点で `PendingImport` になり、暗号化も復号もできない。同じ鍵素材を再度インポートすれば戻る。
+- **誤ると:** 違う鍵素材をインポートすると拒否される（ローテーションの追加を除く）。元の鍵素材を手元でなくすと、既存の暗号文は読めない。
 
 ## API の詳細 {#api-details}
 
@@ -635,6 +778,11 @@ KMS はデータキーを保存も追跡もしません。またデータキー�
 | KMS キーを新しいものに切り替え、データキーを包み直す | `ReEncrypt` |
 | 暗号学的に強い 32 バイトのトークンが欲しい | `GenerateRandom` |
 
+- **`GenerateDataKey` の例:** `KeySpec=AES_256` は 32 バイト（256 ビット）。512 ビットなら `NumberOfBytes=64`。両方は指定できない。
+- **`GenerateDataKeyPair` の例:** 端末ごとの RSA キーペアを作り、暗号化された秘密鍵を保存し、公開鍵を配る。
+- **`GenerateRandom` の例:** `NumberOfBytes=32` で 32 バイトのランダム値を得る。KMS キーは要らないが、対称キーの暗号操作の枠に数える。
+- **`Decrypt` の例:** 暗号文が 6,144 バイトを超えるなら、KMS で作った暗号文ではない。エンベロープ暗号化のデータ本体を誤って渡していることが多い。
+
 ### 主なエラー {#kms-errors}
 
 | エラー | 原因 |
@@ -647,6 +795,11 @@ KMS はデータキーを保存も追跡もしません。またデータキー�
 | `ThrottlingException` | リクエストの上限超過（HTTP 400） |
 | `KeyUnavailableException` | キーを一時的に使えない。再試行する |
 | `NotFoundException` | 指定のキーがない。別のリージョンや、別アカウントのキーを ID で指定している場合など |
+
+- **`IncorrectKeyException` の例:** `alias/a` で暗号化した暗号文を、`KeyId=alias/b` で `Decrypt` すると起きる。対称キーなら `KeyId` を省けば、暗号文の中のキーが使われる。
+- **`InvalidCiphertextException` の例:** Base64 のままの文字列を `CiphertextBlob` に渡すと起きる。先にデコードする。
+- **`NotFoundException` の例:** 東京のキー ID を `us-west-2` のクライアントで使うと起きる。マルチリージョンキーでなければ、リージョンごとにキーが別。
+- **`KMSInvalidStateException` の例:** 削除待ちのキーで `Encrypt` すると起きる。`CancelKeyDeletion` と `EnableKey` で戻す。
 
 ## リクエストの計算 {#request-quota-calc}
 
@@ -663,6 +816,10 @@ KMS はデータキーを保存も追跡もしません。またデータキー�
 
 同じアカウントとリージョンの他の処理と合わせて 20,000 を超えなければ、スロットリングされません。バケットキーを有効にすると、S3 が短期間バケット単位のキーを再利用するので、KMS へのリクエストはさらに減ります。
 
+- **例:** 同じ処理を東京以外の既定 10,000 のリージョンに置いても、1,300 ÷ 10,000 = 13% で収まる。秒間 15,000 まで増えれば、そのリージョンでは上限を超える。
+- **例:** `DescribeKey` を呼ぶ検証を毎リクエストに入れると、秒間 2,000 の別枠に当たる。結果をキャッシュする。
+- **例:** `CreateGrant` は秒間 50 回。起動時に大量の暗号化ボリュームを作る処理で当たりやすい。
+
 ### S3 バケットキー {#s3-bucket-key-settings}
 
 | 項目 | 内容 |
@@ -672,6 +829,9 @@ KMS はデータキーを保存も追跡もしません。またデータキー�
 | 暗号化コンテキスト | バケット ARN になる。オブジェクト ARN を条件にしたポリシーは効かなくなる |
 | CloudTrail | KMS のイベントがオブジェクト単位でなくバケット単位になる |
 
+- **例:** バケットキーを有効にしたあと、既存の 1 億オブジェクトを読んでも KMS の呼び出しは減らない。`CopyObject` で同じ場所にコピーし直すか、S3 バッチオペレーションを使う。
+- **誤ると:** ポリシーが `kms:EncryptionContext:aws:s3:arn` を `arn:aws:s3:::my-bucket/*` に絞っていると、有効にした途端に拒否される。値をバケットの ARN に直す。
+
 ### データキーキャッシュの設定 {#data-key-cache-settings}
 
 | しきい値 | 既定、範囲 | 必須か |
@@ -679,6 +839,9 @@ KMS はデータキーを保存も追跡もしません。またデータキー�
 | 最大有効期間 | 0 より大きい値。多くの言語は秒、JavaScript はミリ秒 | 必須 |
 | 暗号化の最大メッセージ数 | 1〜2^32。既定 2^32 | 任意 |
 | 暗号化の最大バイト数 | 既定 2^63 - 1 | 任意 |
+
+- **例:** 最大有効期間 60 秒、最大バイト数 1 GB にすると、1 分経つか 1 GB 暗号化した時点でキーを捨てる。100 MB のメッセージなら 10 個で上限になる。
+- **誤ると:** JavaScript 版で `300` を秒のつもりで指定すると、300 ミリ秒になり、キャッシュがほとんど効かない。
 
 ## CloudTrail での監査 {#kms-cloudtrail}
 
@@ -689,6 +852,8 @@ KMS のすべての操作は CloudTrail に記録されます。読み取り専�
 - 証跡からは、KMS のイベントだけをまとめて除外できる（個別には選べない）。大量のイベントでコストが増えるときの選択肢。
 - `RotateKey` イベントでローテーションを確認できる。
 - AWS 所有キーの使用は記録されない。
+- **例:** イベント名 `Decrypt` の `requestParameters.encryptionContext` を見ると、どのテナントのデータかが分かる。`userIdentity` で読んだ主体が分かる。
+- **例:** S3 のバケットキーを有効にすると、`Decrypt` のイベントが大きく減る。「イベントが減った」はバケットキーの効果として正常。
 
 ## アカウントをまたぐ手順 {#cross-account-steps}
 
@@ -702,6 +867,8 @@ Account A のキーを Account B のロールで使う順序です。
 別名を使う場合は別名 ARN にします。`alias/app-key` のように書くと、B のアカウントの別名を探して `NotFoundException` になります。
 
 片方だけだと `AccessDeniedException` です。
+
+- **例:** A = `111122223333`、B = `444455556666`。B のロールが S3 にある A の SSE-KMS オブジェクトを読むなら、バケットポリシーと B の IAM の `s3:GetObject` に加えて、A のキーポリシーと B の IAM の `kms:Decrypt` の、合計 4 か所が要る。
 
 ## 既定値と上限のまとめ {#numbers}
 

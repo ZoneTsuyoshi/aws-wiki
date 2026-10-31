@@ -14,10 +14,12 @@ with Diagram(
     graph_attr={"dpi": "150", "pad": "0.5"},
 ):
     with Cluster("リージョン（東京）"):
-        with Cluster("VPC: プライベートサブネット"):
-            app = Fargate("注文 API")
+        with Cluster("VPC"):
             vpce_ddb = Endpoint("ゲートウェイ\nエンドポイント")
-            vpce_events = Endpoint("インターフェイス\nエンドポイント")
+
+            with Cluster("プライベートサブネット"):
+                app = Fargate("注文 API")
+                vpce_events = Endpoint("インターフェイス\nエンドポイント")
 
         with Cluster("VPC の外（リージョンのサービス）"):
             orders = Dynamodb("DynamoDB\n注文の履歴")

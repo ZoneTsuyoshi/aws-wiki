@@ -20,11 +20,11 @@ with Diagram(
         with Cluster("VPC"):
             igw = InternetGateway("インターネット\nゲートウェイ")
             nat = NATGateway("NAT ゲートウェイ")
+            vpce_s3 = Endpoint("S3 ゲートウェイ\nエンドポイント")
 
             with Cluster("プライベートサブネット"):
                 app = Fargate("Fargate タスク")
                 vpce_if = Endpoint("インターフェイス\nエンドポイント")
-                vpce_s3 = Endpoint("S3 ゲートウェイ\nエンドポイント")
 
         with Cluster("VPC の外（リージョンのサービス）"):
             registry = ECR("ECR")

@@ -20,9 +20,23 @@
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
+**提供単位:** グローバル。VPC の外です。作成や変更は `us-east-1` のコントロールプレーンで行います（[提供単位の一覧](resource-scope.md#scope-global)）。
+
 複数のアカウントを 1 つの組織にまとめるサービスです。追加料金はかかりません。
 
 組織は、ルート 1 つの下に OU（組織単位）とアカウントを置く構造です。管理アカウントが 1 つあり、残りがメンバーアカウントです。
+
+**例:** 12 アカウントの会社なら、次の形にできます。
+
+```text
+ルート
+├─ 管理アカウント
+├─ Security OU（ログ保管、監査の 2 アカウント）
+├─ Workloads OU
+│   ├─ Prod OU（本番 4 アカウント）
+│   └─ Dev OU（開発 4 アカウント）
+└─ Sandbox OU（個人検証 1 アカウント）
+```
 
 ### 機能セット {#org-feature-sets}
 
@@ -35,11 +49,25 @@
 
 SCP を使おうとして使えない場合は、`aws organizations describe-organization` で `FeatureSet` を確認し、さらにルートでポリシータイプが有効かを確認します。
 
+```bash
+aws organizations describe-organization --query Organization.FeatureSet
+aws organizations enable-policy-type --root-id r-examplerootid111 --policy-type SERVICE_CONTROL_POLICY
+```
+
+- **例:** 1 行目の結果が `"CONSOLIDATED_BILLING"` なら、SCP は使えません。`"ALL"` なら、2 行目でルートの SCP を有効にします。
+- **移行の例:** 招待で加わった 20 アカウントがあると、`enable-all-features` の後に全 20 アカウントの承認が必要です。1 つでも承認しないと完了できません。
+- **誤ると:** 一括請求のみのままだと、`attach-policy` が失敗します。
+
 ### OU の設計 {#org-ous}
 
 ポリシーは OU に付けると配下へ継承されます。そのため、OU は人事上の部署ではなく、適用したいポリシーの違いで分けます。
 
 ネストは 5 階層までです。深くすると SCP の評価が追いにくくなります。
+
+**例:** 本番だけリージョンを東京に絞るなら、`Workloads/Prod` に SCP を付けます。人事部と開発部の本番アカウントは、部署が違っても同じ `Prod` に入れます。
+
+- **継承の例:** `Workloads` に付けた Deny は、配下の `Prod` と `Dev` の全アカウントに効きます。
+- **誤ると:** 部署ごとに OU を作ると、同じ SCP を部署の数だけ付けることになります。部署 8 つなら 8 か所の変更が要ります。
 
 ### ポリシーの種類 {#org-policy-types}
 
@@ -55,6 +83,10 @@ SCP を使おうとして使えない場合は、`aws organizations describe-org
 このほか、チャットアプリ、Security Hub、Inspector、Bedrock、S3、GuardDuty、アップグレードのロールアウトのポリシーがあります。
 
 SCP の値は、古い教材の「5 個、5,120 文字」から増えています。
+
+**計算例:** 1 つの対象に直接付けられる量は、SCP なら `10 × 10,240 = 102,400` 文字です。RCP は `RCPFullAWSAccess` が 1 枠使うので、自分のポリシーは 4 個で、`4 × 5,120 = 20,480` 文字です。
+
+**誤ると:** 同じ OU に 11 個目の SCP を付けるとエラーです。文を 1 つのポリシーにまとめるか、上の階層の OU に分けて付けます。
 
 ### SCP {#scp}
 
@@ -96,6 +128,26 @@ flowchart TD
 }
 ```
 
+上の SCP を付けたときの動きです。
+
+| 実行するアカウント | ロールの権限 | `--region` | 結果 |
+| --- | --- | --- | --- |
+| メンバー | `AdministratorAccess` | `ap-northeast-1` | 成功 |
+| メンバー | `AdministratorAccess` | `us-east-1` | SCP の明示的な拒否でエラー |
+| メンバー | 権限なし | `ap-northeast-1` | IAM の許可がないのでエラー |
+| 管理アカウント | `AdministratorAccess` | `us-east-1` | 成功（SCP が効かない） |
+
+**継承の計算例（Allow リスト方式）:** Allow は全階層で必要です。
+
+| 階層 | 付けた SCP |
+| --- | --- |
+| ルート | `FullAWSAccess` |
+| `Workloads` OU | `s3:*`、`ec2:*` の Allow |
+| `Prod` OU | `FullAWSAccess` |
+| アカウント | `s3:*` の Allow |
+
+このアカウントで使える上限は、すべての重なりである `s3:*` だけです。`ec2:*` はアカウントの階層に Allow がないので使えません。
+
 SCP は次のものを制限できません。
 
 - 管理アカウントのユーザーとロールの操作
@@ -105,6 +157,17 @@ SCP は次のものを制限できません。
 委任管理者のアカウントはメンバーアカウントなので、SCP の影響を受けます。
 
 適用前に影響を試すには、ルートに直接付けず、テスト用の OU にアカウントを少しずつ移します。IAM の「最後にアクセスしたサービス」の情報で、使われているサービスを確認できます。
+
+**例外の例:** 緊急用のロールだけ外すには、Deny に条件を足します。
+
+```json
+"Condition": {
+  "StringNotEquals": {"aws:RequestedRegion": "ap-northeast-1"},
+  "ArnNotLike": {"aws:PrincipalArn": "arn:aws:iam::*:role/BreakGlass"}
+}
+```
+
+条件のキーどうしは AND なので、東京以外で、かつ `BreakGlass` 以外のときだけ拒否します。
 
 SCP と権限境界の違いは [IAM](iam.md#boundaries-scp) を参照してください。
 
@@ -143,6 +206,24 @@ SCP と権限境界の違いは [IAM](iam.md#boundaries-scp) を参照してく�
 
 外部のパートナーからのアクセスが必要な場合に例外を入れないと、その連携が止まります。SCP と同様に、テスト用の OU で試してから広げます。
 
+上の RCP の動きです。
+
+| 呼び出し元 | バケットポリシーの許可 | 結果 |
+| --- | --- | --- |
+| 組織内のアカウント `111122223333` のロール | あり | 成功 |
+| 組織外のアカウント `444455556666` のロール | あり | RCP で拒否 |
+| 匿名のアクセス | 公開設定あり | RCP で拒否 |
+| CloudFront などの AWS サービス | あり | `aws:PrincipalIsAWSService` が true なので Deny の対象外 |
+
+**例外の例:** パートナーのアカウントを通すには、同じ `StringNotEqualsIfExists` にキーを足します。キーどうしは AND なので、組織外で、かつパートナーでもないときだけ拒否します。
+
+```json
+"StringNotEqualsIfExists": {
+  "aws:PrincipalOrgID": "o-exampleorgid",
+  "aws:PrincipalAccount": ["444455556666"]
+}
+```
+
 ### タグポリシー {#tag-policies}
 
 組織内のタグを標準化するポリシーです。タグキーの大文字小文字と、使える値を決めます。
@@ -167,7 +248,26 @@ SCP と権限境界の違いは [IAM](iam.md#boundaries-scp) を参照してく�
 
 「タグなしの作成を、IaC 以外も含めて止めたい」なら、SCP で `aws:RequestTag` を条件にして拒否します。
 
+```json
+{
+  "Effect": "Deny",
+  "Action": "ec2:RunInstances",
+  "Resource": "arn:aws:ec2:*:*:instance/*",
+  "Condition": {"Null": {"aws:RequestTag/CostCenter": "true"}}
+}
+```
+
+上のタグポリシーと、この SCP の動きです。
+
+| 作成時のタグ | タグポリシーだけ | この SCP も追加 |
+| --- | --- | --- |
+| `CostCenter=HR` | 作成できる | 作成できる |
+| `CostCenter=Finance` | 拒否（値が許可にない） | 拒否 |
+| タグなし | 作成できる | 拒否 |
+
 事後の検出には Config の `required-tags` ルールが使えます。
+
+**例:** `tag1Key=CostCenter`、`tag1Value=HR,Legal` で作ると、タグがない EC2 も、値が `Finance` の EC2 も非準拠です。キーは 6 個まで指定できます。
 
 ### 委任管理者 {#delegated-admin}
 
@@ -180,9 +280,15 @@ SCP と権限境界の違いは [IAM](iam.md#boundaries-scp) を参照してく�
 
 ワークロードは管理アカウントに置かず、メンバーアカウントに置きます。
 
+**例:** 管理アカウントの EC2 は SCP で止められないので、東京以外を禁止する SCP をすり抜けます。セキュリティ担当のアカウント `111122223333` を Config の委任管理者にすれば、管理アカウントに入らずに組織のルールを管理できます。
+
+**誤ると:** 委任先はメンバーアカウントなので、SCP の影響を受けます。全アカウントの `config:*` を Deny する SCP を付けると、委任管理者の作業も止まります。
+
 ## AWS Control Tower {#control-tower}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+**提供単位:** リージョン（ホームリージョン）。ランディングゾーンを作ったときのリージョンで、後から変更できません。OU とアカウントはグローバルです。VPC の外のサービスです（[提供単位の考え方](resource-scope.md#two-axes)）。
 
 ベストプラクティスに沿ったマルチアカウント環境を構築し、統制するサービスです。Organizations、Service Catalog、IAM Identity Center などを組み合わせて動かします。
 
@@ -193,11 +299,17 @@ SCP と権限境界の違いは [IAM](iam.md#boundaries-scp) を参照してく�
 | Account Factory | 承認済みの設定で新しいアカウントを用意するテンプレート。Service Catalog 上に構築 |
 | ダッシュボード | アカウント、コントロール、非準拠のリソースの概要 |
 
+**例:** 東京をホームリージョンにしてランディングゾーンを作ると、Log Archive と Audit のアカウント、Security OU が用意されます。Account Factory で `prod-orders` というアカウントを申請すると、決めた OU に入り、コントロールが自動で効きます。
+
+**誤ると:** Control Tower は既存の Organizations を使えますが、外から OU や SCP を変えるとドリフトになります。
+
 ### ランディングゾーンの構造 {#ct-landing-zone}
 
 コンソールから作ると、Security OU と任意の Sandbox OU が作られます。Security OU には、ログ保管（Log Archive）と監査（Audit）のアカウントが入ります。
 
 ランディングゾーンのバージョン 4.0 では Security OU は必須でなくなり、自分の組織の構造を定義できます。バージョン 3.3 以前では、これらのアカウントは初回作成時に決まります。
+
+**例:** 組織の全アカウントの CloudTrail と Config のログは Log Archive に集まり、監査の担当者は Audit から読みます。Log Archive に業務のワークロードを置かないようにします。
 
 ### コントロール {#ct-controls}
 
@@ -205,7 +317,7 @@ SCP と権限境界の違いは [IAM](iam.md#boundaries-scp) を参照してく�
 
 | 動作 | 働き | 実装 |
 | --- | --- | --- |
-| 予防的 | 操作を止める | SCP、RCP |
+| 予防的 | 操作を止める | SCP、RCP、宣言型ポリシー |
 | 検出的 | 違反を見つける | Config ルール |
 | プロアクティブ | 作成前に確認し、不適合なら作らない | CloudFormation Hooks |
 
@@ -218,6 +330,14 @@ SCP と権限境界の違いは [IAM](iam.md#boundaries-scp) を参照してく�
 コントロールは OU 単位で適用され、配下の全アカウントに影響します。
 
 管理アカウントには予防的コントロールが適用されません。
+
+動作ごとの例です。
+
+- **予防的:** Log Archive のバケットのポリシーを変更する操作を、SCP が拒否します。メンバーアカウントの管理者でも `AccessDenied` です。
+- **検出的:** EBS の暗号化が無効のボリュームを作ると、作成は成功します。Config ルールが非準拠と判定し、ダッシュボードに出ます。
+- **プロアクティブ:** 不適合のプロパティを持つリソースを CloudFormation で作ると、Hooks が作成前に止めます。CLI で直接作る操作は、Hooks の対象外です。
+
+**OU の例:** `Prod` にコントロールを有効にすると、`Prod` の 4 アカウントすべてに効きます。1 つのアカウントだけ扱いを変えたいなら、別の OU へ移します。
 
 ### ドリフトと拡張 {#ct-drift}
 
@@ -235,9 +355,17 @@ Control Tower の外で OU やアカウント、SCP を変更すると、ドリ�
 | 同時に進められるアカウント操作 | 5 |
 | 同時に進められるコントロール操作 | 100 |
 
+**計算例:** 12 アカウントの登録は、同時に 5 つまでなので `5, 5, 2` の 3 回に分かれて進みます。120 個のコントロールを有効にするなら、100 個まで進行中にでき、残りの 20 個は空いてから始めます。
+
+**ドリフトの例:** 管理者が Control Tower の SCP を Organizations の画面で書き換えると、ドリフトになり、Audit アカウントの `aws-controltower-AggregateSecurityNotifications` に通知が届きます。OU の **Re-register OU** で元に戻ります。
+
+**拡張の例:** アカウントの申請を Git の Pull Request で管理したいなら AFT です。全アカウントに同じ IAM ロールと SCP を追加したいなら CfCT です。
+
 ## AWS Config {#config}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+**提供単位:** リージョン。リージョンごとに有効にします。VPC の外のサービスです（[提供単位の考え方](resource-scope.md#two-axes)）。
 
 リソースの設定の履歴を記録し、ルールに合っているかを評価するサービスです。「いつ、どう設定が変わったか」と「今の設定が基準に合っているか」に答えます。
 
@@ -264,6 +392,26 @@ flowchart TD
 
 料金は、CI とルールの評価の回数によります。バージニア北部の例では、継続的な CI が 0.003 USD、日次の CI が 0.012 USD です。
 
+**費用の計算例:** 上の単価で、1 リソースが 1 日に 20 回変わるとします。継続的なら `20 × 0.003 = 0.06` USD、日次なら 1 件で 0.012 USD です。分岐点は `0.012 / 0.003 = 4` 回です。1 日 4 回より多く変わるなら、日次のほうが安くなります。
+
+```json
+{
+  "name": "default",
+  "roleARN": "arn:aws:iam::111122223333:role/ConfigRole",
+  "recordingGroup": {
+    "allSupported": false,
+    "exclusionByResourceTypes": {"resourceTypes": ["AWS::EC2::NetworkInterface"]},
+    "recordingStrategy": {"useOnly": "EXCLUSION_BY_RESOURCE_TYPES"}
+  },
+  "recordingMode": {"recordingFrequency": "DAILY"}
+}
+```
+
+- **例:** 上の設定は、ENI を記録せず、他を日次で記録します。Auto Scaling で ENI の増減が多い環境で CI を減らせます。
+- **日次の誤り:** 監査で「いつ変わったか」を分単位で知りたいのに日次にすると、1 日の最後の状態しか残りません。
+- **リージョンの誤り:** 東京だけ有効にしてバージニア北部を忘れると、そこの違反を見逃します。
+- **保持期間の例:** `aws configservice put-retention-configuration --retention-period-in-days 365` で 1 年です。指定しなければ 2,557 日（7 年）で、29 日は指定できません。
+
 ### Config ルール {#config-rules}
 
 | 観点 | 種類 | 内容 |
@@ -279,6 +427,23 @@ flowchart TD
 **ルールは止めません。** プロアクティブ評価でも、判定するだけで修復やデプロイの阻止はしません。止めるなら SCP や Control Tower のプロアクティブコントロールを使います。
 
 複数のアカウントで同じルールを使う組織ルールは、API か CLI でしか作れません。コンソールには対応していません。
+
+```bash
+aws configservice put-config-rule --config-rule '{
+  "ConfigRuleName": "required-tags",
+  "Source": {"Owner": "AWS", "SourceIdentifier": "REQUIRED_TAGS"},
+  "InputParameters": "{\"tag1Key\":\"CostCenter\"}",
+  "Scope": {"ComplianceResourceTypes": ["AWS::EC2::Instance"]}
+}'
+```
+
+トリガーの選び方の例です。
+
+- **設定変更:** セキュリティグループの 22 番を `0.0.0.0/0` に開くと、数分のうちに非準拠の判定が出ます。
+- **定期:** `MaximumExecutionFrequency` に `TwentyFour_Hours` を指定すると、24 時間ごとです。IAM のアクセスキーの経過日数のように、設定変更がなくても状態が変わるものに向きます。値は `One_Hour`、`Three_Hours`、`Six_Hours`、`Twelve_Hours`、`TwentyFour_Hours` です。
+- **プロアクティブ:** CI/CD の途中で、作る前のプロパティが準拠かを確認します。結果が `NON_COMPLIANT` でも自動では止まらないので、パイプライン側で失敗にします。
+
+**誤ると:** 設定レコーダーで対象のタイプを除外していると、ルールはそのタイプを評価しません。結果が空のままになります。
 
 ### 修復 {#config-remediation}
 
@@ -303,10 +468,14 @@ aws configservice put-remediation-configurations --remediation-configurations '[
 | --- | --- | --- | --- |
 | `Automatic` | 自動修復するか | 手動か自動を選択 | `false` のままだと修復が走らない |
 | `MaximumAutomaticAttempts` | 失敗を許す回数 | 既定 5、1 から 25 | 超えると修復の例外が付いて、止まる |
-| `RetryAttemptSeconds` | 上の回数を数える時間枠 | 1 から 2,678,000 秒 | 短いとすぐ例外になる |
+| `RetryAttemptSeconds` | 上の回数を数える時間枠 | 1 から 2,678,000 秒 | 短すぎると枠の中で回数に届かず、例外が付かないまま失敗を繰り返す |
 | 実行ロール | Automation が使う IAM ロール | 自分で用意 | 権限不足で修復が失敗する |
 
 サービスリンクルールの修復は管理できません。
+
+**例:** 上の設定は、`MaximumAutomaticAttempts=5`、`RetryAttemptSeconds=60` です。60 秒に 5 回失敗すると、そのリソースに修復の例外が付き、自動の修復が止まります。
+
+**誤ると:** ランブックが 1 回 30 秒かかるのに `RetryAttemptSeconds=60` なら、60 秒に 5 回の失敗には届きません。回数が窓に収まるように、所要時間を見て決めます。`AutomationAssumeRole` に S3 のパブリックアクセスブロックを変更する権限がないと、毎回失敗します。
 
 ### アグリゲーター {#config-aggregators}
 
@@ -318,6 +487,16 @@ aws configservice put-remediation-configurations --remediation-configurations '[
 - 上限はアグリゲーター 50 個、1 つあたり 10,000 アカウント。
 
 高度なクエリ（SQL に似た構文）で「暗号化されていない EBS ボリュームを全アカウントから探す」といった検索ができます。
+
+```bash
+aws configservice select-aggregate-resource-config \
+  --configuration-aggregator-name org-aggregator \
+  --expression "SELECT accountId, awsRegion, resourceId WHERE resourceType = 'AWS::EC2::Volume' AND configuration.encrypted = false"
+```
+
+**計算例:** 30 アカウント、4 リージョンを集めると、`30 × 4 = 120` か所分を 1 回で検索できます。
+
+**誤ると:** Config を有効にしていないアカウントのデータは集まりません。組織を指定しても自動では有効になりません。
 
 ### 適合パック {#config-conformance-packs}
 
@@ -336,6 +515,14 @@ Resources:
 
 サンプルのテンプレートが公開されています。上限は 1 パックあたり 130 ルール、アカウントあたり 50 パックです。パック内のルールも、1 リージョンあたり 1,000 ルールの上限に数えられます。
 
+```bash
+aws configservice put-organization-conformance-pack \
+  --organization-conformance-pack-name baseline \
+  --template-body file://baseline.yaml
+```
+
+**計算例:** 60 ルールのパックを 20 個展開すると `60 × 20 = 1,200` ルールで、1 リージョン 1,000 の上限を超えます。ほかの個別ルールが 100 あれば、パックに使えるのは 900 です。
+
 | 違い | 見方 |
 | --- | --- |
 | 個別ルールとの違い | 複数ルールをまとめて展開、管理する |
@@ -352,11 +539,19 @@ Resources:
 
 Config のタイムラインから、CloudTrail のイベントへたどることができます。両方を組み合わせると、「何がどう変わり、誰が変えたか」が分かります。
 
+**例:** セキュリティグループ `sg-0abc` が 10:00 に 22 番を `0.0.0.0/0` に開いたとします。
+
+- Config は、変更前後の設定（CI）と、10:03 の非準拠の判定を残します。
+- CloudTrail は、`AuthorizeSecurityGroupIngress` を呼んだロールと送信元を残します。
+- CloudWatch は、22 番への通信が増えても、それだけでは誰が開けたか答えません。
+
 CloudTrail の設定は [オブザーバビリティ](observability.md#cloudtrail) を参照してください。
 
 ## AWS Service Catalog {#service-catalog}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+**提供単位:** リージョン。ポートフォリオと製品はリージョンごとに作ります。VPC の外のサービスで、製品が作るリソースの置き場所はテンプレートで決まります（[提供単位の考え方](resource-scope.md#two-axes)）。
 
 組織が承認した構成をカタログにし、利用者がセルフサービスで作成できるようにするサービスです。
 
@@ -379,11 +574,34 @@ CloudTrail の設定は [オブザーバビリティ](observability.md#cloudtrai
 
 テンプレート制約と TagOption は、Terraform の製品には使えません。
 
+**起動制約の例:** ポートフォリオ `web` の製品 `small-ec2` に、ロール `arn:aws:iam::111122223333:role/SCLaunchEC2` を起動制約で設定します。利用者は Service Catalog のエンドユーザー権限だけで EC2 を作れます。利用者自身に `ec2:RunInstances` はありません。
+
+**数の計算例:** 3 つの製品を 2 つのポートフォリオに入れると、組み合わせは `3 × 2 = 6` です。起動制約は組み合わせごとなので、最大 6 回設定します。
+
+**テンプレート制約の例:**
+
+```json
+{
+  "Rules": {
+    "SmallOnly": {
+      "Assertions": [{
+        "Assert": {"Fn::Contains": [["t3.small"], {"Ref": "InstanceType"}]},
+        "AssertDescription": "t3.small のみ選べます"
+      }]
+    }
+  }
+}
+```
+
+**誤ると:** 起動制約がないと、利用者は `cloudformation:CreateStack` の権限エラーで失敗します。起動ロールに `ec2:RunInstances` がないと、スタックの作成が失敗します。
+
 共有は、アカウント間または Organizations で行えます。参照の共有なら元の更新が反映されます。コピーを配布するなら、CloudFormation で展開します。
 
 ## AWS Resource Access Manager {#ram}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+**提供単位:** リージョン。共有は同じリージョンに限られます。グローバルリソースの共有は `us-east-1` で作ります。RAM 自体は VPC の外のサービスで、共有するサブネットは VPC の中にあります（[提供単位の考え方](resource-scope.md#two-axes)）。
 
 リソースをコピーせず、他のアカウントと共有するサービスです。追加料金はかかりません。
 
@@ -407,6 +625,17 @@ CloudTrail の設定は [オブザーバビリティ](observability.md#cloudtrai
 
 既定では、組織を離れたアカウントは共有へのアクセスを失います。
 
+```bash
+aws ram create-resource-share --name shared-subnets \
+  --resource-arns arn:aws:ec2:ap-northeast-1:111122223333:subnet/subnet-0abc1234 \
+  --principals 444455556666
+```
+
+- **例:** 上のコマンドで、アカウント `444455556666` が東京のサブネットを使えます。同じアカウントの大阪からは見えません。
+- **OU の例:** `--principals` に OU の ARN を指定すると、後からその OU に入るアカウントにも共有されます。
+- **離脱の例:** アカウント間の共有で組織を離れても残したいなら、作成時に `RetainSharingOnAccountLeaveOrganization` を `True` にします。OU や組織全体への共有には使えません。
+- **誤ると:** 組織の共有を有効にしないと、OU の ARN の指定が失敗します。
+
 ### VPC サブネットの共有 {#ram-vpc-sharing}
 
 オーナーのアカウントが VPC を管理し、参加者のアカウントがそのサブネットにリソースを作ります。
@@ -416,11 +645,19 @@ CloudTrail の設定は [オブザーバビリティ](observability.md#cloudtrai
 - 参加者は、自分が作ったリソースを管理し、そのリソースの費用を負担する。
 - VPC を減らせるので、ネットワークの構成が簡単になる。
 
+**例:** ネットワークアカウント `111122223333` が `10.0.0.0/16` の VPC を持ち、`10.0.10.0/24` のサブネットをアプリのアカウント `444455556666` に共有します。
+
+- アプリのアカウントは、そのサブネットに EC2 を作り、その料金を払います。
+- ルートテーブルを変える権限はないので、経路の変更はネットワークの担当に依頼します。
+- **誤ると:** 共有するサブネットの IP が足りないと、参加者のどのアカウントも起動に失敗します。`/24` の使える IP は `256 - 5 = 251` 個で、全アカウントの合計です。
+
 VPC ピアリングや Transit Gateway との使い分けは [ネットワーク接続](network-connectivity.md) を参照してください。
 
 ## AWS License Manager {#license-manager}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
+
+**提供単位:** リージョン。リージョンをまたぐインスタンスの追跡には対応しません。VPC の外のサービスです（[提供単位の考え方](resource-scope.md#two-axes)）。
 
 Microsoft、SAP、Oracle、IBM などのソフトウェアライセンスを、アカウントやリージョンをまたいで管理するサービスです。
 
@@ -432,7 +669,23 @@ Microsoft、SAP、Oracle、IBM などのソフトウェアライセンスを、�
 
 「BYOL のライセンス超過を起動時に防ぎたい」なら License Manager です。
 
+```bash
+aws license-manager create-license-configuration \
+  --name oracle-db \
+  --license-counting-type vCPU \
+  --license-count 64 \
+  --license-count-hard-limit
+```
+
+**計算例:** 上の 64 vCPU のハードリミットで、8 vCPU のインスタンスを起動します。`64 / 8 = 8` 台までで、9 台目の起動はブロックされます。
+
+- **ソフトリミットの例:** `--no-license-count-hard-limit` にすると、9 台目も起動し、超過を通知します。
+- **停止の例:** 既定では、停止したインスタンスのライセンスはプールに戻ります。契約で停止中も数えるなら、**Include stopped instances** のルールを使います。
+- **誤ると:** ライセンス設定を付けた AMI を別のリージョンへコピーすると、そのリージョンでは起動がブロックされます。
+
 ## Resource Groups とタグ付け {#resource-groups}
+
+**提供単位:** リージョン。1 つのグループに入るのは同じリージョンのリソースです。VPC の外のサービスです（[提供単位の考え方](resource-scope.md#two-axes)）。
 
 AWS Resource Groups は、複数のリソースをまとめて扱うためのサービスです。
 
@@ -442,6 +695,17 @@ AWS Resource Groups は、複数のリソースをまとめて扱うためのサ
 | CloudFormation スタックベース | スタックに含まれるリソース |
 
 Systems Manager などで、グループ単位の操作に使います。
+
+```bash
+aws resource-groups create-group --name prod-web --resource-query '{
+  "Type": "TAG_FILTERS_1_0",
+  "Query": "{\"ResourceTypeFilters\":[\"AWS::EC2::Instance\"],\"TagFilters\":[{\"Key\":\"Env\",\"Values\":[\"prod\"]}]}"
+}'
+```
+
+**例:** 東京の `Env=prod` の EC2 が `prod-web` に入ります。Run Command は `--targets "Key=resource-groups:Name,Values=prod-web"` で全台に実行できます。
+
+**誤ると:** 新しい EC2 に `Env=Prod` と大文字で付けると、値が一致せずグループから漏れます。
 
 ### タグ戦略 {#tagging-strategy}
 
@@ -466,6 +730,17 @@ Tag Editor を使うと、複数のリソースをリージョンをまたいで
 | 事後の検出 | Config の `required-tags` |
 | 費用への反映 | [コスト配分タグ](cost-management.md#cost-allocation-tags)の有効化 |
 
+例です。
+
+- **大文字小文字:** `CostCenter=1234` と `costcenter=1234` は別のタグです。コストレポートでは行が分かれます。
+- **ABAC:** ロールのタグ `Project=alpha` と同じ値のリソースだけを操作させるには、次の条件にします。`Project=beta` のリソースは操作できません。
+
+```json
+"Condition": {"StringEquals": {"aws:ResourceTag/Project": "${aws:PrincipalTag/Project}"}}
+```
+
+- **`aws:` の予約:** `aws:team=core` のようなタグは自分では作れません。
+
 ## AWS Proton の状況 {#proton}
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
@@ -476,11 +751,15 @@ DOP-C02 と SAA-C03 の対象サービス一覧には名前が残っています
 
 公式の移行先の案には、CloudFormation Git Sync、Harmonix on AWS などがあります。
 
+**例:** 今日は 2026 年 10 月 31 日なので、Proton のコンソールには既に入れません。作成済みの ECS サービスは動き続けるので、CloudFormation で管理し直します。
+
 ## IAM Identity Center への案内 {#identity-center}
 
 複数のアカウントに、社員が 1 か所からサインインする仕組みです。Control Tower は既定でこのディレクトリを作成します。
 
 概要は [IAM](iam.md#identity-center)、詳細は [ID とディレクトリ](identity-directory.md) を参照してください。
+
+**例:** 社員が 1 つのポータルにサインインし、`prod-orders` では `ReadOnlyAccess`、`dev-orders` では `PowerUserAccess` を選んで入ります。IAM ユーザーをアカウントごとに作らずに済みます。
 
 ## マルチアカウントのパターン {#multi-account-patterns}
 
@@ -496,6 +775,9 @@ DOP-C02 と SAA-C03 の対象サービス一覧には名前が残っています
 | Suspended | 停止したアカウントの隔離 |
 | Exceptions | 標準から外れるワークロード |
 | Transitional | 移行中のアカウント |
+
+**例:** 買収した会社の 5 アカウントを受け入れるときは、`Transitional` に入れます。SCP で最低限の Deny だけ付けて、調査が済んだら `Workloads/Prod` へ移します。
+
 | Deployments | デプロイ用のパイプライン |
 
 | やりたいこと | パターン |
@@ -507,6 +789,18 @@ DOP-C02 と SAA-C03 の対象サービス一覧には名前が残っています
 | 他アカウントへの作業 | 手元のアカウントから IAM ロールを引き受ける |
 | 外部からのデータアクセスの遮断 | SCP と RCP でデータ境界を作る |
 | 新しいポリシーの安全な適用 | Policy Staging OU で試してから広げる |
+
+**ログを守る例:** Log Archive のバケットをメンバーアカウントから消せないようにする SCP です。組織の全アカウントに付けます。管理アカウントには SCP が効きません。
+
+```json
+{
+  "Effect": "Deny",
+  "Action": ["s3:DeleteBucket", "s3:DeleteObject*", "s3:PutBucketPolicy"],
+  "Resource": ["arn:aws:s3:::org-log-archive", "arn:aws:s3:::org-log-archive/*"]
+}
+```
+
+**段階の例:** 新しい SCP を `Policy Staging` の 1 アカウントで 1 週間試し、`CloudTrail` に拒否が増えないことを確かめてから `Dev`、`Prod` の順に広げます。
 
 ## 選び方の比較 {#choosing}
 
@@ -522,6 +816,8 @@ DOP-C02 と SAA-C03 の対象サービス一覧には名前が残っています
 | Service Catalog / Marketplace | 自社の承認済みの構成なら Service Catalog、サードパーティ製品の購入なら Marketplace |
 | RAM / IAM クロスアカウントロール | リソース自体を他アカウントで使わせるなら RAM、他アカウントで操作させるならロール |
 | タグポリシー / Config の `required-tags` | 値の表記の統一ならタグポリシー、タグのないリソースの検出なら Config |
+
+**例:** 「新しい EC2 に必ず `CostCenter` を付けさせ、値は `HR` か `Legal` に限り、既存の違反も一覧にしたい」なら、3 つを組み合わせます。SCP でタグなしの作成を止め、タグポリシーで値を制限し、Config の `required-tags` で既存を検出します。
 
 ## 既定値と上限のまとめ {#numbers}
 
@@ -543,6 +839,12 @@ DOP-C02 と SAA-C03 の対象サービス一覧には名前が残っています
 | Config の保持期間 | 30 日から 2,557 日、既定は 7 年 |
 | 自動修復の試行回数 | 既定 5、1 から 25 |
 
+**数の例:**
+
+- 12 アカウントを同時に作るなら、`5, 5, 2` の 3 回に分かれます。1 つ終わるごとに次を始められます。
+- 今日作ったアカウントを組織から外せるのは 4 日後です。招待で加えたアカウントは、この待ち時間がありません。
+- ルートの下に OU を 5 段作れます。6 段目は作れません。
+
 ## 試験のポイント {#exam-points}
 
 | こう問われたら | 答え |
@@ -553,7 +855,7 @@ DOP-C02 と SAA-C03 の対象サービス一覧には名前が残っています
 | SCP で権限を与えられるか | 与えられない。上限を決めるだけ |
 | 外部からの S3 アクセスを組織全体で防ぎたい | RCP の `aws:PrincipalOrgID` |
 | ベストプラクティスのマルチアカウント環境をすぐ作りたい | Control Tower |
-| Control Tower の予防的コントロールの実体 | SCP と RCP |
+| Control Tower の予防的コントロールの実体 | SCP、RCP、宣言型ポリシー |
 | Control Tower の検出的コントロールの実体 | Config ルール |
 | アカウントの発行を標準化したい | Account Factory |
 | 公開バケットを検出して自動で直したい | Config ルールと SSM Automation の自動修復 |

@@ -28,12 +28,12 @@ with Diagram(
             with Cluster("AZ 1a"):
                 app_a = Fargate("Fargate タスク\n10.0.10.0/24")
                 db_a = Aurora("Aurora ライター\n10.0.20.0/24")
+                cache_a = ElastiCache("ElastiCache\nプライマリ")
 
             with Cluster("AZ 1c"):
                 app_c = Fargate("Fargate タスク\n10.0.11.0/24")
                 db_c = Aurora("Aurora リーダー\n10.0.21.0/24")
-
-            cache = ElastiCache("ElastiCache\nセッション\n在庫のキャッシュ")
+                cache_c = ElastiCache("ElastiCache\nレプリカ")
 
     users >> dns
     users >> cdn
@@ -44,6 +44,7 @@ with Diagram(
     app_a >> db_a
     app_c >> db_a
     app_c >> db_c
-    app_a >> cache
-    app_c >> cache
-    db_a >> Edge(style="dashed", label="同じクラスター") >> db_c
+    app_a >> cache_a
+    app_c >> cache_a
+    cache_a >> Edge(style="dashed") >> cache_c
+    db_a >> Edge(style="dashed") >> db_c

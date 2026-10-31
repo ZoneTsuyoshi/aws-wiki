@@ -26,6 +26,8 @@
 
 サーバーレスのデータ統合サービスです。メタデータのカタログ、スキーマの推定、Spark ベースの ETL、ワークフローをまとめて提供します。
 
+提供単位はリージョンで、AZ は選びません。VPC の外のサービスです。VPC 内の RDS などを読むときは、Glue の接続に指定したサブネットへ ENI を置きます（[リソースの提供単位](resource-scope.md#two-axes)）。
+
 | 部品 | 役割 |
 | --- | --- |
 | Data Catalog | テーブル定義などのメタデータの置き場 |
@@ -46,6 +48,10 @@ Athena、EMR、Redshift Spectrum が同じカタログを参照できます。Ap
 **例**: Glue で作った `sales.orders` テーブルは、Athena でも Redshift の外部スキーマ経由でも、定義をコピーせずに使えます。
 
 **落とし穴**: テキスト形式のデータは UTF-8 にします。他の文字コードの CSV は正しく処理されません。
+
+**例（削除）**: `sales.orders` の `LOCATION` が `s3://lake/orders/` の外部テーブルを `DROP TABLE` しても、S3 の Parquet ファイルは残ります。同じ定義で作り直せば、そのまま読めます。
+
+**例（文字コード）**: Shift_JIS の CSV をそのままクロールすると、日本語の列が文字化けします。取り込みの前に UTF-8 へ変換します。
 
 ### クローラー {#glue-crawlers}
 
@@ -79,6 +85,27 @@ aws glue update-crawler --name orders-crawler \
 
 **落とし穴**: パーティションの形が予測できるなら、毎回クローラーを動かす必要はありません。[パーティションの同期](#partition-sync)の別の方法のほうが速く済みます。
 
+**例（テーブルレベル）**: `s3://lake/sales/orders/dt=2026-10-31/` で `orders` をテーブルにするなら、バケットを 1 と数えてレベルを 3 にします。自動判定では、ファイルの形が違うと `dt=` のフォルダごとに別のテーブルができることがあります。
+
+```json
+{
+  "Version": 1.0,
+  "Grouping": {
+    "TableGroupingPolicy": "CombineCompatibleSchemas",
+    "TableLevelConfiguration": 3
+  },
+  "CrawlerOutput": { "Tables": { "AddOrUpdateBehavior": "MergeNewColumns", "TableThreshold": 10 } }
+}
+```
+
+**例（`TableThreshold`）**: 上の設定で 11 個以上のテーブルができそうな実行は、作成せずに失敗します。パスの設定を誤ったときに、1,000 個のテーブルができるのを防げます。
+
+**例（`MergeNewColumns`）**: 既存の `amount DOUBLE` を手で `DECIMAL(12,2)` に直した後、新しいデータに `coupon` 列が現れると、`coupon` だけが増え、`amount` の型は保たれます。
+
+**例（S3 イベント通知）**: 10,000 フォルダのうち毎日 5 フォルダだけが変わるなら、`RecrawlBehavior=CRAWL_EVENT_MODE` で変更のあった 5 フォルダだけを一覧します。S3 のイベントを受ける SQS が要ります。
+
+**症状（`CRAWL_NEW_FOLDERS_ONLY`）**: 既存の `dt=2026-10-30/` の中身の列が変わっても、スキーマは更新されません。カタログと実データが食い違うので、一度全件クロールに戻して取り込み直します。
+
 ### ETL ジョブ {#glue-jobs}
 
 ジョブの種類は、用途で選びます。
@@ -104,6 +131,28 @@ aws glue update-crawler --name orders-crawler \
 
 Flex は、試験環境のジョブや一度きりのロードなど、急がない処理の費用を下げます。Glue 3.0 以降の `G.1X` と `G.2X` で使えます。
 
+```bash
+aws glue create-job --name orders-etl \
+  --role GlueOrdersRole \
+  --command Name=glueetl,ScriptLocation=s3://lake-scripts/etl.py \
+  --glue-version 5.0 \
+  --worker-type G.2X --number-of-workers 10 \
+  --timeout 60 --max-retries 1 \
+  --execution-property MaxConcurrentRuns=1 \
+  --execution-class FLEX \
+  --default-arguments '{"--job-bookmark-option":"job-bookmark-enable"}'
+```
+
+**例（タイムアウト）**: 普段 20 分で終わるジョブを `--timeout 60` にします。無限ループが起きても 20 DPU × 1 時間 = 20 DPU 時間で止まります。既定の 480 分のままなら 20 × 8 = 160 DPU 時間まで使います。
+
+**例（リトライ）**: `--max-retries 1` なら、失敗で 1 回だけ再実行します。タイムアウトしたジョブは再実行されません。書き込みが途中まで進むので、再実行しても重複しない作りにします。
+
+**例（最大同時実行数）**: 毎時起動のジョブが 70 分かかると、次の起動は前の実行中なので `ConcurrentRunsExceededException` で失敗します。間隔を空けるか、ブックマークを使わないジョブなら値を増やします。
+
+**例（Auto Scaling）**: `--enable-auto-scaling true` で最大 50 ワーカーにすると、シャッフルの重いステージでは 50 台に増え、読み込みだけのステージでは減ります。常に 50 台を確保するより、DPU 時間が減ります。
+
+**例（Flex）**: 夜間の検証データのロードは、朝までに終わればよいので Flex にします。5 分以内に結果が要るジョブには使いません。`G.4X` では使えません。
+
 #### DPU とワーカータイプ {#glue-dpu}
 
 DPU は処理能力の単位です。1 DPU は 4 vCPU、16 GB メモリです。料金は DPU と実行時間で決まります。
@@ -122,6 +171,8 @@ DPU は処理能力の単位です。1 DPU は 4 vCPU、16 GB メモリです。
 `R` タイプと `G.12X`、`G.16X` は、起動に時間がかかることがあります。時間に厳しいワークフローでは、この遅れを見込みます。
 
 **例**: 10 個の `G.2X` は 20 DPU です。30 分の実行なら 10 DPU 時間分の料金になります。
+
+**例（タイプの選択）**: 20 GB の結合で `G.1X` のエグゼキューターが OOM になるなら、ワーカー数を増やす前に `G.2X` か `R.1X` にします。1 台のメモリが 16 GB から 32 GB になります。
 
 **症状と対処**:
 
@@ -144,6 +195,10 @@ frame = glueContext.create_dynamic_frame.from_catalog(
 ```
 
 ファイルが 50,000 個を超えると、グループ化は自動で有効になります。`groupSize` はバイト単位です。
+
+**例（`groupSize`）**: 上の `134217728` は 128 MiB です。1 MiB のファイル 10,000 個なら、10,000 ÷ 128 ≈ 79 個のグループとして読みます。
+
+**例（`push_down_predicate`）**: 3 年分のうち `dt >= '2026-10-01'` だけ読むと、カタログの段階で約 31 日分に絞られます。`frame.filter()` で後から絞ると、3 年分を読んでから捨てます。
 
 #### ジョブのブックマーク {#glue-bookmarks}
 
@@ -177,6 +232,12 @@ job.commit()                             # 状態を更新する
 
 巻き戻しやリセットをしても、出力先のファイルは消えません。追跡するのはソース側だけです。再処理のときは出力先を分けないと、データが重複します。ジョブを削除するとブックマークも消えます。
 
+**例（S3）**: 初回に 1,000 個のファイルを処理し、翌日 50 個が増えると、2 回目は 50 個だけを処理します。
+
+**例（JDBC）**: `additional_options={"jobBookmarkKeys": ["order_id"], "jobBookmarkKeysSortOrder": "asc"}` で、`order_id` が増え続ける表の新しい行だけを読みます。既存の行の更新は検出できません。
+
+**例（`job-bookmark-pause`）**: バグの調査で同じ範囲を試すときに使います。状態が進まないので、次回の本番の実行に影響しません。
+
 ### ワークフローとトリガー {#glue-workflows}
 
 複数のジョブとクローラーを 1 つの単位として実行し、追跡します。
@@ -199,6 +260,10 @@ job.commit()                             # 状態を更新する
 
 **落とし穴**: 依存するジョブが起動するのは、前のジョブやクローラーがトリガーから起動された場合だけです。
 
+**例（EventBridge のバッチ）**: 件数 100、時間 900 秒なら、100 個のファイルが届くか、最初のイベントから 15 分たつと開始します。小さなファイルが 1 個ずつ届く場合に、毎回ワークフローを起動せずに済みます。
+
+**例（実行プロパティ）**: 最初のジョブが `run_date=2026-10-31` を設定し、次のジョブが同じ値を読みます。同じ日付を別々に計算して食い違うのを防げます。
+
 ### Schema Registry {#glue-schema-registry}
 
 ストリーミングデータのスキーマを一元管理し、互換性を強制します。Avro、JSON Schema、Protobuf に対応します。MSK、Kinesis Data Streams、Flink、Lambda と連携します。
@@ -217,11 +282,17 @@ job.commit()                             # 状態を更新する
 
 **例**: Avro スキーマが `BACKWARD` のとき、必須列 `email` の削除は登録できます。必須列 `zip_code` の追加は、古いメッセージを読めなくなるので拒否されます。
 
+**例（`BACKWARD` と任意列）**: 既定値付きの `coupon` 列の追加は登録できます。古いメッセージを読むときは既定値で補えるからです。コンシューマーを先に更新します。
+
+**例（`FORWARD`）**: コンシューマーを止められないときに使います。列を足しても古いコンシューマーは無視できるので、プロデューサーを先に更新します。
+
+**症状**: `DISABLED` にしたスキーマへ新しいバージョンを登録すると拒否されます。本番のスキーマを凍結するときに使います。
+
 ### Data Quality {#glue-data-quality}
 
 [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
-データの品質をルールで測るサーバーレスの機能です。オープンソースの Deequ を基盤とし、DQDL という言語でルールを書きます。25 種類以上の組み込みルールと、機械学習による異常検出があります。
+Glue の機能なので、提供単位はリージョンで、VPC の外です。データの品質をルールで測るサーバーレスの機能です。オープンソースの Deequ を基盤とし、DQDL という言語でルールを書きます。25 種類以上の組み込みルールと、機械学習による異常検出があります。
 
 | 入口 | タイミング | 使う人 |
 | --- | --- | --- |
@@ -240,11 +311,17 @@ Rules = [
 
 評価するとスコアが出て、スコアを下げたレコードを特定できます。ETL ジョブで使うと、不良レコードを隔離してから正常なデータだけを書き込めます。
 
+**例（上のルールの判定）**: 10,000 行のうち `email` が 600 行欠けていると、Completeness は 0.94 で `> 0.95` を満たしません。行数が 800 なら `RowCount > 1000` も失敗します。5 個のルールで 3 個が合格なら、スコアは 60% です。
+
+**例（入口の選び方）**: 他チームのテーブルを週 1 回点検するなら Data Catalog、毎日のロードで不良を止めたいなら ETL ジョブに組み込みます。
+
 ### DataBrew {#databrew}
 
 [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
 コードを書かずにデータを整形する、視覚的なツールです。アナリストやデータサイエンティストが主な利用者です。
+
+提供単位はリージョンで、VPC の外のサービスです（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 | 用語 | 意味 |
 | --- | --- |
@@ -262,17 +339,27 @@ Rules = [
 | 書き方 | 画面操作 | Python、Scala、Studio | DQDL |
 | 向く場面 | 探索と整形 | 本番の大規模変換 | パイプラインの中の検査 |
 
+
+**例（レシピ）**: 2026 年 10 月の売上 CSV で「日付の形式を統一」「`price` の欠損を 0 にする」のレシピを作り、毎月のファイルにレシピジョブで適用します。
+
+**例（ルールセット）**: `APY` に `120` がある行があると「0〜100」のルールが失敗し、プロファイルジョブのレポートに出ます。
+
 ## Amazon EMR {#emr}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 Spark、Hive、Presto、HBase などのオープンソースを動かすビッグデータ基盤です。Glue より設定の自由度が高く、アプリケーションやバージョンを細かく選べます。
 
+提供単位はデプロイで異なります。EMR on EC2 のクラスターは VPC の 1 つのサブネットに置く AZ のリソースです。EMR on EKS は EKS のノードの配置に従います。EMR Serverless はリージョンのサービスで、VPC の外で動き、VPC のデータへはサブネットを指定して接続します（[リソースの提供単位](resource-scope.md#scope-zonal)）。
+
 | デプロイ | 管理するもの | 向く場面 |
 | --- | --- | --- |
 | EMR on EC2 | クラスター、ノード、スケーリング | 細かな調整、SSH での確認、Spot の活用 |
 | EMR on EKS | EKS クラスター（共用） | 他のコンテナと同じ基盤に集約する |
 | EMR Serverless | アプリケーションと上限だけ | クラスターを運用したくない |
+
+
+**例（選び方）**: GPU や独自の Spark 設定を試すなら on EC2、100 個のコンテナが動く EKS に相乗りするなら on EKS、月 2 回だけの Hive のジョブなら Serverless です。
 
 ### クラスターのノード {#emr-nodes}
 
@@ -297,6 +384,10 @@ yarn.node-labels.am.default-node-label-expression: 'CORE'
 
 **症状**: コアノードを Spot にして HDFS を使うと、中断でブロックを失い、ジョブが失敗します。
 
+**例（プライマリ 3 台）**: 1 台が故障しても残りの 2 台で続行します。ただしサブネットは 1 つなので、AZ の障害には耐えません。AZ の障害に備えるなら、データを S3 に置き、別の AZ でクラスターを作り直します。
+
+**例（インスタンスフリート）**: タスクに `m5.xlarge`、`m5a.xlarge`、`m6i.xlarge` を指定すると、Spot の容量が空いているタイプから確保できます。1 つのタイプに固定すると、そのタイプの中断の影響をまとめて受けます。
+
 ### スケーリングと終了 {#emr-scaling}
 
 | 設定 | 何が変わるか | 誤ったときの症状 |
@@ -309,6 +400,20 @@ yarn.node-labels.am.default-node-label-expression: 'CORE'
 **長期クラスターと一時クラスター**: ジョブごとにクラスターを起動して終了する構成なら、データは S3 に置き、HDFS は中間データだけに使います。費用はジョブの時間分だけで済みます。
 
 ログは S3 に出力できます。クラスターを終了した後も調査でき、Athena で分析できます。
+
+```bash
+aws emr put-managed-scaling-policy --cluster-id "$CLUSTER_ID" --managed-scaling-policy \
+  'ComputeLimits={UnitType=Instances,MinimumCapacityUnits=5,MaximumCapacityUnits=30,MaximumOnDemandCapacityUnits=5}'
+
+aws emr put-auto-termination-policy --cluster-id "$CLUSTER_ID" \
+  --auto-termination-policy IdleTimeout=3600
+```
+
+**例（マネージドスケーリング）**: 上の設定は 5〜30 台で増減し、On-Demand は 5 台までです。30 台まで増えると、残りの 25 台は Spot になります。
+
+**例（自動終了）**: `IdleTimeout=3600` なら 1 時間アイドルで終了します。範囲は 1 分〜7 日で、省略時は 1 時間です。
+
+**例（終了保護）**: 24 時間稼働の HBase のクラスターでは `--termination-protected` を付けます。`terminate-clusters` は、保護を外すまで失敗します。
 
 ### HDFS と S3 {#emr-hdfs-vs-s3}
 
@@ -328,6 +433,8 @@ EMR にアタッチした EBS も一時的です。クラスターやインス�
 
 **`dfs.replication`** はブロックの複製数です。EMR はコアノードの数に応じて値を設定します。1 にすると 1 台の障害でデータを失うことがあるので、スケーリングやリサイズをするなら 2 以上にします。EMR はコアノードを `dfs.replication` の値より少なくしません。HDFS を使うならコアノードは 4 台以上が推奨です。
 
+**例（容量の計算）**: 100 GB のデータを `dfs.replication=2` で置くと 200 GB を使います。コアノードが 1 台 100 GB なら、余裕も考えて 4 台以上にします。
+
 ### EMR on EKS {#emr-on-eks}
 
 既存の EKS クラスターで EMR のコンテナを動かします。EKS の名前空間を仮想クラスターとして登録し、そこにジョブを送ります。
@@ -335,6 +442,13 @@ EMR にアタッチした EBS も一時的です。クラスターやインス�
 - 他のコンテナアプリと資源を共用でき、使用率が上がります。
 - 同じ EKS クラスターで、異なるバージョンのフレームワークを並べられます。
 - 実行は MWAA や自前の Airflow からスケジュールできます。
+
+```bash
+aws emr-containers create-virtual-cluster --name analytics \
+  --container-provider '{"id":"shared-eks","type":"EKS","info":{"eksInfo":{"namespace":"spark"}}}'
+```
+
+**例**: `spark` 名前空間を仮想クラスター `analytics` として登録します。同じ EKS に EMR 6 系と 7 系のジョブを並べて、移行を段階的に進められます。
 
 **選び方**: すでに EKS を運用している組織に向きます。EKS がなければ EMR Serverless のほうが簡単です。
 
@@ -356,6 +470,18 @@ aws emr-serverless create-application \
 
 アイドルのアプリケーションは自動で停止できます。既定は 15 分です。次のジョブで自動的に起動します。
 
+```bash
+aws emr-serverless update-application --application-id "$APP_ID" \
+  --auto-stop-configuration enabled=true,idleTimeoutMinutes=15 \
+  --maximum-capacity cpu=400vCPU,memory=1600GB
+```
+
+**例（上限）**: `update-application` は、アプリケーションが `STOPPED` か `CREATED` のときだけ実行できます。上の設定なら、1 台 4 vCPU のワーカーは 400 ÷ 4 = 100 台までです。悪いジョブが増え続けて費用が膨らむのを止められます。
+
+**例（事前初期化）**: 対話的なレポートで開始の遅れを避けたいなら、ドライバー 1、エグゼキューター 4 を事前に確保します。ジョブがなくても、アプリケーションの起動中はこの 5 台の料金がかかります。
+
+**症状**: `maximum-capacity` が小さいと、ワーカーが上限より増えないので、ジョブが遅くなることがあります。
+
 **Glue との違い**: どちらもサーバーレスの Spark です。カタログと一体になった ETL、Data Quality、ブックマークを使うなら Glue、既存の Spark や Hive のコードと EMR のリリースをそのまま持ち込むなら EMR Serverless です。
 
 ## Amazon Redshift {#redshift}
@@ -363,6 +489,8 @@ aws emr-serverless create-application \
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 列指向で超並列（MPP）のデータウェアハウスです。大きなテーブルの結合と集計に向きます。行単位の更新を大量に行う OLTP には向きません。
+
+提供単位は形態で異なります。Provisioned のクラスターは VPC のクラスターサブネットグループに置き、既定では 1 つの AZ で動きます。Serverless のワークグループは 2 つ以上の AZ のサブネットを指定します（Enhanced VPC Routing なら 3 つ以上）。どちらも VPC の中に置きます（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 ### 構成 {#redshift-architecture}
 
@@ -379,6 +507,10 @@ aws emr-serverless create-application \
 | DC2 | ローカル SSD | データが小さく、性能を重視する場合 |
 
 AWS は新規構築に RG か RA3 を推奨しています。RMS があるので、データが増えてもノードを足す必要がありません。
+
+**例（ノードの選択）**: データが 2 年で 10 TB から 50 TB に増えるなら、RA3 か RG にします。RMS が増えるだけで、計算の負荷が変わらなければノードは増やさずに済みます。DC2 ではローカル SSD の容量のためにノードを足すことになります。
+
+**例（スライス）**: 1 ノードに 4 スライスで 2 ノードなら 8 スライスです。行は 8 スライスに分かれて並列に処理されます。
 
 !!! warning "Python UDF の終了"
     Redshift の Python UDF は 2026 年 6 月 30 日で終了し、段階的に実行できなくなっています。古い教材の例は Lambda UDF か SQL UDF に置き換えて読みます。
@@ -421,6 +553,14 @@ DISTSTYLE KEY DISTKEY (customer_id);
 
 新しいテーブルでは、`DISTSTYLE AUTO` と `SORTKEY AUTO` による自動テーブル最適化が推奨です。Redshift がクエリを観察してキーを選びます。
 
+**例（`ALL`）**: 10 GB の `regions` テーブルを 4 ノードのクラスターに `ALL` で置くと、10 × 4 = 40 GB を使います。その代わり、結合でのデータ移動はありません。
+
+**例（`KEY` の偏り）**: `country` を `DISTKEY` にして 90% の行が `JP` なら、1 つのスライスに 90% が集まります。そのスライスの処理が終わるまでクエリは終わりません。`SVV_TABLE_INFO` の `skew_rows` で偏りを確認します。
+
+**例（`EVEN`）**: どのテーブルとも結合しない生ログは `EVEN` で均等に置きます。
+
+**症状**: `sales` を `customer_id`、`customers` を `name` で分散すると、同じ顧客の行が別々のスライスに置かれ、結合のたびに `DS_DIST_INNER` などの移動が起きます。
+
 ### ソートキー {#redshift-sort-keys}
 
 ディスク上の並び順を決めます。Redshift は 1 MB のブロックごとに最小値と最大値を持つので、範囲の条件で読まないブロックを飛ばせます。
@@ -441,6 +581,12 @@ DISTSTYLE KEY DISTKEY (customer_id);
 | `ANALYZE` | 統計情報を更新する | 統計が古いと実行計画が悪くなる |
 
 どちらもバックグラウンドで自動実行されます。大量のロードの後は手動での実行を検討します。
+
+**例（ブロックの読み飛ばし）**: 3 年分を `sold_at` でソートしておくと、1 日分の条件なら約 1,095 分の 1 のブロックだけを読みます。ソートキーがないと、全ブロックを読みます。
+
+**例（`VACUUM`）**: 大量削除の後は `VACUUM DELETE ONLY sales;`、ソート順を優先するなら `VACUUM SORT ONLY sales TO 99 PERCENT;` を実行します。
+
+**症状（`ANALYZE`）**: ロードで 10 倍に増えたテーブルの統計が古いと、小さいテーブルと誤認して悪い結合順を選びます。`ANALYZE sales;` の後で速くなるなら、これが原因です。
 
 ### COPY と UNLOAD {#redshift-copy}
 
@@ -488,6 +634,18 @@ REGION 'ap-northeast-1';
 
 ロードのエラーは `SYS_LOAD_ERROR_DETAIL` や `STL_LOAD_ERRORS` で確認します。
 
+**例（`MAXERROR`）**: `MAXERROR 10` で不良が 10 行なら、残りはロードされます。11 行目の不良で全体が失敗し、1 行も入りません。
+
+**例（`NOLOAD`）**: `COPY sales FROM 's3://lake/sales/' IAM_ROLE default CSV NOLOAD;` は、データを入れずに不良だけを確認します。
+
+**例（プレフィックスの罠）**: `FROM 's3://lake/raw/sales_'` は `sales_2026.csv` だけでなく `sales_backup_2019.csv` も読みます。避けたいならマニフェストを使います。
+
+**例（`mandatory`）**: `mandatory: true` のファイルが届いていないと、`COPY` はエラーになります。既定の `false` だと、1 ファイル足りないまま成功します。
+
+**例（スライス数とファイル数）**: 8 スライスなら、8 個か 16 個の同じ大きさのファイルに分けます。1 個の大きな gzip だと 1 スライスで読むので遅くなります。
+
+**例（`COMPUPDATE`、`STATUPDATE`）**: 既に調整したテーブルへロードするなら `COMPUPDATE OFF`、空でないテーブルに大量ロードするなら `STATUPDATE ON` を指定します。
+
 `UNLOAD` はクエリの結果を S3 に書き出します。既定はパイプ区切りのテキストです。
 
 ```sql
@@ -500,6 +658,10 @@ MAXFILESIZE 256 MB;
 ```
 
 クライアント側暗号化を使う COPY と UNLOAD は、2025 年 4 月 30 日から新規顧客に提供されていません。サーバー側暗号化（SSE-S3、SSE-KMS）を使います。
+
+**例（`MAXFILESIZE`）**: 1 TB を 256 MB ずつ書くと、1,048,576 ÷ 256 = 4,096 個以上のファイルになります。ファイルが細かすぎると読みにくいので、下流のエンジンに合わせます。
+
+**例（`PARTITION BY`）**: 上の `UNLOAD` は `s3://lake/export/sales_/region=jp/` のようなパスに書きます。Athena でそのままパーティションとして読めます。
 
 ### Spectrum とデータレイクのクエリ {#redshift-spectrum}
 
@@ -529,6 +691,10 @@ GROUP BY c.name;
 
 パーティションを定義すると、不要な範囲を読まなくなります。頻繁に使うクエリは、外部テーブルの上にマテリアライズドビューを作ると費用と時間を減らせます。
 
+**例**: 直近 13 か月は Redshift のローカルに置き、それより古い 5 年分は S3 に残します。古い年を調べるときだけ Spectrum で結合します。
+
+**症状（外部テーブル）**: 外部テーブルは `INSERT` で追記できますが、`UPDATE` や `DELETE` はできません。修正は S3 のファイルを書き直します。パーティションの登録を忘れると、結果は 0 件になります。
+
 ### データを取り込む他の方法 {#redshift-ingestion}
 
 | 方法 | 動作 | 向く場面 |
@@ -541,6 +707,21 @@ GROUP BY c.name;
 | DMS | データベースから複製する | 移行、CDC |
 
 ストリーミング取り込みで 1 つのストリームに複数のマテリアライズドビューを作ることは推奨されていません。シャードごとにコンシューマーが増えるからです。
+
+```sql
+CREATE EXTERNAL SCHEMA kds FROM KINESIS
+IAM_ROLE 'arn:aws:iam::111122223333:role/RedshiftStreamRole';
+
+CREATE MATERIALIZED VIEW clicks_mv AUTO REFRESH YES AS
+SELECT approximate_arrival_timestamp, JSON_PARSE(kinesis_data) AS payload
+FROM kds."clicks";
+```
+
+**例（ストリーミング）**: 上の `clicks_mv` を更新すると、Kinesis の `clicks` が S3 を経由せず入ります。ダッシュボードの遅れを分単位より短くしたいときに使います。
+
+**例（フェデレーテッドクエリ）**: 在庫は Aurora PostgreSQL の最新の値を読み、過去の売上は Redshift のテーブルと結合します。夜間の ETL を待たずに済みます。
+
+**例（ゼロ ETL）**: Aurora MySQL の `orders` を数秒の遅れで Redshift へ複製します。`COPY` のジョブを作らずに分析できます。
 
 ### Redshift Serverless {#redshift-serverless}
 
@@ -565,6 +746,20 @@ GROUP BY c.name;
 
 **選び方**: 利用が断続的で読めないなら Serverless、常に負荷があり予約で安くしたいなら Provisioned です。
 
+```bash
+aws redshift-serverless create-workgroup --workgroup-name bi \
+  --namespace-name sales \
+  --base-capacity 32 --max-capacity 256
+```
+
+**例（ベース容量）**: 32 RPU は 32 × 16 GB = 512 GB のメモリです。既定の 128 RPU は 2,048 GB です。
+
+**例（最小課金）**: 32 RPU のワークグループで 10 秒のクエリを 1 回だけ流しても 60 秒分の課金で、32 × 60 ÷ 3,600 ≈ 0.53 RPU 時間です。
+
+**例（最大 RPU）**: `--max-capacity 256` で、急なクエリが来ても 256 RPU で止まります。1 時間で最大 256 RPU 時間までに費用を抑えられます。
+
+**症状（4 RPU）**: RMS が 40 TB のワークグループは、4 RPU に下げられません。4 RPU の上限は 32 TB です。
+
 ### ワークロード管理 {#redshift-wlm}
 
 クエリの実行枠と優先度を制御します。パラメータグループの `wlm_json_configuration` で設定します。
@@ -583,6 +778,34 @@ GROUP BY c.name;
 **例**: ETL 用と BI 用のキューを分け、BI に高い優先度を付けます。ダッシュボードの急増には BI のキューだけ同時実行スケーリングを有効にします。
 
 **症状**: `stl_wlm_query` の `total_queue_time` が長いなら、実行前の待ちです。ノードを増やす前に、キューと同時実行スケーリングを確認します。
+
+```json
+[
+  {
+    "query_group": ["etl"],
+    "auto_wlm": true,
+    "priority": "low",
+    "concurrency_scaling": "off",
+    "rules": [
+      {
+        "rule_name": "abort_long",
+        "predicate": [{ "metric_name": "query_execution_time", "operator": ">", "value": 3600 }],
+        "action": "abort"
+      }
+    ]
+  },
+  { "user_group": ["bi"], "auto_wlm": true, "priority": "high", "concurrency_scaling": "auto" },
+  { "auto_wlm": true, "priority": "normal" }
+]
+```
+
+**例（クエリモニタリングルール）**: 上の `abort_long` は、ETL のキューで 1 時間を超えるクエリを止めます。ルールは全体で 25 個まで、1 ルールの条件は 3 個までです。WLM は 10 秒ごとに評価するので、ぴったり 3,600 秒では止まりません。`COPY` は `abort` で止まりません。
+
+**例（手動 WLM）**: ETL に 5 スロットとメモリ 60%、BI に 10 スロットとメモリ 40% を割り当てると、合計 15 スロットです。BI の 1 クエリのメモリは 40% ÷ 10 = 4% になります。
+
+**例（SQA）**: 最大実行時間を 5 秒にすると、5 秒以内と予測されたクエリが優先枠で動きます。1 時間の ETL の後ろで 2 秒の照会が待たされなくなります。
+
+**症状（同時実行スケーリング）**: インターリーブドソートキーのテーブルへのクエリは、有効にしてもメインのクラスターで待ちます。
 
 ### マテリアライズドビュー {#redshift-materialized-views}
 
@@ -610,6 +833,10 @@ REFRESH MATERIALIZED VIEW daily_sales;
 
 **症状**: ビューが古い間は、自動書き換えが効かず遅くなります。自動更新はリソースに余裕のある時に動くので、鮮度の要件が厳しければスケジュールで更新します。
 
+**例**: 100 億行の売上から、日別、地域別の合計を作ります。3 年分で 10 地域なら 1,095 × 10 = 10,950 行で済み、ダッシュボードはこの 1 万行を読むだけになります。
+
+**例（増分）**: `SUM` と `GROUP BY` だけの上のビューは、新しい行の分だけ更新できます。`LEFT JOIN` を足すと全件更新になり、更新が遅くなることがあります。
+
 ### データ共有 {#redshift-data-sharing}
 
 データをコピーせず、ライブのまま別のクラスターやワークグループと共有します。アカウントやリージョンをまたげます。Provisioned と Serverless の間でも共有できます。
@@ -632,6 +859,12 @@ CREATE DATABASE sales_db FROM DATASHARE sales_share
 - 書き込みの権限を共有することもできます。
 - コンシューマーのトランザクションは、開始時点の状態を一貫して読みます。
 - データ製品として [Data Exchange](#data-exchange) でライセンスできます。
+
+**例**: ETL 用の 8 ノードで `sales` を更新し、BI 用と分析用の別の Serverless が `sales_share` を読みます。BI 側の重いクエリは ETL の性能に影響せず、計算の費用はチームごとに分かれます。
+
+**例（別アカウント）**: `GRANT USAGE ON DATASHARE sales_share TO ACCOUNT '111122223333';` の後で、プロデューサー側の管理者が承認し、コンシューマー側の管理者が関連付けます。
+
+**症状**: 共有に `ALTER DATASHARE ... ADD TABLE` していないテーブルは、コンシューマーから見えません。スキーマだけ足しても、テーブルは自動では入りません。
 
 ### 暗号化とセキュリティ {#redshift-security}
 
@@ -658,6 +891,27 @@ GRANT ROLE analyst TO alice;
 
 自動スナップショットは、約 8 時間ごとまたはノードあたり 5 GB の変更ごとに作成されます。保持の既定は 1 日です。
 
+**例（スナップショット）**: 4 ノードなら 4 × 5 GB = 20 GB の変更でも作成されます。既定の 1 日のままだと、2 日前の誤削除には戻れません。7 日にするなら保持期間を 7 にします。RG と RA3 は 1〜35 日で、無効にできません。それ以外のノードは 0 にすると自動スナップショットが止まり、既存の自動スナップショットも消えます。
+
+**例（`require_ssl`）**: パラメータグループで `require_ssl=true` にすると、TLS を使わない接続は拒否されます。変更の反映に再起動が必要です。
+
+**例（監査）**: ユーザーアクティビティログは、監査ログの有効化に加えて `enable_user_activity_logging=true` が要ります。これがないと、実行した SQL が記録されません。
+
+```sql
+-- 行レベルセキュリティ
+CREATE RLS POLICY jp_only WITH (country VARCHAR(2)) USING (country = 'JP');
+ATTACH RLS POLICY jp_only ON sales TO ROLE analyst;
+ALTER TABLE sales ROW LEVEL SECURITY ON;
+
+-- 動的データマスキング
+CREATE MASKING POLICY mask_email WITH (email VARCHAR(256)) USING ('***'::VARCHAR(256));
+ATTACH MASKING POLICY mask_email ON customers(email) TO ROLE analyst;
+```
+
+**例（RLS）**: `analyst` が `SELECT * FROM sales` を実行すると、`country = 'JP'` の行だけが返ります。`ROW LEVEL SECURITY ON` を忘れると、ポリシーは効きません。`ON` の後は、ポリシーが付いていないユーザーには 1 行も見えません。
+
+**例（マスキング）**: `analyst` には `email` が `***` と表示されます。ポリシーのないロールには元の値が見えます。
+
 ### ロックと同時実行 {#redshift-locks}
 
 Redshift の読み取りは、更新中でもコミット済みのスナップショットを読みます。`DROP TABLE` や `TRUNCATE` は排他ロックを取り、読み取りも止めます。
@@ -671,11 +925,17 @@ Redshift の読み取りは、更新中でもコミット済みのスナップ�
 
 RDS と Aurora でも考え方は同じです。PostgreSQL は `pg_locks` と `pg_stat_activity` で確認し、`pg_terminate_backend` で切ります。MySQL 8.0 以降は `performance_schema.data_locks` で確認し、`CALL mysql.rds_kill(スレッド ID)` で切ります。
 
+**例**: 夜間の `TRUNCATE sales` が、朝まで残った長い `SELECT` を待って止まります。`SVV_TRANSACTIONS` で古いセッションの `pid` を探し、`SELECT pg_terminate_backend(12345);` で切ります。
+
+**例（読み取りの一貫性）**: `INSERT` の途中で別のセッションが `SELECT` しても、コミット前の行は見えず、待たされもしません。
+
 ## AWS Lake Formation {#lake-formation}
 
 [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 Data Catalog と S3 上のデータに、データベースのような権限モデルを与えるサービスです。S3 バケットポリシーと IAM を組み合わせる代わりに、テーブル、列、行で権限を付けられます。
+
+提供単位はリージョンで、AZ は選びません。VPC の外のサービスです（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 ```mermaid
 sequenceDiagram
@@ -696,7 +956,7 @@ Athena、Glue、EMR、Redshift Spectrum などの統合エンジンが権限を�
 
 | 手順 | 内容 | 忘れたときの症状 |
 | --- | --- | --- |
-| データレイク管理者の指定 | 権限を管理する主体を決める | 誰も付与できない |
+| データレイク管理者の指定 | 権限を管理する主体を決める | 一元的に管理する主体がいない |
 | S3 パスの登録 | `S3://bucket/path` を登録する。配下も対象になる | 基盤データのアクセスを Lake Formation で管理できない |
 | IAM のみの設定の解除 | `IAMAllowedPrincipals` の `Super` を外す | Lake Formation の権限が事実上効かない |
 
@@ -705,6 +965,16 @@ Athena、Glue、EMR、Redshift Spectrum などの統合エンジンが権限を�
 ハイブリッドアクセスモードを使うと、既存の IAM のアクセスを止めずに、選んだ主体だけ Lake Formation の権限へ移せます。
 
 非構造データには、Lake Formation ではなく S3 Access Grants を検討します。
+
+```bash
+aws lakeformation register-resource \
+  --resource-arn arn:aws:s3:::lake/sales \
+  --use-service-linked-role
+```
+
+**例（`Super` を外す）**: `sales.orders` に `alice` の `SELECT` を付けただけでは、`IAMAllowedPrincipals` の `Super` が残る限り、IAM で S3 を読めるユーザー全員が読めます。`Super` を外すと、`alice` だけになります。
+
+**例（ハイブリッド）**: 100 人が IAM で読んでいるテーブルで、新しい分析チーム 5 人だけを Lake Formation の権限に移します。残りの 95 人の接続は止まりません。
 
 ### 権限 {#lake-formation-permissions}
 
@@ -719,6 +989,21 @@ Athena、Glue、EMR、Redshift Spectrum などの統合エンジンが権限を�
 | `DATA_LOCATION_ACCESS` | 登録した S3 パス | そのパスを指すテーブルを作る |
 | `Super` | データベース、テーブル | すべての操作 |
 
+
+```bash
+aws lakeformation grant-permissions \
+  --principal DataLakePrincipalIdentifier=arn:aws:iam::111122223333:role/Analyst \
+  --permissions SELECT \
+  --resource '{"TableWithColumns":{"DatabaseName":"sales","Name":"customers",
+    "ColumnWildcard":{"ExcludedColumnNames":["ssn"]}}}'
+```
+
+**例（列）**: 上の付与で `SELECT *` を実行すると、`ssn` 以外の列が返ります。
+
+**例（`DATA_LOCATION_ACCESS`）**: `s3://lake/sales/` に新しいテーブルを作るには、`CREATE_TABLE` に加えてこの権限が要ります。ないと権限エラーになります。
+
+**症状（`DESCRIBE`）**: `SELECT` だけでは足りない場面があります。データベースの `DESCRIBE` がないと、そのデータベースがコンソールに表示されません。
+
 データフィルターを使うと、より細かく制限できます。フィルターは `SELECT` の付与にだけ使えます。
 
 | レベル | 内容 | 例 |
@@ -728,6 +1013,19 @@ Athena、Glue、EMR、Redshift Spectrum などの統合エンジンが権限を�
 | セル | 行と列の組み合わせ | `country = 'UK'` の行だけ `address` を隠す |
 
 個人情報の検出には [Macie](threat-detection.md) を使い、結果に基づいて Lake Formation で列を制限する、という組み合わせがあります。
+
+```json
+{
+  "TableCatalogId": "111122223333",
+  "DatabaseName": "sales",
+  "TableName": "customers",
+  "Name": "jp_without_ssn",
+  "RowFilter": { "FilterExpression": "country = 'JP'" },
+  "ColumnWildcard": { "ExcludedColumnNames": ["ssn"] }
+}
+```
+
+**例**: `create-data-cells-filter --table-data` に上の JSON を渡すと、`country = 'JP'` の行だけを、`ssn` を除いて読めるフィルターができます。フィルターを `analyst` への `SELECT` の付与に指定します。
 
 ### LF タグ {#lake-formation-lf-tags}
 
@@ -753,18 +1051,28 @@ aws lakeformation grant-permissions \
 
 **LF タグと IAM タグは別物です。** IAM ポリシーの条件に LF タグを使うことはできません。
 
+**例（式）**: `module=Sales` かつ `sensitivity=low` の式なら、両方のタグを持つテーブルだけが対象です。新しい `sales.refunds` に 2 つのタグを付けると、付与をやり直さなくても読めるようになります。
+
+**症状**: IAM の条件キー `aws:ResourceTag/module` で絞っても、LF タグには効きません。LF タグの権限は Lake Formation の付与で行います。
+
 ### クロスアカウント共有 {#lake-formation-cross-account}
 
 データをコピーせず、他のアカウント、組織、組織単位、別アカウントの IAM 主体に共有します。内部では AWS RAM を使います。
 
-- LF-TBAC が推奨です。組織や OU へ付与するには、クロスアカウントのバージョン設定を 3 以上にします。
+- LF-TBAC が推奨です。LF-TBAC の方法で組織や OU へ付与するには、クロスアカウントのバージョン設定を 3 以上にします。指定リソースの方法は、バージョンが異なっていても共有できます。
 - 共有先では、リソースリンクを作ると自分のカタログのように参照できます。
+
+**例**: 中央アカウントの `sales.orders` を部門アカウント `111122223333` に共有し、部門側で `orders_link` というリソースリンクを作ります。部門の Athena で `SELECT * FROM orders_link` を実行すると、データをコピーせずに読めます。
+
+**症状**: LF タグの方法で組織へ付与しようとして失敗するなら、クロスアカウントのバージョン設定が 3 未満です。RAM の共有の招待を受け入れていないと、共有先にテーブルが現れません。
 
 ## Amazon AppFlow {#appflow}
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 SaaS と AWS の間でデータを転送する、コード不要のサービスです。
+
+提供単位はリージョンで、VPC の外のサービスです。PrivateLink に対応した SaaS とは非公開の経路で接続できます（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 | 項目 | 内容 |
 | --- | --- |
@@ -781,11 +1089,19 @@ SaaS と AWS の間でデータを転送する、コード不要のサービス�
 
 **選び方**: 対応 SaaS からの定型的な転送なら AppFlow です。独自の API や複雑な変換が必要なら Glue か Lambda を使います。
 
+**例（増分）**: Salesforce の 100 万件の取引先のうち毎時 5,000 件だけが変わるなら、スケジュールを 1 時間、転送方式を増分にします。全件転送の 200 分の 1 の件数で済みます。
+
+**例（マスク）**: `phone` 列を転送時にマスクし、分析用のバケットには生の番号を置きません。
+
+**症状**: 接続先の OAuth トークンが失効すると、フローは失敗します。スケジュールの失敗を EventBridge で検知して通知します。
+
 ## Amazon MSK {#msk}
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 Apache Kafka を実行するマネージドサービスです。Kafka の API とツールをそのまま使えます。
+
+提供単位は形態で異なります。Provisioned のブローカーは VPC のサブネットに置く AZ のリソースで、2 つか 3 つの AZ に分けます（Express は 3 AZ のみ）。Serverless はリージョンのサービスで、指定したサブネットからプライベートに接続します（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 | 形態 | 特徴 | 向く場面 |
 | --- | --- | --- |
@@ -811,6 +1127,16 @@ Apache Kafka を実行するマネージドサービスです。Kafka の API �
 
 **暗号化**: 保存時は常に暗号化されます。転送時は、ブローカー間が既定で TLS、クライアントとの間は TLS のみが既定です。
 
+**例（ストレージの計算）**: 1 日 100 GB、保持 7 日、レプリケーション係数 3 なら 100 × 7 × 3 = 2,100 GB です。6 ブローカーなら 1 台 350 GB が目安で、余裕を足します。Standard ブローカーの範囲は 1〜16,384 GiB です。
+
+**例（パーティションと消費者）**: 3 パーティションのトピックを 5 台のコンシューマーで読むと、同じコンシューマーグループでは 2 台が遊びます。増やすならパーティションも増やします。
+
+**例（ポート）**: IAM 認証のクライアントはポート 9098 に接続します。セキュリティグループで 9094 だけ開けていると、接続がタイムアウトします。
+
+**例（IAM の接続数）**: IAM 認証はブローカーあたり 3,000 接続までで、接続レートは `m5` などで毎秒 100 までです。多数のクライアントが一斉に再接続するなら、クライアントの `reconnect.backoff.ms` で間隔を空けます。
+
+**例（SCRAM）**: シークレット名は `AmazonMSK_orders-app` のように始めます。`orders-app` では関連付けられません。
+
 ### Kinesis Data Streams と MSK の違い {#msk-vs-kinesis}
 
 | 観点 | [Kinesis Data Streams](streaming.md#kinesis-data-streams) | MSK |
@@ -820,11 +1146,17 @@ Apache Kafka を実行するマネージドサービスです。Kafka の API �
 | 運用 | サーバーレス | Provisioned はブローカーを選ぶ |
 | 選ぶ理由 | AWS のサービスとの統合を簡単にしたい | 既存の Kafka のコードやエコシステムを使いたい |
 
+**例（Kinesis）**: 新規の IoT の取り込みで、Lambda で読み、Firehose で S3 に流します。シャードの管理を減らすなら On-demand にします。
+
+**例（MSK）**: 自社で動かしている Kafka Connect のコネクターとクライアント設定をほぼそのまま移します。
+
 ## Amazon Managed Service for Apache Flink {#flink}
 
 [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
 Apache Flink のアプリケーションを実行するサービスです。ウィンドウ集計や結合など、状態を持つストリーム処理に向きます。Java、Scala、Python、SQL を使えます。
+
+提供単位はリージョンで、既定では VPC の外で動きます。VPC のリソースを読むときは、アプリケーションに VPC を設定し、サブネットに ENI を置きます（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 旧称は Kinesis Data Analytics です。旧 **Kinesis Data Analytics for SQL アプリケーション** は 2025 年 10 月に新規作成が停止され、2026 年 1 月 27 日からアプリケーションの削除が始まりました。SQL で書くなら Flink の Studio か Flink SQL を使います。
 
@@ -846,6 +1178,14 @@ Apache Flink のアプリケーションを実行するサービスです。ウ�
 
 **例**: `Parallelism=16`、`ParallelismPerKPU=4` なら 4 KPU で、課金は 5 KPU です。
 
+**例（上限）**: `ParallelismPerKPU=1` で `Parallelism=64` なら 64 KPU で、KPU の既定の上限ちょうどです。課金は 65 KPU です。`Parallelism=100` にするなら、`ParallelismPerKPU=2` で 50 KPU に収めるか、上限の引き上げを申請します。
+
+**例（`CheckpointInterval`）**: 60,000 ミリ秒なら、障害時に戻るのは最大で約 60 秒前です。その間のレコードは再処理されるので、出力先は重複を許す作りにします。
+
+**例（`MinPauseBetweenCheckpoints`）**: チェックポイントに 70 秒かかると、60 秒の間隔では連続します。5,000 ミリ秒の間隔を置くことで、処理の時間を確保できます。
+
+**例（使いどころ）**: 不正検知で「同じカードで 1 分間に 5 回以上」を判定するなら、1 分のウィンドウと状態を持つ Flink が向きます。Lambda ではバッチをまたぐ状態を自分で持つ必要があります。
+
 **チェックポイントとスナップショット**: チェックポイントは自動で、障害復旧に使います。スナップショットは手動で、更新や移行の前に取ります。
 
 ## Amazon MWAA {#mwaa}
@@ -853,6 +1193,8 @@ Apache Flink のアプリケーションを実行するサービスです。ウ�
 [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
 Apache Airflow のマネージドサービスです。DAG（有向非巡回グラフ）を Python で書き、依存関係を定義します。
+
+提供単位はリージョンで、VPC の中に置きます。2 つの AZ のプライベートサブネットを指定します（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 | ファイル | S3 上の場所 | 役割 |
 | --- | --- | --- |
@@ -886,17 +1228,31 @@ with DAG("daily_orders", start_date=datetime(2026, 1, 1), schedule="0 2 * * *") 
 
 **症状**: `requirements.txt` の依存が解決できないと、DAG がインポートエラーになります。インターネットへの経路がない VPC では PyPI に届かないので、依存を `plugins.zip` に同梱します。
 
+**例（同時タスクの計算）**: `mw1.small` はワーカー 1 台あたり 5 タスクです。1 分かかるタスク 100 個は、1 台なら 100 ÷ 5 = 20 分です。最大ワーカーが 5 台なら同時に 25 タスクで、4 分で終わります。
+
+**例（`schedule`）**: `schedule="0 2 * * *"` は UTC の 2 時で、日本時間の 11 時です。日本時間の 2 時に動かすなら、`pendulum` でタイムゾーン付きの `start_date` を渡します。
+
+**例（ファイルの置き場）**: `s3://mwaa-dags/dags/daily_orders.py` に置くと、スケジューラーが読み込みます。`requirements.txt` と `plugins.zip` を更新したら、環境に新しいバージョンを指定します。S3 バケットはバージョニングを有効にします。
+
+**例（依存の固定）**: `apache-airflow-providers-amazon` などは、Airflow のバージョンに合わせて制約ファイルで固定します。固定しないと、環境の更新時に依存の解決で失敗します。
+
 ## AWS Data Pipeline の現状 {#data-pipeline}
 
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate }
+
+提供単位はリージョンで、サービス自体は VPC の外です。起動する EC2 や EMR は VPC のサブネットに置きます。
 
 **新規顧客は利用できません。** 既存の顧客は使い続けられますが、メンテナンスモードで新機能はありません。
 
 新規の要件には Glue、Step Functions、MWAA を選びます。試験で既存の Data Pipeline が出たら、移行先としてこれらを選ぶと考えます。
 
+**例**: 日次で EMR を起動して S3 の変換をする既存のパイプラインなら、Step Functions で EMR のステップを呼ぶか、Glue ジョブに置き換えます。
+
 ## DataZone と SageMaker Unified Studio {#datazone-unified-studio}
 
 どちらも「組織全体のデータを見つけ、申請し、使う」ためのものです。Glue Data Catalog は技術的なメタデータ、こちらはビジネスの文脈を扱います。
+
+DataZone のドメインと Unified Studio はリージョンのサービスで、VPC の外にあります。Unified Studio のプロジェクトが使う計算資源には VPC を指定します（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 | 名前 | 位置づけ |
 | --- | --- |
@@ -915,17 +1271,24 @@ DataZone の流れは次のとおりです。
 3. 所有者が承認すると、権限が付与されます。
 4. Athena や Redshift のエディターで分析します。
 
+
+**例**: マーケティング部が `sales.orders` を「注文データ」として公開します。分析部が検索して申請し、所有者が承認すると、Lake Formation 管理の Glue テーブルなら DataZone が権限を自動で付与し、Athena で読めるようになります。管理対象外のアセットは、EventBridge のイベントを受けて自分で付与します。
+
 | 比較したいもの | 使い分け |
 | --- | --- |
 | Glue Data Catalog と DataZone | 前者はエンジン向けのメタデータ、後者は人向けのカタログと申請 |
 | Lake Formation と DataZone | 前者は実際の権限の仕組み、後者はその上の申請の流れ |
 | DataBrew と Unified Studio | 前者は単独の整形ツール、後者は分析と ML 全体の環境 |
 
+**例（Glue と DataZone）**: Athena が `orders` の列の型を知るのが Glue Data Catalog で、担当者が「売上の定義と問い合わせ先」を調べるのが DataZone です。
+
 ## Amazon Quick Sight {#quick-sight}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 BI とダッシュボードのサービスです。**Amazon QuickSight は Amazon Quick に発展し、BI の機能は Amazon Quick Sight になりました。** API や SDK は従来どおり動きます。
+
+アカウント単位で契約し、SPICE の容量はリージョンごとに持ちます。VPC の外のサービスで、VPC 内の RDS へは Enterprise Edition の VPC 接続で届きます（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 Amazon Quick は、Quick Sight のほか、AI エージェント、Quick Flows、Quick Automate、Quick Index、Quick Research などを含む製品です。
 
@@ -941,11 +1304,21 @@ Amazon Quick は、Quick Sight のほか、AI エージェント、Quick Flows�
 
 **症状**: 更新したのにダッシュボードが古いなら、SPICE の更新スケジュールを確認します。容量が足りないと取り込みが失敗します。
 
+**例（SPICE と費用）**: 100 GB をスキャンする Athena のクエリのダッシュボードを、キャッシュを考えず 1 日 1,000 回開くとします。1 TB あたり 5 USD の例では、直接クエリは 0.1 TB × 5 USD × 1,000 = 500 USD かかり、SPICE に毎日 1 回取り込めば 0.5 USD です。
+
+**例（更新）**: 毎時の取り込みにすると、最大 1 時間古い値が表示されます。最新の在庫を見るダッシュボードは直接クエリにします。
+
+**例（行レベルセキュリティ）**: `UserName`、`region` の列を持つルールのデータセットに `alice,JP` と書くと、`alice` には `JP` の行だけが表示されます。
+
+**例（容量）**: 東京の SPICE に 10 GB の空きしかないと、バージニア北部に余っていても、20 GB のデータセットは東京で取り込めません。
+
 ## AWS Data Exchange {#data-exchange}
 
 [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate }
 
 他の組織とデータの利用権を交換するサービスです。
+
+提供単位はリージョンで、VPC の外のサービスです（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 | 形 | 内容 |
 | --- | --- |
@@ -963,6 +1336,8 @@ Amazon Quick は、Quick Sight のほか、AI エージェント、Quick Flows�
 
 複数の組織が、元のデータを見せ合わずに共同で分析するサービスです。
 
+提供単位はリージョンで、VPC の外のサービスです（[リソースの提供単位](resource-scope.md#two-axes)）。
+
 | 項目 | 内容 |
 | --- | --- |
 | コラボレーション | 招待したアカウントが参加する場 |
@@ -971,6 +1346,10 @@ Amazon Quick は、Quick Sight のほか、AI エージェント、Quick Flows�
 | 監査 | 実行されたクエリのログ |
 
 **例**: 広告主と媒体社が、顧客の生データを渡さず、共通の顧客の数だけを集計します。
+
+**例（分析ルール）**: 集計ルールで「`COUNT` と `SUM` のみ」「重複を除いて 100 人未満の行は出力しない」とすると、特定の個人を当てる小さな集計はできません。
+
+**症状**: 分析ルールを設定していない構成済みテーブルにクエリすると拒否されます。
 
 | 比較 | 違い |
 | --- | --- |
@@ -983,6 +1362,8 @@ Amazon Quick は、Quick Sight のほか、AI エージェント、Quick Flows�
 [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate }
 
 ### Apache Iceberg {#iceberg}
+
+提供単位は S3 と同じくリージョンで、VPC の外です（[リソースの提供単位](resource-scope.md#scope-regional-outside)）。
 
 S3 のファイルの上に、テーブルの機能を載せるオープンテーブル形式です。
 
@@ -1008,6 +1389,20 @@ TBLPROPERTIES ('table_type' = 'ICEBERG');
 
 SELECT * FROM orders FOR TIMESTAMP AS OF TIMESTAMP '2026-10-01 00:00:00 UTC';
 ```
+
+**例（保守）**: Athena なら次のように実行します。`OPTIMIZE` で小さなファイルをまとめ、`VACUUM` で古いスナップショットと不要なファイルを消します。
+
+```sql
+OPTIMIZE orders REWRITE DATA USING BIN_PACK;
+VACUUM orders;
+```
+
+**例（隠しパーティション）**: `WHERE sold_at >= TIMESTAMP '2026-10-01 00:00:00'` だけで、`day(sold_at)` の範囲に絞られます。別に `dt` の列を書かずに済みます。
+
+**例（パーティションの進化）**: 最初は `day(sold_at)` で、データが増えて `hour(sold_at)` に変えても、古いファイルを書き直す必要はありません。
+
+**症状**: `OPTIMIZE` を実行しないと小さなファイルが増えてクエリが遅くなり、`VACUUM` を実行しないと古いスナップショットと不要なファイルの分だけストレージが増えます。`VACUUM` で期限切れにしたスナップショットには、タイムトラベルで戻れません。
+
 
 ### S3 Tables {#s3-tables}
 
@@ -1039,6 +1434,12 @@ aws s3tables put-table-maintenance-configuration \
 ```
 
 **症状**: テーブル名や列名に大文字を含むと、Athena で `GENERIC_INTERNAL_ERROR` になり、見えないことがあります。すべて小文字にします。
+
+**例（`targetFileSizeMB`）**: 上の設定は 256 MB を目標に圧縮します。1 日 10 GB の書き込みなら、10,240 ÷ 256 = 40 個前後のファイルになります。既定の 512 MB なら 20 個前後です。
+
+**例（スナップショット）**: スナップショットの最大経過時間が既定の 120 時間なら、5 日より前のスナップショットには戻れません。30 日戻りたいなら 720 時間に延ばします。
+
+**例（権限）**: `s3:GetObject` だけ持つロールは、テーブルバケットを読めません。`s3tables:GetTableData` などの権限を付けます。
 
 **選び方**: 汎用バケットの Iceberg は自分で保守します。S3 Tables は保守を任せ、高い TPS を得られます。
 
@@ -1080,6 +1481,12 @@ glueContext.write_dynamic_frame.from_options(
 
 **圧縮**: gzip は分割して読めないので、大きな 1 ファイルは避けます。Parquet の中で Snappy などの圧縮を使えば、列の単位で読めます。
 
+**例（スキャン量）**: 100 列で 1 TB の CSV から 3 列を読むと、CSV では 1 TB を読みます。Parquet なら 3 列分の約 30 GB で、圧縮が効くとさらに減ります。
+
+**例（gzip）**: 10 GB の 1 つの gzip は 1 つのタスクでしか読めません。Parquet で Snappy なら、128 MB 程度の単位で 80 個のタスクに分けられます。
+
+**例（選び方）**: Kafka の注文イベントは書き込みとスキーマ進化を重視して Avro、分析のテーブルは Parquet に変換します。
+
 ## パーティション {#partitioning}
 
 データをフォルダの値で分け、不要な範囲を読まないようにします。[Athena のパーティション](streaming.md#athena-partitions) も参照してください。
@@ -1093,6 +1500,11 @@ s3://lake/orders/dt=2026-10-31/region=jp/part-0000.parquet
 | よく絞る列（日付、リージョン）を選ぶ | クエリに使わない列では効果がない |
 | カーディナリティが中程度 | `user_id` で分けると小さなファイルと多数のパーティションになり、遅くなる |
 | 各ファイルをある程度の大きさに保つ | 小さなファイルが多いと一覧と起動の費用が増える |
+
+
+**例（数の計算）**: `dt` が 365 種類、`region` が 5 種類なら、1 年で 365 × 5 = 1,825 パーティションです。`user_id` が 100 万種類なら、1 日で 100 万パーティションになり、一覧だけで時間がかかります。
+
+**例（ファイルの大きさ）**: 1 日 100 GB なら、1 ファイル 128 MB〜1 GB 程度にそろえます。1 MB のファイル 10 万個より、S3 への要求が大幅に減ります。
 
 ### パーティションの同期 {#partition-sync}
 
@@ -1116,6 +1528,10 @@ sink = glueContext.write_dynamic_frame_from_catalog(
 ```
 
 パーティション射影を有効にすると、Athena はカタログに登録されたパーティションを無視します。
+
+**例（選び方）**: 毎日 1 パーティション増えるだけなら、ETL の最後に `enableUpdateCatalog` を使います。外部から予測できる日付のパスに毎時ファイルが届くなら、パーティション射影にします。形が変わり得る他社のデータならクローラーです。
+
+**症状**: `ALTER TABLE ... ADD PARTITION` の `LOCATION` を間違えると、パーティションは登録されますが 0 件のままです。
 
 ## オーケストレーションの比較 {#orchestration}
 
@@ -1155,6 +1571,18 @@ Step Functions から Glue を呼ぶときは `.sync` で完了まで待ちま�
 
 **例**: S3 へのファイル到着を EventBridge が受け、Step Functions を起動します。状態機械は Glue ジョブ、Redshift Data API の `COPY`、SNS の通知を順に実行します。
 
+```json
+{
+  "Retry": [
+    { "ErrorEquals": ["States.ALL"], "IntervalSeconds": 60, "MaxAttempts": 2, "BackoffRate": 2.0 }
+  ]
+}
+```
+
+**例（`Retry`）**: 上の設定を Glue のステートに足すと、失敗後に 60 秒、さらに失敗すると 120 秒待って再実行します。
+
+**例（選び方）**: Glue のジョブ 3 個とクローラーだけならワークフロー、Glue、Lambda、SNS を混ぜるなら Step Functions、Snowflake や社内のシステムを含む 200 タスクの依存なら MWAA です。
+
 ## SCT と DMS {#sct-dms}
 
 データベースの移行に使います。詳しくは [移行](migration.md) を参照してください。
@@ -1170,6 +1598,10 @@ Step Functions から Glue を呼ぶときは `.sync` で完了まで待ちま�
 DMS から Redshift へのロードは、CSV を中間の S3 に置いて `COPY` します。
 
 DMS Fleet Advisor は 2025 年 5 月に終了予定が発表された機能です。新規には選びません。
+
+**例（同種）**: オンプレミスの Oracle から RDS for Oracle へ、DMS の全件ロードと CDC で移します。
+
+**例（異種）**: Oracle のプロシージャは SCT で PL/pgSQL に変換し、自動で変換できなかった部分を手で直します。その後、DMS でデータを Aurora PostgreSQL へ移します。
 
 ## 選び方の比較 {#choosing}
 
@@ -1187,6 +1619,9 @@ DMS Fleet Advisor は 2025 年 5 月に終了予定が発表された機能で�
 | S3 上で単発の SQL 変換 | Athena CTAS |
 | ストリームの状態付き処理 | Managed Service for Apache Flink |
 
+
+**例（Lambda と Glue）**: 1 ファイル 10 MB を 30 秒で変換するなら Lambda、500 GB のログを結合するなら Glue です。Lambda は 15 分で打ち切られます。
+
 ### データの置き場と SQL エンジン {#choosing-query}
 
 | 観点 | Athena | Redshift | Redshift Spectrum |
@@ -1195,6 +1630,9 @@ DMS Fleet Advisor は 2025 年 5 月に終了予定が発表された機能で�
 | 料金 | スキャン量など | ノードまたは RPU | スキャン量など |
 | 向く場面 | 単発、ログ分析 | 定常的な BI、複雑な結合 | DWH と S3 の結合 |
 | 性能 | パーティションと形式に依存 | 分散キーとソートキーで調整 | パーティションと形式に依存 |
+
+
+**例**: 週に数回の調査は Athena、毎朝 300 人が開く BI は Redshift、Redshift の売上と S3 の 5 年前のログを結合するなら Spectrum です。
 
 ### データの共有 {#choosing-sharing}
 
@@ -1205,6 +1643,9 @@ DMS Fleet Advisor は 2025 年 5 月に終了予定が発表された機能で�
 | 社外とデータを売買、交換する | Data Exchange |
 | 生データを見せず共同で分析する | Clean Rooms |
 | 社内でデータを検索、申請する | DataZone、SageMaker Catalog |
+
+
+**例**: グループ会社の分析チームに最新の売上テーブルを読ませるなら Redshift データ共有です。提携先と共通顧客の数だけを出すなら Clean Rooms です。
 
 ## 既定値と上限のまとめ {#numbers}
 

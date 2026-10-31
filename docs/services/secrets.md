@@ -4,6 +4,8 @@
 
 アプリの資格情報や設定値を、コードの外で安全に管理するためのサービス群です。資格情報なら Secrets Manager、一般の設定値なら Parameter Store、安全に段階展開したい設定や機能フラグなら AppConfig を使います。
 
+**提供単位:** Secrets Manager、Parameter Store、AppConfig は、どれもリージョンのリソースで、VPC の外にあります（[提供単位の一覧](resource-scope.md#scope-regional-outside)）。VPC 内の Lambda などから呼ぶときは、インターフェイスエンドポイントか NAT を通します。
+
 [![シークレットと設定の取得](../assets/diagrams/secrets-config.png)](../assets/diagrams/secrets-config.png)
 
 ## 3 つのサービスの比較 {#comparison}
@@ -17,6 +19,9 @@
 | 料金 | スタンダードは無料。アドバンストと高スループットは有料 | リクエスト単位 | シークレット単位の月額と API 呼び出し |
 | 値のサイズ上限 | 4 KB または 8 KB | - | 65,536 バイト |
 | クロスアカウント | アドバンストで共有可 | - | リソースポリシー |
+
+- **例:** RDS のパスワードを 30 日ごとに変えたいなら Secrets Manager、API のベース URL を置くなら Parameter Store のスタンダード、新しい決済画面を 10% の利用者から公開するなら AppConfig。
+- **例:** 80 KB の証明書チェーンは、Secrets Manager の 65,536 バイトも Parameter Store の 8 KB も超える。S3 に置いて KMS で暗号化し、参照先だけを Parameter Store に書く。
 
 判断の目安は次のとおりです。
 
@@ -35,6 +40,8 @@ flowchart TD
 
 シークレットの暗号化、取得、ローテーション、監査を担います。値は文字列かバイナリで、複数の値は JSON にまとめるのが推奨です。
 
+**提供単位:** シークレットはリージョンのリソースで、VPC の外にあります。
+
 | API | 用途 | 注意点 |
 | --- | --- | --- |
 | `GetSecretValue` | 値の取得 | `secretsmanager:GetSecretValue` が必要。カスタマー管理キーなら `kms:Decrypt` も必要 |
@@ -46,6 +53,11 @@ flowchart TD
 
 `GetSecretValue` の上限は秒間 10,000 回です。呼び出しのたびに料金もかかるので、キャッシュを前提にします。
 
+- **`DeleteSecret` の例:** `--recovery-window-in-days 7` で 7 日後に消える。期間中は `RestoreSecret` で戻せる。
+- **`BatchGetSecretValue` の例:** 起動時に 20 個のシークレットをまとめて読むと、20 回の `GetSecretValue` の代わりに 1 回の呼び出しで済む。主体には `secretsmanager:BatchGetSecretValue` と、各シークレットの `GetSecretValue` が要る。
+- **`ReplicateSecretToRegion` の例:** `--add-replica-regions Region=ap-northeast-3` で大阪に複製する。
+- **誤ると:** 秒間 2,000 リクエストの API がリクエストごとに `GetSecretValue` を呼ぶと、料金は回数に比例して増え、1 回あたりの応答も遅くなる。キャッシュすると呼び出しは TTL ごとに 1 回で済む。
+
 ### バージョンとステージングラベル {#version-labels}
 
 | ラベル | 意味 |
@@ -55,6 +67,10 @@ flowchart TD
 | `AWSPENDING` | ローテーション中の新しい値 |
 
 前の値に戻すときは、`UpdateSecretVersionStage` でラベルを付け替えます。
+
+- **例:** 取得時に `--version-stage AWSPREVIOUS` を指定すると、1 つ前の値が読める。新しいパスワードで接続できない切り替えの間に、古い値で再試行する処理に使う。
+- **例:** バージョン `v1` が `AWSCURRENT` の状態で新しい値を保存すると、`v2` が `AWSCURRENT`、`v1` が `AWSPREVIOUS` になる。さらに保存すると `v1` はラベルなしになる。
+- **誤ると:** 自分の処理で `AWSPENDING` を付けたバージョンを残すと、次のローテーションの `createSecret` が失敗する場合がある。
 
 ### ローテーション {#rotation}
 
@@ -81,6 +97,11 @@ flowchart TD
 | 交代ユーザー | 2 ユーザーを交互に更新。常に有効な資格情報がある | 高い可用性が必要な場合。別途 `superuser` のシークレットが必要 |
 
 スケジュールは `rate()` または `cron()` で指定し、最短 4 時間ごと、ウィンドウは最短 1 時間です。VPC 内の Lambda で動かす場合、Secrets Manager への経路（VPC エンドポイントなど）が必要です。
+
+- **シングルユーザーの例:** `app` のパスワードだけを変える。`setSecret` と `finishSecret` の間に、古いパスワードで接続した処理は拒否される。接続エラーで再取得すれば回復する。
+- **交代ユーザーの例:** `app` と `app_clone` を交互に更新する。ローテーションの直後でも前のユーザーは有効なので、キャッシュの古い値でも接続できる。ユーザーの作成に `superuser` のシークレットが要る。
+- **マネージドの例:** RDS の `ManageMasterUserPassword` で作ったマスターパスワードは、RDS がシークレットを持ち、Lambda なしで回る。
+- **誤ると:** 接続プールの設定を変えずにシングルユーザーを選ぶと、ローテーションの度に接続エラーが短時間出る。
 
 ### 取得とクライアント側キャッシュ {#retrieval-caching}
 
@@ -109,6 +130,9 @@ value = cache.get_secret_string("prod/orders/db")
 - 必要な権限は `secretsmanager:DescribeSecret` と `secretsmanager:GetSecretValue`。
 - 既定で 1 時間ごとに更新し、あふれたときは LRU で破棄する。
 - キャッシュを無効化する機能はないので、ローテーション直後は古い値が返ることがある。接続エラー時に取り直す処理を入れる。
+- **例:** `SecretCacheConfig(secret_refresh_interval=300)` なら 5 分ごとに更新する。既定は 3,600 秒、`max_cache_size` は既定 1,024 件。
+- **例:** 1 時間ごとの更新でプロセスが 10 個あれば、1 シークレットあたりの呼び出しは 1 時間に約 10 回で済む。リクエストごとに呼ぶ場合と比べ、大幅に減る。
+- **誤ると:** キャッシュが 1 時間古い間にパスワードが変わると、シングルユーザーでは認証エラーが最長 1 時間続く。接続エラーで `client.get_secret_value` を直接呼び直す。
 
 ### Lambda 拡張 {#lambda-extension}
 
@@ -141,6 +165,11 @@ def get_secret():
 
 実行ロールには、シークレットの取得権限が必要です。拡張は TTL が切れるまで変更を検知しないので、ローテーションの頻度に応じて TTL を短くします。VPC 内の関数には VPC エンドポイントが必要です。
 
+- **`SECRETS_MANAGER_TTL` の例:** ローテーション直後の古い値を減らしたいなら `60`。`0` にするとキャッシュをしない。`301` は範囲外。
+- **`PARAMETERS_SECRETS_EXTENSION_CACHE_SIZE` の例:** `0` にするとキャッシュが無効になり、TTL の設定も無視される。
+- **計算の例:** 実行環境が 20 個、TTL 300 秒で 1 つのシークレットを読むと、300 秒あたりの `GetSecretValue` は最大 20 回。秒間 100 回呼ばれる関数でも、リクエスト数に関係なく増えない。
+- **誤ると:** `X-Aws-Parameters-Secrets-Token` を付けない呼び出しは拒否される。値には環境変数の `AWS_SESSION_TOKEN` を使う。
+
 ### クロスアカウントでの利用 {#secrets-cross-account}
 
 別アカウントからシークレットを読むには、次の 3 つが必要です。
@@ -151,9 +180,15 @@ def get_secret():
 
 既定の `aws/secretsmanager` は AWS 管理キーなのでポリシーを変更できず、この構成には使えません。
 
+- **例:** `111122223333` のシークレットを `444455556666` の `Reader` が読む。リソースポリシーの `Principal` に `arn:aws:iam::444455556666:role/Reader` を書き、`Reader` の IAM ポリシーに `secretsmanager:GetSecretValue` と `kms:Decrypt` を書く。
+- **誤ると:** 3 つのうち KMS だけが欠けると、`Access to KMS is not allowed` というエラーになる。シークレットの権限を見直しても解決しない。
+- **誤ると:** `SecretId` に名前だけを渡すと、自分のアカウントを探して `ResourceNotFoundException` になる。別のアカウントのものは ARN で指定する。
+
 ## Systems Manager Parameter Store {#parameter-store}
 
 設定値を階層的に保存するサービスです。`String`、`StringList`、`SecureString` の 3 種類の型があります。
+
+**提供単位:** パラメータはリージョンのリソースで、VPC の外にあります。
 
 ### ティア {#parameter-tiers}
 
@@ -168,6 +203,9 @@ def get_secret():
 
 既定のティアは `Standard`、`Advanced`、`Intelligent-Tiering` から設定できます。
 
+- **例:** 3 KB の接続設定はスタンダードで足りる。6 KB の JSON はアドバンスト。
+- **誤ると:** 10,001 個目のパラメータを `Standard` で作ると、上限で失敗する。
+
 スループットはティアとは別の設定で、取得系 API の上限は次のとおりです。
 
 | API | 既定 | 高スループット（有料） |
@@ -179,6 +217,9 @@ def get_secret():
 
 上限を超えると、スロットリングのエラーになります。キャッシュと再試行で対処します。
 
+- **計算の例:** Lambda が秒間 60 回起動し、それぞれ `GetParameter` を 1 回呼ぶと 60 TPS で、既定の 40 TPS を超える。同じ環境でキャッシュすれば、呼び出しは実行環境ごとに TTL あたり 1 回になる。
+- **例:** 40 TPS は `GetParameter` 20 回と `GetParameters` 20 回の合計でも到達する。3 つの API で共有だからだ。
+
 ### SecureString {#securestring}
 
 `SecureString` は、値を KMS で暗号化します。パラメータ名は平文のままです。
@@ -189,6 +230,10 @@ def get_secret():
 | アドバンスト | エンベロープ暗号化 | `GenerateDataKey`, `Decrypt` |
 
 キーを指定しなければ、AWS 管理キー `aws/ssm` を使います。読むときは `WithDecryption=True` を指定します。カスタマー管理キーの場合、実行ロールに `kms:Decrypt` も必要です。
+
+- **`WithDecryption` の例:** `False` だと、`Value` に暗号文が base64 で返る。アプリの DB 接続文字列が読めない文字列になる。
+- **`KeyId` の例:** `alias/app-key` を指定すると、値を読む人に `kms:Decrypt` が要る。`ssm:GetParameter` だけのロールは `AccessDeniedException` になる。
+- **誤ると:** 名前は平文なので、`/prod/db/password-is-hunter2` のように値を名前に含めると漏れる。
 
 ```python
 import boto3
@@ -221,6 +266,9 @@ value = ssm.get_parameter(
 
 環境ごとの取得は、パスを変えるだけです。IAM でもパス単位で権限を絞れます。
 
+- **例:** `/prod/orders/db/host` は階層が 4 つ。`/a/b/c/.../p` のように 16 階層にすると作れない。
+- **誤ると:** ポリシーの `Resource` を `parameter/prod/orders` だけにすると、配下の `/prod/orders/db/host` には一致しない。`parameter/prod/orders/*` と書く。
+
 ```python
 import boto3
 
@@ -247,12 +295,17 @@ config = {p["Name"]: p["Value"] for page in pages for p in page["Parameters"]}
 - **パラメータポリシー**（アドバンストのみ）: `Expiration`、`ExpirationNotification`、`NoChangeNotification`。通知は EventBridge に届く。
 - **Secrets Manager の参照**: `/aws/reference/secretsmanager/シークレット名` を `GetParameter` で読むと、Secrets Manager の値を取得できる。
 - **自動ローテーションがない**: 資格情報の定期的な更新が必要なら Secrets Manager を使う。
+- **参照の例:** `aws ssm get-parameter --name /aws/reference/secretsmanager/prod/orders/db --with-decryption` で、Parameter Store の API のまま Secrets Manager の値を読める。
+- **ラベルの例:** `/app/ami` のバージョン 3 に `prod` を付けると、`/app/ami:prod` がバージョン 3 を返す。検証後に 4 へ移せば、コードを変えずに切り替えられる。
+- **ポリシーの例:** 認証情報を `Expiration` で 90 日後に消し、`ExpirationNotification` で 15 日前に通知を受ける。
 
 ## AWS AppConfig {#appconfig}
 
 [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 再デプロイせずにアプリの動作を変えるためのサービスです。機能フラグや動的な設定を、検証しながら段階的に配布し、問題があれば自動で戻します。
+
+**提供単位:** アプリケーションと環境はリージョンのリソースで、VPC の外にあります。
 
 | 概念 | 意味 |
 | --- | --- |
@@ -270,6 +323,10 @@ config = {p["Name"]: p["Value"] for page in pages for p in page["Parameters"]}
 
 AWS は、できるだけホスト型ストアを使うことを推奨しています。
 
+- **機能フラグの例:** `newCheckout` のオンオフと `maxItems` を持つ。
+- **フリーフォームの例:** 既存の YAML を S3 に置き、CodePipeline で更新する。
+- **誤ると:** Secrets Manager を保存先にしても、AppConfig がローテーションするわけではない。ローテーションは Secrets Manager の設定で行う。
+
 ### 機能フラグ {#feature-flags}
 
 コードに新機能を入れたまま無効にしておき、デプロイと公開を分けられます。
@@ -283,6 +340,9 @@ AWS は、できるだけホスト型ストアを使うことを推奨してい�
 
 機能フラグは自動で JSON スキーマの検証を受けます。マルチバリアントのフラグを使うと、ユーザーの情報に応じて異なる値を返せます。
 
+- **例:** `newCheckout.enabled` を `false` にしたバージョンをデプロイすると、再デプロイなしで新しい画面を消せる。
+- **マルチバリアントの例:** ユーザーの `tier` が `pro` なら `maxItems=50`、それ以外は `20` を返す。
+
 ### バリデーター {#validators}
 
 設定プロファイルには、最大 2 つのバリデーターを指定できます。不正な設定を配布前に止めるためのものです。
@@ -291,6 +351,9 @@ AWS は、できるだけホスト型ストアを使うことを推奨してい�
 | --- | --- | --- |
 | JSON Schema | フリーフォーム | 構造の検証 |
 | Lambda 関数 | 機能フラグ、フリーフォーム | 独自のロジックによる検証 |
+
+- **JSON Schema の例:** `maxItems` を `integer` で最大 100 に定義する。`"maxItems": "many"` を含むバージョンは配布が止まる。
+- **Lambda の例:** `timeout` の値が DB の設定と矛盾しないかを確認し、矛盾があれば例外を投げる。
 
 ### デプロイ戦略 {#deployment-strategies}
 
@@ -310,9 +373,14 @@ AWS は、できるだけホスト型ストアを使うことを推奨してい�
 | `AppConfig.AllAtOnce` | すべてに即時 | 急ぐとき |
 | `AppConfig.Linear50PercentEvery30Seconds` | 30 秒ごとに 50% | テスト、デモ |
 
+- **例:** 利用者に影響する本番の設定は `Linear20PercentEvery6Minutes` を使う。30 分の配布と 30 分のベイクで、完了まで 60 分。
+- **誤ると:** 本番で `AllAtOnce` を使うと、誤った設定が全員に即座に届く。アラームが鳴って戻るまで全員に影響する。
+
 ### ロールバック {#appconfig-rollback}
 
 環境に CloudWatch アラームを設定すると、配布中とベイク時間中にアラームが発生した場合、自動でロールバックします。AppConfig がアラームを読むための IAM ロールが必要です。手動なら `StopDeployment` で停止します。
+
+- **例:** `5XXError` のアラームを `Production` の環境に付ける。配布の 40% 時点でアラームになると、前の設定に戻り、残りの 60% には届かない。
 
 ### 設定の取得 {#appconfig-retrieval}
 
@@ -336,6 +404,7 @@ config = resp["Configuration"].read()       # 変更がなければ空
 
 - トークンは毎回新しいものを使う。有効期間は最大 24 時間。
 - Lambda では AppConfig Agent の Lambda 拡張が推奨で、`localhost:2772` から取得できる。キャッシュにより、呼び出し回数とコストを抑えられる。
+- **誤ると:** 2 回目の `GetLatestConfiguration` に最初のトークンを渡すと、失敗する。応答の `NextPollConfigurationToken` を使う。
 
 ## 環境ごとの設定 {#environment-config}
 
@@ -371,6 +440,11 @@ Resources:
 !!! warning "ステージ変数に秘密情報を入れない"
     API Gateway のステージ変数は機密データ向けではありません。Lambda 環境変数の平文も、関数を閲覧できる人に見えます。資格情報は Secrets Manager に置き、環境変数にはその名前だけを渡します。
 
+- **Lambda 環境変数の例:** `CONFIG_PATH=/prod/orders/` を渡すと、コードは `Path=os.environ["CONFIG_PATH"]` で読むだけで、環境を区別しない。
+- **エイリアスの例:** `prod` エイリアスがバージョン 7 を指す。戻すときは `update-alias` で 6 に向ける。
+- **ステージ変数の例:** `prod` の `functionAlias=live`、`dev` の `functionAlias=dev` にして、統合の URI に `${stageVariables.functionAlias}` と書く。
+- **誤ると:** 環境変数にパスワードを入れると、`lambda:GetFunctionConfiguration` を持つ人に平文で見える。
+
 ## データ分類 {#data-classification}
 
 データの機密度を分類し、それに応じて保存、ログ、アクセスの扱いを決めます。
@@ -381,6 +455,8 @@ Resources:
 | PHI（保護対象の医療情報） | 個人に結び付く健康や医療に関する情報 | 診療記録、保険の番号、検査結果 |
 | 機密（業務） | 漏えいすると事業に影響する情報 | 認証情報、暗号鍵、財務情報 |
 | 公開 | 公開してよい情報 | カタログ情報 |
+
+- **例:** `{"email": "alice@example.com", "password": "x", "item": "A-1"}` の場合、`email` は PII、`password` は機密、`item` は公開と分類できる。ログに残すのは `item` だけにする。
 
 分類に応じて、次のように対策します。
 
@@ -394,6 +470,8 @@ Resources:
 | 保持期間 | S3 ライフサイクル、ログの保持設定、DynamoDB TTL |
 | 監査 | CloudTrail |
 
+- **例:** 医療アプリの DynamoDB テーブルは、カスタマー管理キーで暗号化し、`dynamodb:Attributes` で診断の属性を看護師のロールだけに許可する。ログには `patient_id` のハッシュだけを書く。
+
 ## サニタイズとマスキング {#sanitization-masking}
 
 用語を整理します。
@@ -405,6 +483,9 @@ Resources:
 | トークン化 | 別の値に置き換え、対応表で管理 | 対応表があれば可 | `tok_a1b2` |
 | ハッシュ化 | 一方向の変換 | 不可 | 突合用の識別子 |
 | 暗号化 | 鍵で変換 | 鍵があれば可 | フィールド単位の暗号化 |
+
+- **例:** `4111111111111111` をマスキングすると `************1111`、トークン化すると `tok_a1b2`、ハッシュ化すると `9f86...` のような固定長の値になる。
+- **誤ると:** 推測しやすいメールアドレスをソルトなしで SHA-256 にすると、候補を総当たりして元の値を当てられる。
 
 ### アプリケーションでの処理 {#app-masking}
 
@@ -457,6 +538,8 @@ def lambda_handler(event, context):
 - API の応答でも、呼び出し元の権限に応じて項目を削る。
 - メトリクスのディメンション、トレースの注釈、URL のクエリ文字列にも機密情報を入れない。
 - ハッシュ化する値が推測しやすいなら、ソルトや HMAC を使う。
+- **例:** 上の `sanitize` に `{"email": "alice@example.com", "password": "x"}` を渡すと、`{"email": "***@***", "password": "***"}` になる。
+- **誤ると:** `SENSITIVE_KEYS` に `Password` だけを書くと比較に漏れる。上のコードは `k.lower()` と小文字で比べるので、キーの集合も小文字にする。
 
 ### CloudWatch Logs のデータ保護 {#cloudwatch-data-protection}
 
@@ -493,6 +576,8 @@ aws logs put-data-protection-policy \
 - マスキングは取り込み時に行われる。ポリシー設定前のログはマスキングされない。
 - Logs Insights、メトリクスフィルター、サブスクリプションフィルターなど、出口のすべてでマスキングされる。
 - マスクされていないデータを見られるのは `logs:Unmask` を持つ主体のみ。
+- **例:** `alice@example.com` を含むログは、Logs Insights で `*****` のように見える。`logs:Unmask` を持つ担当者は、`unmask(@message)` で元の値を読める。
+- **誤ると:** ポリシーの適用前に取り込んだ 1 年分のログは、そのまま読める。適用後も別に保護が必要。
 
 ### その他のサービス {#other-data-services}
 
@@ -502,6 +587,8 @@ aws logs put-data-protection-policy \
 | S3 の特定のプレフィックスのみ許可 | バケットポリシー、S3 Access Points |
 | 生成 AI の入出力の PII | Amazon Bedrock Guardrails（[AI](ai.md) を参照） |
 | 監査ログ | CloudTrail。データイベントは別途有効にする |
+
+- **`dynamodb:Attributes` の例:** `Name` と `Email` だけを許可したロールで、`Select=ALL_ATTRIBUTES` の `Query` を呼ぶと拒否される。`ProjectionExpression` で許可した属性を指定し、`dynamodb:Select` を `SPECIFIC_ATTRIBUTES` にする。
 
 !!! note "Amazon Macie"
     Macie は S3 内の機密データを検出するサービスです。DVA-C03 の対象サービス一覧には載っていないので、「S3 全体を調べるサービスがある」と知っておく程度で十分です。
@@ -516,6 +603,10 @@ aws logs put-data-protection-policy \
 | プール | リソースを共有し、テナント ID で分ける | アプリと条件に依存 | 低い |
 | ブリッジ | 一部を共有し、一部を専用にする | 中間 | 中間 |
 
+- **サイロの例:** 大手の顧客にだけ専用の AWS アカウントを割り当て、監査と障害の影響を分ける。100 テナントなら 100 アカウントを運用する。
+- **プールの例:** 1 つの DynamoDB テーブルに全テナントを入れ、PK を `TENANT#a#ORDER#1` にする。1,000 テナントでもテーブルは 1 つ。
+- **ブリッジの例:** Web 層は共有し、データベースだけテナント別にする。
+
 ### パターンの比較 {#tenant-patterns}
 
 | パターン | 仕組み | 使える場面 |
@@ -526,6 +617,8 @@ aws logs put-data-protection-policy \
 | テナントごとの KMS キー | テナント単位の監査、失効 | 暗号学的な分離が必要な場合 |
 | 行レベルセキュリティ | Aurora PostgreSQL などのデータベース機能 | RDB のプール |
 | アカウント分離 | テナントごとの AWS アカウント | 最も強い分離 |
+
+- **例:** `tenants/a/db` を読めるロールの `Resource` を `arn:aws:secretsmanager:ap-northeast-1:111122223333:secret:tenants/a/*` に絞る。テナント B のシークレットは読めない。
 
 ### 動的なセッションによる分離 {#tenant-sessions}
 
@@ -575,6 +668,8 @@ def tenant_session(tenant_id: str) -> boto3.Session:
 - キャッシュのキーにもテナント ID を含める。
 - ログとメトリクスにテナント ID を付けて追跡できるようにする。
 - 1 テナントがリソースを使い切らないよう、使用量プランなどで制限する。
+- **例:** JWT の `custom:tenant_id` が `a` のリクエストで、本文に `"tenant": "b"` があっても、セッションタグは `a` にする。B の PK への `GetItem` は `AccessDeniedException` になる。
+- **誤ると:** `RoleSessionName` に長いテナント名を使うと、64 文字の上限で `AssumeRole` が失敗する。
 
 ## Secrets Manager の設定の詳細 {#secrets-manager-settings}
 
@@ -601,6 +696,12 @@ aws secretsmanager rotate-secret --secret-id prod/orders/db \
 
 ウィンドウ内のいつかに実行されるので、正確な時刻に動くわけではありません。
 
+- **`AutomaticallyAfterDays` の例:** `30` は 30 日ごと。日単位なので、ウィンドウは 0:00 UTC からその日の終わりまで。
+- **`rate()` の例:** `rate(4 hours)` が最短。`rate(1 hour)` はエラーになる。
+- **`Duration` の例:** `rate(6 hours)` なら `4h` は可で、`7h` は次のウィンドウにかかるので不可。
+- **`RotateImmediately` の例:** `false` で動作確認だけ行う。`testSecret` が通れば、次のウィンドウまで値は変わらない。
+- **誤ると:** `ScheduleExpression` と `AutomaticallyAfterDays` を同時に指定すると、リクエストが拒否される。
+
 ### Lambda ローテーションの動き {#lambda-rotation-steps}
 
 Secrets Manager が同じ関数を 4 回呼びます。イベントには `Step`、`SecretId`、`ClientRequestToken`（新しいバージョンの ID）が入ります。
@@ -624,6 +725,11 @@ Secrets Manager が同じ関数を 4 回呼びます。イベントには `Step`
 
 `AWSPENDING` が残っていると、次のローテーションが失敗します。CloudWatch Logs の関数のログを確認します。
 
+- **例:** `createSecret` は同じ `ClientRequestToken` のバージョンがあれば何もしない。再試行で別の新しいパスワードを作ると、`setSecret` と値がずれる。
+- **例:** プライベートサブネットの関数なら、`com.amazonaws.ap-northeast-1.secretsmanager` のインターフェイスエンドポイントを作り、セキュリティグループで TCP 443 を許可する。
+- **誤ると:** 関数のリソースベースポリシーがないと、`Secrets Manager cannot invoke the specified Lambda function` というエラーでローテーションが始まらない。
+- **誤ると:** 関数のタイムアウトを 3 秒のままにして DB の接続に 5 秒かかると、`setSecret` で失敗する。
+
 ### バージョンの扱い {#version-stages}
 
 | 項目 | 内容 |
@@ -634,6 +740,8 @@ Secrets Manager が同じ関数を 4 回呼びます。イベントには `Step`
 | 取得の指定 | `VersionStage` か `VersionId`。未指定なら `AWSCURRENT` |
 
 短い間隔で値を更新し続けると、24 時間以内のバージョンが増え、上限で `LimitExceededException` になりえます。
+
+- **計算の例:** 5 分ごとに `PutSecretValue` すると、24 時間で 24 × 60 ÷ 5 = 288 バージョンになる。24 時間以内のものは消えないので、100 を超えて `LimitExceededException` になる。AWS は、継続して 10 分に 1 回より多く更新しないよう勧めている。
 
 **ロールバック**: `AWSCURRENT` を前のバージョンに移します。
 
@@ -657,6 +765,9 @@ aws secretsmanager update-secret-version-stage --secret-id prod/orders/db \
 
 本番で使っていそうなら、CloudWatch アラームで削除待ちのシークレットへのアクセスを検知します。
 
+- **例:** `aws secretsmanager delete-secret --secret-id prod/orders/db --recovery-window-in-days 14` のあと、8 日目に `restore-secret` で戻す。削除待ちの間のアプリの呼び出しは失敗する。
+- **誤ると:** `--force-delete-without-recovery` と `--recovery-window-in-days` を同時に指定するとエラーになる。復旧期間付きで消したシークレットと同じ名前は、期間が終わるまで作れない。
+
 ### 他リージョンへの複製 {#secret-replication}
 
 | 項目 | 内容 |
@@ -670,6 +781,9 @@ aws secretsmanager update-secret-version-stage --secret-id prod/orders/db \
 
 データベースの認証情報を複製しても、値は元のデータベースのエンドポイントのままです。レプリカで使うなら、リージョンのデータベース用に値を調整します。
 
+- **例:** 東京の `prod/orders/db` を大阪に複製すると、レプリカの ARN は `arn:aws:secretsmanager:ap-northeast-3:111122223333:secret:prod/orders/db-AbCdEf` のように、リージョンだけが変わる。アプリは同じ名前で読める。
+- **誤ると:** 東京の障害で大阪をプライマリにするには、`StopReplicationToReplica` でスタンドアロンにする。レプリカのままでは値を更新できない。
+
 ### リソースポリシー {#secret-resource-policy}
 
 `PutResourcePolicy` で付与します。既存のポリシーは置き換えられます。上限は 20,480 文字です。
@@ -681,6 +795,9 @@ aws secretsmanager put-resource-policy --secret-id prod/orders/db \
 
 `--block-public-policy` を付けると、公開するポリシーを拒否します。
 
+- **例:** `Principal` を `*` にして `Condition` なしのポリシーは拒否される。`arn:aws:iam::444455556666:role/Reader` に限れば通る。
+- **誤ると:** `PutResourcePolicy` は置き換えなので、`Reader2` だけを渡すと `Reader` の許可が消える。先に `GetResourcePolicy` で読み、足してから送る。
+
 ### 暗号化と料金 {#secret-encryption-cost}
 
 エンベロープ暗号化を使い、バージョンごとにデータキーを作ります。
@@ -691,9 +808,15 @@ aws secretsmanager put-resource-policy --secret-id prod/orders/db \
 
 シークレットごとの月額と、API 呼び出しの料金があります。Parameter Store より高いので、資格情報のローテーションが要らない値には Parameter Store も検討します。
 
+- **例:** `aws secretsmanager update-secret --secret-id prod/orders/db --kms-key-id alias/orders` でキーを変える。古いキーを読む権限しかないアプリは、新しいキーの `kms:Decrypt` がないと失敗する。
+- **誤ると:** 古いキーをすぐ無効にすると、3 つのラベルが付いていない古いバージョンは読めない。
+
 ### GetRandomPassword {#get-random-password}
 
 `PasswordLength` は既定 32、1〜4,096 です。`ExcludeCharacters` で、データベースが受け付けない文字を除けます。
+
+- **例:** `aws secretsmanager get-random-password --password-length 20 --exclude-characters '/@"' --require-each-included-type`。MySQL の接続文字列を壊す `/` や `@` を除く。
+- **誤ると:** 既定の文字には `"` や `\` が含まれるので、シェルや接続文字列に貼ると壊れる。`--exclude-punctuation` で記号を全部除く方法もある。
 
 ### キャッシュの選び方 {#caching-choice}
 
@@ -712,6 +835,9 @@ aws secretsmanager put-resource-policy --secret-id prod/orders/db \
 | `SSM_PARAMETER_STORE_TIMEOUT_MILLIS` | 0（無制限） | 同上 |
 
 `secretId` は URL エンコードします。`X-Aws-Parameters-Secrets-Token` がないと拒否されます。ローテーションで古い値が使えなくなったら、`versionStage=AWSCURRENT` を指定するか、TTL を短くします。
+
+- **例:** `prod/orders/db` は `prod%2Forders%2Fdb` と書く。
+- **`SECRETS_MANAGER_TIMEOUT_MILLIS` の例:** `2000` にすると、2 秒で失敗して、関数の 3 秒のタイムアウトの前にエラーを扱える。既定の `0` だと、応答がないと関数のタイムアウトまで待つ。
 
 ### CloudFormation の動的参照 {#dynamic-references}
 
@@ -743,6 +869,10 @@ Resources:
 | 共有パラメータ | 別アカウントから共有されたパラメータは参照できない |
 | ロールバック | `ssm-secure` の指定のバージョンがなくなると、ロールバックが失敗する |
 
+- **例（バージョン）:** `{{resolve:ssm:/prod/orders/queue-name:3}}` は常にバージョン 3。`{{resolve:ssm:/prod/orders/queue-name}}` は、スタックの作成と更新のたびに最新を読む。
+- **例（更新）:** シークレットを更新しただけでは、DB のパスワードは変わらない。そのリソースのプロパティを変えるスタック更新で初めて再取得する。
+- **誤ると:** `{{resolve:secretsmanager:prod/orders/db:SecretString:passwrd}}` のように JSON キーを誤ると、スタックの作成が失敗する。
+
 ## Parameter Store の設定の詳細 {#parameter-store-settings}
 
 ### PutParameter の設定 {#put-parameter-settings}
@@ -763,6 +893,14 @@ aws ssm put-parameter --name /prod/orders/timeout --type String \
 | `Policies` | パラメータポリシーの JSON |
 | `DataType` | `text`, `aws:ec2:image` など |
 
+- **`Name` の例:** `/Prod/db` と `/prod/db` は別のパラメータになる。階層なしの `prod-db` も作れる。
+- **`Type` の例:** `StringList` は `a,b,c` の形。`SecureString` は暗号化する値に使う。
+- **`Overwrite` の例:** 初回は省略でき、2 回目に同じ名前で `--overwrite` を省くと `ParameterAlreadyExists` になる。
+- **`AllowedPattern` の例:** `^\d+$` なら `30` は通り、`30s` は `ParameterPatternMismatchException` になる。
+- **`KeyId` の例:** `alias/app-key` を指定すると、`aws/ssm` の代わりにこのキーで暗号化する。
+- **`DataType` の例:** `aws:ec2:image` にすると、値の形式と AMI の存在を非同期に確認する。`ami-0123456789abcdef0` が使えなければ、新しいバージョンは作られない。
+- **`Policies` の例:** 下の JSON を `--policies file://policy.json` で渡す。ティアは Advanced か Intelligent-Tiering にする。
+
 ### ティアの選択 {#tier-selection}
 
 **既定のティアは個別のティアとは別の設定**で、アカウントとリージョンごとに持ちます。変えても、既存のパラメータには影響しません。
@@ -774,6 +912,8 @@ Intelligent-Tiering は、次のどれかに当たれば Advanced に、それ�
 - そのアカウントとリージョンに、すでに 10,000 個のパラメータがある
 
 5 KB の値を `Standard` で書き込むと失敗します。一度 Advanced になると Standard には戻せません。戻したいなら削除して作り直します。
+
+- **例:** Intelligent-Tiering で 3 KB なら Standard、5 KB なら Advanced になる。同じパラメータをあとで 3 KB に縮めても、Advanced のまま課金される。
 
 ### パラメータポリシー {#parameter-policies}
 
@@ -798,6 +938,11 @@ Advanced のみ使えます。1 つのパラメータに複数を設定できま
 
 ポリシーは非同期の定期スキャンで実行されます。指定の時刻ちょうどとは限りません。
 
+- **`Expiration` の例:** `2026-12-31T15:00:00.000Z` は日本時間の 2027 年 1 月 1 日 0 時。`Z` は UTC を示す。
+- **`ExpirationNotification` の例:** `{"Before": "15", "Unit": "Days"}` なら、期限の 15 日前の 12 月 16 日ごろに通知する。
+- **`NoChangeNotification` の例:** `{"After": "20", "Unit": "Days"}` なら 20 日間更新がないと通知する。承認済み AMI の見直しの督促に使う。
+- **誤ると:** ポリシーを追加して `put-parameter` を呼ぶと、既存のポリシーが置き換わる。元のポリシーも一緒に渡す。1 つのパラメータに 10 個まで。
+
 ### 階層と取得 {#parameter-retrieval}
 
 | API | 動作 | 上限 |
@@ -812,6 +957,9 @@ IAM ではパスを `Resource` で絞ります。`SecureString` を読むなら�
 
 `GetParametersByPath` では、`/a` へのアクセスを持つ主体は、`/a/b` を IAM で明示的に拒否していても、`Recursive=true` で取得できます。配下を隠したいなら、上の階層の権限を渡さないように設計します。
 
+- **`GetParameters` の例:** `["/a", "/b", "/none"]` を渡すと、`Parameters` に 2 件、`InvalidParameters` に `/none` が入る。例外にはならないので、コードで確認する。11 個以上は分割する。
+- **`MaxResults` の例:** 250 個のパラメータを 10 件ずつ取ると、250 ÷ 10 = 25 回の呼び出しになり、40 TPS の枠を 25 回分使う。
+
 ### バージョンとラベル {#parameter-versions}
 
 | 項目 | 内容 |
@@ -825,6 +973,9 @@ IAM ではパスを `Resource` で絞ります。`SecureString` を読むなら�
 
 存在しないバージョンやラベルを指定すると失敗します。最新の値には戻りません。
 
+- **例:** `/app/ami` のバージョン 3 に `prod` と `golden` を付ける。`label-parameter-version --parameter-version 4 --labels prod` で `prod` を 4 に動かす。`golden` は 3 に残る。
+- **誤ると:** 最古のバージョン 1 に `prod` が付いたまま 100 バージョンに達すると、次の `PutParameter` が `ParameterMaxVersionLimitExceeded` になる。ラベルを動かしてから更新する。
+
 ### スループット {#parameter-throughput}
 
 | API | 既定 | 高スループット |
@@ -837,6 +988,9 @@ IAM ではパスを `Resource` で絞ります。`SecureString` を読むなら�
 
 パラメータごとの設定ではなく、`update-service-setting` でアカウント全体に有効にします。高スループットは API 呼び出しごとに課金されるので、まずキャッシュを検討します。
 
+- **例:** `aws ssm update-service-setting --setting-id arn:aws:ssm:ap-northeast-1:111122223333:servicesetting/ssm/parameter-store/high-throughput-enabled --setting-value true` で有効にする。リージョンごとの設定。
+- **計算の例:** `GetParameter` が 500 TPS なら 40 TPS に収まらない。TTL 300 秒のキャッシュがあって実行環境が 100 個なら、1 つのパラメータの呼び出しは 100 ÷ 300 ≒ 0.33 TPS に減る。
+
 ### パブリックパラメータ {#public-parameters}
 
 AWS が公開する値です。最新の AMI ID をハードコードせずに取得できます。
@@ -848,9 +1002,21 @@ aws ssm get-parameters-by-path \
 
 CloudFormation のパラメータ型 `AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>` と組み合わせると、デプロイ時に最新の AMI を解決できます。
 
+```yaml
+Parameters:
+  LatestAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+```
+
+- **誤ると:** `ami-0abc...` と書いたテンプレートを別のリージョンで使うと、ID が存在せず失敗する。パブリックパラメータならリージョンごとの ID に解決される。
+
 ### 共有パラメータ {#shared-parameters}
 
 AWS RAM で共有します。Advanced のみです。共有された側は ARN で読みます。`SecureString` はカスタマー管理キーを別に共有します。既定の AWS 管理キーのものは共有できません。
+
+- **例:** `arn:aws:ssm:ap-northeast-1:111122223333:parameter/shared/endpoint` を `444455556666` に共有し、受け手は `GetParameter` の `Name` にこの ARN を渡す。
+- **誤ると:** 受け手が名前の `/shared/endpoint` だけで読むと、自分のアカウントを探して `ParameterNotFound` になる。
 
 ## AppConfig の設定の詳細 {#appconfig-settings}
 
@@ -859,6 +1025,8 @@ AWS RAM で共有します。Advanced のみです。共有された側は ARN �
 1 つのアプリケーションの下に、環境と設定プロファイルを作ります。デプロイは「環境、プロファイルのバージョン、戦略」を指定します。
 
 環境には、一度に 1 つの設定しかデプロイできません。別の環境には同時にデプロイできます。
+
+- **例:** `orders` の下に `Beta` と `Production`、プロファイル `flags` と `limits` を作る。`flags` のデプロイ中に、同じ `Production` へ `limits` をデプロイすると拒否される。`Beta` へは同時にデプロイできる。
 
 ### デプロイ戦略の項目 {#strategy-fields}
 
@@ -881,6 +1049,18 @@ AWS RAM で共有します。Advanced のみです。共有された側は ARN �
 | `AppConfig.AllAtOnce` | 即時 | 10 分 |
 | `AppConfig.Linear50PercentEvery30Seconds` | 30 秒ごとに 50%、1 分 | 1 分 |
 
+カスタム戦略の例です。
+
+```bash
+aws appconfig create-deployment-strategy --name Linear25Per10Min \
+  --deployment-duration-in-minutes 40 --final-bake-time-in-minutes 15 \
+  --growth-factor 25 --growth-type LINEAR --replicate-to NONE
+```
+
+- **計算の例:** 100 ÷ 25 = 4 ステップ、40 ÷ 4 = 10 分ごとに 25% ずつ増える。配布 40 分とベイク 15 分で、完了まで 55 分。
+- **誤ると:** `FinalBakeTimeInMinutes=0` だと、100% に届いた時点で完了する。遅れて鳴るアラームでは戻らない。
+- **`ReplicateTo` の例:** `SSM_DOCUMENT` なら、戦略を SSM ドキュメントにも保存する。
+
 ### バリデーターの動き {#validator-details}
 
 | 項目 | 内容 |
@@ -890,6 +1070,9 @@ AWS RAM で共有します。Advanced のみです。共有された側は ARN �
 | JSON Schema | フリーフォーム向け。機能フラグは自動で検証される |
 
 Lambda バリデーターを使うときは、AppConfig からの呼び出しを許可します。検証に失敗するとデプロイは開始されません。
+
+- **例:** バリデーターに `arn:aws:lambda:ap-northeast-1:111122223333:function:validate-flags` を指定し、`appconfig.amazonaws.com` に `lambda:InvokeFunction` を許可する。
+- **例:** `{"maxItems": 500}` を渡された Lambda が、上限の 100 を超えると判断して例外を投げると、デプロイは始まらない。
 
 ### アラームとロールバック {#alarm-rollback}
 
@@ -909,6 +1092,9 @@ aws appconfig create-environment --application-id abc123 --name Production \
 
 `FinalBakeTimeInMinutes` が 0 だと、完了後に発生したアラームではロールバックしません。
 
+- **`AllowRevert` の例:** デプロイの完了から 72 時間以内なら、`StopDeployment` の `AllowRevert` で前のバージョンに戻せる。状態は `REVERTED` になる。
+- **誤ると:** `AlarmRoleArn` のロールに `cloudwatch:DescribeAlarms` がないと、アラームを読めず、自動で戻らない。
+
 ### 取得とポーリング {#polling-settings}
 
 | 項目 | 値 |
@@ -921,6 +1107,9 @@ aws appconfig create-environment --application-id abc123 --name Production \
 `StartConfigurationSession` は、アプリケーション、環境、プロファイル、クライアントごとに 1 回だけ呼びます。ループの中で毎回呼ぶと無駄が増えます。
 
 応答の `NextPollIntervalInSeconds` の間隔を守り、`NextPollConfigurationToken` を次の呼び出しに使います。
+
+- **`RequiredMinimumPollIntervalInSeconds` の例:** `60` なら、そのセッションの呼び出しは 60 秒以上空ける。
+- **計算の例:** 100 個のコンテナが 60 秒ごとに呼ぶと、100 ÷ 60 ≒ 1.7 回/秒。呼び出しごとに料金がかかるので、Agent のキャッシュを使う。
 
 `Configuration` が空だからといって設定が消えたわけではありません。前回の値を保持する必要があります。これを忘れると、2 回目の呼び出しで設定が空になるバグになります。
 
@@ -941,6 +1130,10 @@ GET http://localhost:2772/applications/orders/environments/prod/configurations/f
 | `AWS_APPCONFIG_EXTENSION_ROLE_ARN` | なし | 取得に引き受けるロール |
 
 最初の呼び出しはキャッシュがないので遅くなります。ポーリング間隔を短くすると変更の反映が早くなりますが、その分の API 料金が増えます。
+
+- **`POLL_INTERVAL` の例:** `60`、`60s`、`1m` は同じ意味。45 秒から 15 秒に短くすると、反映は早くなるが、呼び出しは 3 倍になる。
+- **`PREFETCH_LIST` の例:** `/applications/orders/environments/prod/configurations/flags` を指定すると、ハンドラーの呼び出しの前に取得できる。
+- **`ROLE_ARN` の例:** 別のアカウントの設定を読むときに指定する。指定すると、そのアカウントからしか読めず、関数のアカウントの設定は読めない。
 
 ## 既定値と上限のまとめ {#numbers}
 

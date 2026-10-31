@@ -34,6 +34,8 @@
 
 テキストから情報を取り出す NLP サービスです。入力は UTF-8 のテキストで、カスタム分類とカスタム固有表現は画像、PDF、Word も受け付けます。
 
+**提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
+
 | 機能 | 内容 | 例 |
 |---|---|---|
 | 固有表現 | 人名、場所、組織など | 「東京」→ LOCATION |
@@ -64,11 +66,29 @@ aws comprehend detect-pii-entities --language-code en \
 
 **Comprehend か Bedrock か:** 決まった形式の抽出を大量に安く行うなら Comprehend、自由な指示で要約や分類をするなら Bedrock です。
 
+- **文書サイズの例:** 12 KB のレビューを `DetectSentiment` に送ると、上限の 5 KB を超えて失敗します。3 つに分けるか、非同期ジョブを使います。同じ 12 KB でも `DetectEntities` なら上限の 100 KB に収まります。
+- **バッチの例:** 60 件は `25 + 25 + 10` で 3 回の呼び出しです。1 回に 60 件を入れると失敗します。
+- **感情の例:** 「料理はよいが接客は悪い」は全体では `MIXED` になりえます。料理と接客を別々に知りたいなら、対象別の感情を使います。
+- **`LanguageCode` の例:** PII の検出は `en` か `es` です。日本語の文は対象外なので、[Guardrails](ai.md#guardrail-filters) などを検討します。
+- **`Score` の例:** PII の `Score` が 0.62 の検出は、0.9 以上だけ自動でマスクする運用なら人の確認に回します。
+
+```json
+{"RedactionConfig": {
+  "PiiEntityTypes": ["EMAIL", "PHONE"],
+  "MaskMode": "REPLACE_WITH_PII_ENTITY_TYPE"
+}}
+```
+
+- **`MaskMode` の例:** `REPLACE_WITH_PII_ENTITY_TYPE` なら `taro@example.com` は値の代わりに種類の `EMAIL` で示されます。`MASK` なら `MaskCharacter` の文字（`*` など）で埋まります。この秘匿は非同期ジョブで行います。
+- **`PiiEntityTypes` の誤ると:** `EMAIL` だけを指定すると、電話番号は文に残ります。
+
 ## Amazon Comprehend Medical {#comprehend-medical}
 
 [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 診療記録などの非構造化テキストから医療情報を取り出します。
+
+**提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
 | 機能 | API | 内容 |
 |---|---|---|
@@ -79,11 +99,18 @@ aws comprehend detect-pii-entities --language-code en \
 - 対象は英語（US-EN）のみです。
 - 医師の判断の代わりにはなりません。信頼度スコアを確認し、人がレビューします。
 
+- **文書サイズの例:** `DetectEntitiesV2` は 20 KB、`InferICD10CM` と `InferRxNorm` は 10 KB、`InferSNOMEDCT` は 5 KB までです。30 KB の退院サマリーは分割します。
+- **流量の例:** `InferSNOMEDCT` は 2 TPS が既定なので、1,000 件を順に送ると最短でも `1,000 / 2 = 500` 秒かかります。
+- **`Score` の例:** 薬の `Score` が 0.55 なら自動で記録せず、薬剤師の確認に回します。
+- **誤ると:** 日本語のカルテを送っても対象外なので、医療情報を正しく取り出せません。
+
 ## Amazon Lex {#lex}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 音声とテキストの会話インターフェイスを作ります。現在のドキュメントは Lex V2 で、V1 からの移行ガイドがあります。
+
+**提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
 | 用語 | 意味 | 例 |
 |---|---|---|
@@ -106,11 +133,20 @@ aws comprehend detect-pii-entities --language-code en \
 
 **Lex か Polly か:** Lex は対話の理解、Polly は音声への変換です。
 
+- **`idleSessionTTLInSeconds` の例:** 既定は 5 分（300 秒）で、最大は 24 時間です。入力に時間がかかる手続きなら 1,800 にします。短すぎると、10 分後に戻った利用者が日付と人数を再び聞かれます。
+- **`nluIntentConfidenceThreshold` の例:** 0.00〜1.00 で指定します。`0.7` のとき、最高のスコアが 0.55 なら `AMAZON.FallbackIntent` になり、「もう一度お願いします」と聞き返せます。高すぎると、正しい発話まで聞き返します。
+- **発話の例:** `BookHotel` に「部屋を予約したい」「{date} に泊まりたい」を登録します。1 つだけだと、言い回しが変わったときに判定を誤りやすくなります。
+- **Lambda の例:** フルフィルメントの Lambda は既定の上限が 30 秒です。60 秒かかる外部予約は、受付だけを返して非同期で処理します。
+- **音声の例:** `RecognizeUtterance` の音声は 55 秒までです。
+- **エイリアスの例:** `TestBotAlias` の同時会話は 2 までなので、本番や負荷試験には自分のエイリアスを使います。
+
 ## Amazon Textract {#textract}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 文書から文字と構造を取り出します。単純な OCR と違い、表やフォームの関係も分かります。
+
+**提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
 | API、機能 | 内容 | 例 |
 |---|---|---|
@@ -129,6 +165,20 @@ aws comprehend detect-pii-entities --language-code en \
 
 **落とし穴:** 複数ページの PDF を同期 API で送ると失敗します。`StartDocumentAnalysis` を使い、完了は SNS で受けます。
 
+```bash
+aws textract start-document-analysis \
+  --document-location '{"S3Object":{"Bucket":"amzn-s3-demo-bucket","Name":"contract.pdf"}}' \
+  --feature-types TABLES FORMS \
+  --notification-channel '{"SNSTopicArn":"arn:aws:sns:us-east-1:111122223333:textract-done","RoleArn":"arn:aws:iam::111122223333:role/textract-sns"}'
+```
+
+- **`FeatureTypes` の例:** 請求書の明細なら `TABLES`、申込書の「氏名: 山田」なら `FORMS`、「請求額は?」と聞くなら `QUERIES` です。文字だけなら `DetectDocumentText` で足ります。
+- **Queries の例:** 同期は 1 ページ 15 個、非同期は 1 ページ 30 個までです。Queries は英語の文書だけです。
+- **上限の例:** 2 ページの PDF は同期では失敗します。3,500 ページの PDF は非同期の 3,000 ページも超えるので、分割します。
+- **言語の例:** 対応は英語、フランス語、ドイツ語、イタリア語、ポルトガル語、スペイン語です。日本語の文書には使えません。縦書きにも対応していません。
+- **画質の例:** 文字の高さは 15 ピクセル以上が必要です。150 DPI で 8 ポイントに相当します。
+- **アダプターの例:** 自社の帳票で Queries を調整するなら、学習用に 5〜2,500 件の文書を用意します。
+
 **Textract か Rekognition か:** 文書なら Textract、写真の中の看板のような文字なら Rekognition です。
 
 **Textract か Bedrock Data Automation か:** 決まった項目の抽出に実績があるのが Textract で、音声や動画も含めて生成 AI で構造化するなら [BDA](genai-apps.md#bda) です。
@@ -138,6 +188,8 @@ aws comprehend detect-pii-entities --language-code en \
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 音声を文字にします。
+
+**提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
 | 機能 | 内容 |
 |---|---|
@@ -153,17 +205,48 @@ aws comprehend detect-pii-entities --language-code en \
 
 **具体例:** 製品名の「Kiro」が誤認識されるならカスタム語彙です。コールセンターの感情や話す速度を見るなら Call Analytics です。
 
+```json
+{
+  "Settings": {
+    "ShowSpeakerLabels": true,
+    "MaxSpeakerLabels": 3,
+    "VocabularyName": "product-terms",
+    "VocabularyFilterName": "ng-words",
+    "VocabularyFilterMethod": "mask"
+  },
+  "ContentRedaction": {
+    "RedactionType": "PII",
+    "RedactionOutput": "redacted_and_unredacted"
+  }
+}
+```
+
+- **`MaxSpeakerLabels` の例:** 2〜30 で指定します。会議の参加者が 5 人なのに `3` にすると、複数の人が同じ話者にまとめられます。`ShowSpeakerLabels` を有効にするなら必須です。
+- **`ChannelIdentification` の例:** 左がオペレーター、右が顧客の 2 チャンネル音声に使います。3 チャンネル以上には対応していません。
+- **カスタム語彙の例:** 表の `Phrase` は空白の代わりにハイフンを使います。`Los-Angeles` と書き、`DisplayAs` に `Los Angeles` と書きます。ファイルは 50 KB まで、1 つのフレーズは 256 文字までです。数字は `Phrase` に使えません。
+- **`VocabularyFilterMethod` の例:** 指定の語を `mask` は `***` に置き換え、`remove` は削除し、`tag` は文を変えず印だけを付けます。
+- **`RedactionOutput` の例:** `redacted` は秘匿済みだけを出力します。元の音声も消すと、PII の記録はどこにも残りません。`redacted_and_unredacted` は両方を出力するので、元の文の権限を絞ります。
+- **言語の例:** 日本語と分かっているなら `LanguageCode: ja-JP`、分からないなら `IdentifyLanguage: true` です。両方を指定するとジョブは失敗します。
+- **Call Analytics の例:** 通話後の分析の音声は 500 MB までです。
+
 ### Transcribe Medical {#transcribe-medical}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 医師の口述や患者との会話など、医療の音声向けです。HIPAA の対象ですが、利用者の責任もあります。診断の代わりにはなりません。
 
+**提供単位:** Transcribe と同じくリージョン単位で、VPC の外のサービスです。
+
+- **言語の例:** 対応は米国英語（`en-US`）です。日本語の診察の音声には使えません。
+- **音声の例:** サンプルレートは 16,000 Hz 以上で、FLAC や WAV などの可逆形式が最適です。電話の 8,000 Hz の音声は対象外です。ファイルは 2 GB までです。
+
 ## Amazon Translate {#translate}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
 ニューラル機械翻訳です。
+
+**提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
 | 方式 | 上限 |
 |---|---|
@@ -178,11 +261,26 @@ aws comprehend detect-pii-entities --language-code en \
 
 **カスタム用語か並列データか:** 固有名詞の固定なら用語、文体を合わせるなら並列データです。
 
+- **バイト数の例:** 日本語は UTF-8 でおおむね 1 文字 3 バイトです。4,000 文字は約 12,000 バイトなので、`TranslateText` の 10,000 バイトを超えます。段落で分けて送るか、バッチにします。
+- **`SourceLanguageCode` の例:** `auto` にすると Comprehend で言語を判定します。Comprehend のないリージョンではエラーになります。
+- **`TargetLanguageCodes` の例:** バッチでは 1 ジョブに最大 10 言語を指定できます。12 言語なら 2 つのジョブに分けます。
+- **カスタム用語の例:** 次の CSV で「Amazon Photos」を訳さずに残します。1 回のリクエストに指定できるファイルは 1 つ、用語の長さは 200 バイトまでです。必ず適用されるとは限りません。
+
+```csv
+en,fr
+Amazon Photos,Amazon Photos
+```
+
+- **`Settings` の例:** `{"Formality": "FORMAL", "Profanity": "MASK"}` と指定します。`FORMAL` は日本語なら丁寧語です。`Profanity` は不適切な語を `?$#@$` に置き換えます。対応しない言語では `Formality` は無視されます。
+- **並列データの例:** 自社のマニュアルの原文と訳文の組を渡して、バッチの文体を揃えます。`TranslateText` には使えず、料金も高くなります。
+
 ## Amazon Polly {#polly}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
 テキストを音声にします。
+
+**提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
 | エンジン | 特徴 |
 |---|---|
@@ -200,11 +298,27 @@ aws comprehend detect-pii-entities --language-code en \
 
 **具体例:** 「AWS」を「エー・ダブリュー・エス」と読ませるならレキシコンです。文の間に間を入れるなら SSML の `<break>` です。長い記事は非同期にします。
 
+```bash
+aws polly synthesize-speech --engine neural --voice-id Takumi \
+  --output-format mp3 --text-type ssml \
+  --text '<speak>ご注文ありがとうございます。<break time="500ms"/>配送は明日です。</speak>' \
+  out.mp3
+```
+
+- **文字数の例:** 5,000 文字の記事は `SynthesizeSpeech` の課金対象 3,000 文字を超えるので、`StartSpeechSynthesisTask` で S3 に出力します。SSML のタグは課金対象に入りませんが、合計 6,000 文字の上限には入ります。本文 2,800 文字とタグ 3,500 文字なら、合計 6,300 文字で失敗します。
+- **音声の長さの例:** `SynthesizeSpeech` の音声は 10 分までで、超えた分は切れます。
+- **`Engine` の例:** 短い案内は Neural、長い記事の朗読は Long-form、最も人に近い対話は Generative です。対応する音声とリージョンはエンジンごとに違います。
+- **流量の例:** `SynthesizeSpeech` は Standard が 80 TPS、Neural が 8 TPS です。100 件を Neural で順に処理すると、最短でも `100 / 8 = 12.5` 秒です。
+- **`<break>` の例:** 1 つの最大は 10 秒です。
+- **レキシコンの例:** 1 つのリクエストに 5 個まで、アカウントに 100 個まで、名前は 20 文字までです。大きいレキシコンは遅延の原因になります。
+
 ## Amazon Rekognition {#rekognition}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 画像と動画を分析します。
+
+**提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
 | 機能 | 画像 | 動画 | 用途 |
 |---|---|---|---|
@@ -230,11 +344,28 @@ aws comprehend detect-pii-entities --language-code en \
 
 **Rekognition か Bedrock か:** 顔の比較、決まったラベル、モデレーションは Rekognition です。画像について自由に質問するならマルチモーダルの FM です。
 
+```python
+rek.detect_moderation_labels(
+    Image={"S3Object": {"Bucket": "amzn-s3-demo-bucket", "Name": "post.jpg"}},
+    MinConfidence=80,
+)
+```
+
+- **`MinConfidence` の例:** 省略すると、`DetectModerationLabels` は 50% 以上、`DetectLabels` は 55% 以上を返します。上の例では、信頼度 72% のラベルは返りません。上げすぎると、不適切な画像を見逃します。
+- **`MaxLabels` の例:** `DetectLabels` で `MaxLabels=10` にすると、信頼度の高い順に 10 個を返します。
+- **`SimilarityThreshold` の例:** `CompareFaces` の既定は 80 です。本人確認では 99 のように上げます。
+- **Face Liveness の例:** 信頼度が 0〜100 で返るので、自社で決めたしきい値（例: 90）未満なら再撮影を求めます。
+- **画像サイズの例:** API に直接渡す画像は 5 MB まで、S3 の画像は 15 MB までです。6 MB の写真は S3 に置きます。
+- **顔のサイズの例:** 1920×1080 の画像で顔は 40×40 ピクセル以上が必要です。3840×2160 なら解像度が 2 倍なので、80×80 が目安です。
+- **動画の例:** 保存した動画は 10 GB、6 時間まで、形式は MPEG-4 か MOV（H.264）です。8 時間の動画は分割します。同時ジョブは既定で 20 個です。
+
 ## Amazon Personalize {#personalize}
 
 [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
 自社の行動データでレコメンドモデルを作ります。
+
+**提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
 | データ | 内容 | 必須か |
 |---|---|---|
@@ -257,6 +388,13 @@ aws comprehend detect-pii-entities --language-code en \
 
 **Personalize か SageMaker AI か:** レコメンドだけなら Personalize で済みます。独自のアルゴリズムが必要なら SageMaker AI（Factorization Machines など）です。
 
+- **データ量の例:** 学習には 1,000 件以上の Item interactions と、2 件以上の履歴を持つ利用者が 25 人以上必要です。800 件ではソリューションを作れません。
+- **インポートの例:** 初回の 50 GB は `FULL`（100 GB まで）、毎日の 500 MB の追加は `INCREMENTAL`（1 GB まで）です。どちらも 1 回 1,000 件以上が必要です。
+- **`explorationWeight` の例:** 既定は 0.3 で、1.0 に近いほど履歴の少ない新商品を多く出します。新商品が売れないなら上げ、定番の成約を優先するなら下げます。
+- **`explorationItemAgeCutOff` の例:** `30` なら、最新の操作から 30 日以内の商品を探索の対象にします。
+- **`numResults` の例:** メタデータなしなら 500 件まで、ありなら 50 件までです。
+- **レシピの例:** トップページの「あなたへ」は User-Personalization-v2、検索結果の並べ替えは Personalized-Ranking-v2 です。
+
 ## Amazon Kendra {#kendra}
 
 [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
@@ -266,6 +404,8 @@ aws comprehend detect-pii-entities --language-code en \
 
 機械学習を使う社内検索です。キーワードではなく自然文の質問で検索できます。
 
+**提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
+
 | インデックス | 特徴 |
 |---|---|
 | GenAI Enterprise Edition | `Retrieve` と RAG で最高の精度。Bedrock Knowledge Bases からも使える |
@@ -273,6 +413,10 @@ aws comprehend detect-pii-entities --language-code en \
 | Developer Edition | 開発、検証向け |
 
 **コネクタ:** S3、SharePoint など多数のデータソースをつなぎます。
+
+**インデックスの例:** 既存環境で RAG の検索に使うなら GenAI Enterprise、本番の検索なら Enterprise、検証なら Developer です。Developer で本番の検索を受けると、検証向けの構成のまま運用することになります。
+
+**自然文の例:** 「育休はいつまで取れますか」で、「育児休業の期間」と書かれた文書を探せます。
 
 **試験では:** AIP-C01 の対象一覧に載っています。「社内文書を自然文で検索する」で今も選択肢に出ますが、新規なら Managed Knowledge Base を選ぶのが現在の公式の方針です。
 
@@ -283,12 +427,20 @@ aws comprehend detect-pii-entities --language-code en \
 
 自社の履歴から、オンライン決済や不正アカウントの作成を検知するモデルを作るサービスです。
 
+**提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。
+
+**例:** 新規に決済の不正検知を作るなら、過去の取引に不正のラベルを付けて AutoGluon で学習します。不審なボットの登録を止めたいなら、AWS WAF も候補です。
+
 ## Amazon Forecast {#forecast}
 
 !!! warning "新規受付終了"
     新規顧客を受け付けていません。既存の顧客は通常どおり使えます。公式は SageMaker Canvas への移行を案内しています。
 
 時系列の予測サービスです。需要や財務の予測に使います。新規に需要予測を作るなら、[SageMaker Canvas または DeepAR](sagemaker.md#built-in-algorithms) を検討します。
+
+**提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。
+
+**例:** 店舗 100、商品 500 の 13 週先の需要を週次で予測するなら、新規は SageMaker Canvas か DeepAR を使います。Canvas は業務担当者がコードなしで試せます。
 
 ## Amazon Augmented AI（A2I） {#a2i}
 
@@ -298,6 +450,8 @@ aws comprehend detect-pii-entities --language-code en \
     SageMaker A2I は新規顧客を受け付けていません。既存の顧客は使えますが、新機能は予定されていません。
 
 ML の予測を人がレビューする仕組みです。
+
+**提供単位:** SageMaker AI の機能で、リージョン単位です。
 
 | タスク種別 | 内容 |
 |---|---|
@@ -312,11 +466,30 @@ ML の予測を人がレビューする仕組みです。
 
 **新規の代替の例:** [Step Functions の人の承認](genai-apps.md#human-in-the-loop)、[Bedrock の人による評価](genai-apps.md#evaluation)。Step Functions で待機し、API Gateway から結果を受け取ります。
 
+```json
+{"Conditions": [
+  {"ConditionType": "ImportantFormKeyConfidenceCheck",
+   "ConditionParameters": {
+     "ImportantFormKey": "Mail address",
+     "KeyValueBlockConfidenceLessThan": 80,
+     "WordBlockConfidenceLessThan": 80
+   }},
+  {"ConditionType": "Sampling",
+   "ConditionParameters": {"RandomSamplingPercentage": 5}}
+]}
+```
+
+- **信頼度の例:** 上の例では、キーと値の信頼度が 72 なら人に回り、95 なら回りません。
+- **`RandomSamplingPercentage` の例:** 0.01〜100 で指定します。月 10,000 件で 5 なら、`10,000 × 0.05 = 500` 件を確認します。自動処理の品質監査に使えます。
+- **`MissingImportantFormKey` の例:** 申込書に「署名日」が見つからないときに人に回します。
+
 ## AWS HealthLake {#healthlake}
 
 [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
 医療データを FHIR R4 形式で保存、分析、共有する HIPAA 対象のサービスです。
+
+**提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
 | 機能 | 内容 |
 |---|---|
@@ -326,6 +499,10 @@ ML の予測を人がレビューする仕組みです。
 | 分析 | HealthImaging、HealthOmics と組み合わせる |
 
 **Comprehend Medical か HealthLake か:** テキストの抽出だけなら Comprehend Medical、FHIR でデータを管理して相互運用するなら HealthLake です。
+
+**例:** 退院サマリーの文から薬の名前を取るだけなら Comprehend Medical です。複数の病院の患者データを FHIR の `Patient` や `Observation` として保存し、`GET /Patient/<id>` で他のシステムと共有するなら HealthLake です。
+
+**変換の例:** 既存の C-CDA 文書はデータ変換エージェントで FHIR R4 にしてから保存します。
 
 ## Amazon Q Business と Q Apps {#q-business}
 
@@ -340,6 +517,11 @@ ML の予測を人がレビューする仕組みです。
 | Q Apps | 自然文で作る小さな業務アプリ。Pro のみ |
 | サブスクリプション | Lite、Pro |
 | データソース | Kendra、各種コネクタ |
+
+**提供単位:** Q Business はリージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
+
+- **サブスクリプションの例:** Q Apps を作って使いたい利用者は Pro です。Lite では Q Apps を使えません。
+- **Q Apps の例:** 「議事録を貼ると ToDo を一覧にするアプリ」を自然文で作ります。
 
 **移行の流れ:** まず Bring Your Own Index（BYOI）で既存の Q Business のインデックスを Quick から使います。利用者とアプリを移した後、必要ならデータソースを Quick Index に移します。匿名アクセスや API 連携を使っている場合は、AWS サポートに相談します。
 
@@ -365,6 +547,12 @@ Comprehend などは、学習済みモデルの改善のために内容を保存
 ```
 
 - 組織全体、OU、アカウントに付けられます。`comprehend`、`lex`、`rekognition` のようにサービスごとにも指定できます。
+
+- **`default` の例:** 上のポリシーを組織のルートに付けると、将来追加されるサービスも含めて全 AI サービスをオプトアウトします。
+- **例外の例:** `"default"` を `optOut`、`"lex"` を `optIn` にすると、Lex だけ利用を許可します。
+- **子のポリシーの例:** `"@@operators_allowed_for_child_policies": ["@@none"]` を付けると、配下で変更できなくなります。
+- **オプトアウトの効果:** サービス改善のために保存された過去の内容も削除されます。サービスの提供に必要な内容は残ります。
+- **リージョンの例:** 設定は全リージョンに適用されます。東京で付けて、大阪で付け直す必要はありません。
 - Bedrock は入出力をモデルの学習に使いません（[詳細](ai.md#training-use)）。
 
 ## 選び方の比較 {#choosing}
@@ -392,6 +580,10 @@ Comprehend などは、学習済みモデルの改善のために内容を保存
 | 不適切な画像の検出 | Rekognition |
 | 独自の表データの予測 | [SageMaker AI](sagemaker.md) |
 
+**組み合わせの例:** 10 分の通話を要約するなら、まず Transcribe で文字にし、Comprehend で氏名とメールをマスクしてから、Bedrock で 3 行に要約します。Bedrock だけでは音声のファイルから決まった形式で文字を起こせないので、Transcribe を先に置きます。
+
+**費用の考え方の例:** 請求書 100 万枚の合計額を取るなら、ページ単位の料金で決まった項目を返す Textract が向きます。同じ作業を FM で行うと、プロンプトの設計に加えて応答の形の検証も必要です。
+
 ### AWS の AI の 3 階層 {#three-layers}
 
 | 階層 | サービス | 使う人 | 制御 |
@@ -399,6 +591,8 @@ Comprehend などは、学習済みモデルの改善のために内容を保存
 | アプリケーション | Quick、Kiro | 業務ユーザー、開発者 | 小 |
 | AI サービス、FM | このページのサービス、Bedrock | アプリ開発者 | 中 |
 | ML プラットフォーム | SageMaker AI | ML エンジニア | 大 |
+
+**例:** 営業が議事録を要約するなら Quick、自社アプリに要約機能を組み込むなら Bedrock、自社データで需要予測の手法を開発するなら SageMaker AI です。
 
 ### 紛らわしい組み合わせ {#confusing-pairs}
 
@@ -411,6 +605,12 @@ Comprehend などは、学習済みモデルの改善のために内容を保存
 | Personalize / Comprehend | おすすめ / テキスト分析 |
 | Comprehend / Comprehend Medical | 一般 / 医療 |
 | Macie / Comprehend | S3 の機密データの発見 / テキストの PII 検出 |
+
+**例:**
+
+- 「S3 に個人情報入りのファイルがないか探す」は Macie、「この問い合わせ文の中の氏名を隠す」は Comprehend です。
+- 「領収書の写真から金額を読む」は Textract、「店の看板の文字を読む」は Rekognition です。
+- 「解約の手続きを進める」は Lex、「解約の規定を探す」は検索です。
 
 ## 既定値と上限のまとめ {#numbers}
 

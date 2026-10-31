@@ -25,6 +25,8 @@
 
 従業員の ID を 1 か所でつなぎ、複数の AWS アカウントとアプリへの SSO を提供します。長期のアクセスキーなしで CLI や SDK も使えます。
 
+**提供単位:** インスタンスを有効にしたリージョンで動き（組織インスタンスは他のリージョンへ複製可）、VPC の外にあります。ロールは各アカウントの IAM に作られます。
+
 ### インスタンス {#idc-instances}
 
 | 機能 | 組織インスタンス | アカウントインスタンス |
@@ -39,6 +41,10 @@
 | 他リージョンへの複製 | 可 | 不可 |
 
 「複数アカウントに権限を割り当てたい」なら組織インスタンスです。
+
+- **組織インスタンスの例:** 30 アカウントの組織で、開発者グループに開発の 20 アカウントだけ `PowerUserAccess` を割り当てます。人を増やすときは、グループに追加するだけです。
+- **アカウントインスタンスの例:** 組織に入れられない検証用のアカウントで、AWS マネージドアプリの ID 基盤として使います。
+- **誤ると:** アカウントインスタンスを作って権限セットの画面を探しても、ありません。アカウントへの権限には組織インスタンスが必要です。
 
 ### ID ソース {#idc-identity-sources}
 
@@ -59,6 +65,11 @@
 | 接続できるディレクトリ | 同時に 1 つ | 複数のドメインやフォレストには Managed AD の信頼を使う |
 | Foreign Security Principal | 同期されない | 信頼先のドメインのメンバーが同期されない |
 
+- **Identity Center ディレクトリの例:** 社員 20 人で IdP がないなら、コンソールでユーザーを作り、MFA を必須にします。
+- **外部 IdP の例:** Okta に 3,000 人いるなら、SAML でサインインを受け、SCIM でユーザーとグループを同期します。
+- **Active Directory の例:** オンプレの AD を AD Connector か Managed AD の信頼で接続し、グループを同期します。パスワードは AWS に保存されません。
+- **誤ると:** Simple AD を ID ソースに選ぼうとしても、選択肢に出ません。
+
 SCIM の注意点です。
 
 - アクセストークンの有効期間は **1 年** です。残り 90 日以下で通知が出ます。切れると同期が止まります。
@@ -66,6 +77,9 @@ SCIM の注意点です。
 - 複数の値を持つ属性は同期に失敗します。
 - SAML の `NameID` と SCIM の Username が一致しないと、サインインに失敗します。
 - 同期後は、コンソールからユーザーを追加、編集できません。
+- **トークンの計算例:** 2026 年 1 月 1 日に発行したトークンは 2027 年 1 月 1 日に切れます。残り 90 日を切る 2026 年 10 月 3 日ごろから通知が出るので、新しいトークンに差し替えます。
+- **`NameID` の例:** IdP の `NameID` が `alice@example.com` で、SCIM の Username が `alice` だと、サインインに失敗します。どちらかに揃えます。
+- **誤ると:** `externalId` に変わりやすいメールアドレスを対応付けると、改名で別のユーザーと判断され、割り当てを失う場合があります。IdP の不変の ID を使います。
 
 !!! danger "ID ソースの変更"
     **Active Directory へ変更すると、ユーザー、グループ、メンバーシップ、割り当てがすべて完全に削除されます。** 元に戻せません。AD から他へ変更する場合は保持されますが、AWS アクセスポータルの URL が変わります。
@@ -81,7 +95,7 @@ arn:aws:iam::111122223333:role/aws-reserved/sso.amazonaws.com/ap-northeast-1/AWS
 | 設定 | 内容 | 既定と範囲 | 例と誤ったときの症状 |
 | --- | --- | --- | --- |
 | 定義済み権限 | ジョブ機能の AWS 管理ポリシーを 1 つ選ぶ | | `ViewOnlyAccess`、`PowerUserAccess` |
-| AWS 管理ポリシー | カスタム権限に複数追加 | 管理ポリシーの合計は最大 251。IAM ロールの既定の上限は 10 | 上限に達すると IAM のクォータ引き上げが必要 |
+| AWS 管理ポリシー | カスタム権限に複数追加 | 管理ポリシーの合計は最大 25。IAM ロールの既定の上限は 20（引き上げ後 25） | 上限に達すると IAM のクォータ引き上げが必要 |
 | カスタマー管理ポリシー | 名前とパスで参照 | | **割り当て先の各アカウントに同じ名前とパスで事前に作る**。なければ割り当てに失敗 |
 | インラインポリシー | 権限セットに直接書く | 1 つ、32,768 バイトまで | Identity Center が各アカウントへ展開 |
 | 権限境界 | 権限の上限を設定 | 任意 | 許可しても境界の外なら拒否 |
@@ -90,6 +104,22 @@ arn:aws:iam::111122223333:role/aws-reserved/sso.amazonaws.com/ap-northeast-1/AWS
 
 権限セットを変更すると、割り当て先のアカウントに自動で再プロビジョニングされます。
 
+作成の例です。
+
+```bash
+aws sso-admin create-permission-set \
+  --instance-arn arn:aws:sso:::instance/ssoins-1234567890abcdef \
+  --name DatabaseAdmin \
+  --session-duration PT8H \
+  --relay-state "https://ap-northeast-1.console.aws.amazon.com/rds/home"
+```
+
+- **`--name` の例:** `DatabaseAdmin` は 1〜32 文字です。ロール名の `AWSReservedSSO_DatabaseAdmin_...` に入ります。
+- **`--session-duration` の例:** ISO 8601 で書きます。`PT8H` は 8 時間、最大は `PT12H` です。
+- **カスタマー管理ポリシーの例:** 権限セットに `Path=/`、`Name=OrdersRead` を指定するなら、割り当て先の 5 アカウントすべてに `OrdersRead` を先に作ります。1 つでもないと、そのアカウントの割り当てが失敗します。
+- **権限境界の例:** `s3:*` の境界で、許可に `AdministratorAccess` を付けても、S3 以外は使えません。
+- **インラインポリシーの例:** 32,768 バイトまでですが、空白以外の文字は 10,240 バイトまでです。IAM ロールのインライン上限と同じです。
+
 **ARN の変更に注意します。** あるアカウントで権限セットの割り当てをすべて削除すると、ロールも消えます。再度割り当てると接尾辞が変わり、ARN が変わります。次の場所で参照していると、アクセスできなくなります。
 
 - KMS のキーポリシー
@@ -97,6 +127,9 @@ arn:aws:iam::111122223333:role/aws-reserved/sso.amazonaws.com/ap-northeast-1/AWS
 - その他のリソースポリシー
 
 対策は、そのアカウントに割り当てを 1 つ残すことです。EKS にはアクセスエントリを使い、KMS には IAM のバックアップロールをキーポリシーに入れます。
+
+- **例:** `Principal` に `arn:aws:iam::111122223333:role/aws-reserved/sso.amazonaws.com/ap-northeast-1/AWSReservedSSO_DatabaseAdmin_1234567890abcdef` を書いた KMS キーは、割り当てをすべて外して再度付けると、末尾の 16 桁が変わって使えなくなります。
+- **例:** `aws:PrincipalArn` と `ArnLike` で `AWSReservedSSO_DatabaseAdmin_*` と書くと、接尾辞の変更に影響されません。
 
 権限セットではできないこともあります。独自の信頼ポリシー、ロールのタグ、ロールのパスが必要なら、IAM の **アカウントアクセスマネージャー** で既存の IAM ロールをユーザーやグループに割り当てられます。
 
@@ -108,6 +141,10 @@ arn:aws:iam::111122223333:role/aws-reserved/sso.amazonaws.com/ap-northeast-1/AWS
 | 権限セット（アカウント内） | 1 時間 | 12 時間 | AWS からサインアウトされる |
 
 別物であることが問われます。ポータルが有効でも、アカウントのセッションが切れれば入り直します。
+
+- **例:** ポータルを 8 時間、権限セットを 1 時間にします。9:00 にサインインし、10:00 にコンソールが切れても、ポータルから入り直すときは再認証が要りません。17:00 以降はポータル自体の再認証が必要です。
+- **ポータルの範囲の例:** 15 分〜90 日です。90 日は 90 × 24 × 60 = 129,600 分で、カスタム値は分で入れます。
+- **誤ると:** 権限セットを 12 時間にしても、ポータルを 8 時間のままにすると、CLI の `aws sso login` は 8 時間ごとに必要です。
 
 CLI では次のように使います。
 
@@ -129,6 +166,9 @@ Identity Center ディレクトリでは既定で MFA が有効です。外部 I
 
 1 ユーザーに最大 8 台（認証アプリ 2、FIDO 6）を登録できます。
 
+- **例:** 管理者には FIDO2 のセキュリティキーを 2 本登録し、1 本を金庫に置きます。1 本をなくしても入れます。
+- **誤ると:** Okta を ID ソースにして Identity Center の MFA を設定しても、効きません。Okta 側のポリシーで要求します。
+
 ### ABAC {#idc-abac}
 
 ID ソースの属性をセッションタグにして、権限セットの数を減らせます。Team 属性を渡すと、次のポリシーで同じチームのリソースだけに限定できます。
@@ -146,12 +186,15 @@ ID ソースの属性をセッションタグにして、権限セットの数�
 
 **症状:** 条件が常に不一致になる場合は、「アクセス制御の属性」に Team を設定したか、リソースにタグが付いているかを確認します。
 
+- **例:** `Team` 属性が `sales` の人は、`Team=sales` のタグの EC2 だけを停止できます。`Team=hr` の EC2 は `UnauthorizedOperation` です。チームが 10 個あっても、権限セットは 1 つで済みます。
+
 ### 委任管理者 {#idc-delegated-admin}
 
 - 管理アカウントを使う人を減らすため、メンバーアカウントに管理を委任します。
 - 委任管理者は、**管理アカウントに割り当てられた権限セットを変更できません**。
 - 管理アカウントの権限セットは専用にして、グループではなくユーザーに割り当てます。グループにすると、グループを編集できる人が管理アカウントに入れてしまうからです。
 - 外部 ID ソースでは、`identitystore:CreateGroupMembership` などの書き込みを SCP で制限できます。
+- **例:** 委任管理者をセキュリティアカウントにします。そこの管理者は、開発アカウントへの割り当てを変更できますが、管理アカウントの `OrgAdmin` の権限セットには触れません。
 
 ### マルチリージョンと緊急アクセス {#idc-multi-region}
 
@@ -164,6 +207,9 @@ ID ソースの属性をセッションタグにして、権限セットの数�
 | 外部 IdP | 複数の ACS URL に対応していること |
 
 Identity Center 自体の障害に備えるには、IdP から各アカウントへの直接の SAML フェデレーションで緊急用の経路を作ります。一時的な権限昇格は、パートナーの製品を組み合わせて実現します。
+
+- **例:** プライマリを `ap-northeast-1`、追加を `ap-northeast-3` にします。カスタマー管理キーは東京で `mrk-` のキーを作り、大阪にレプリカを作ります。
+- **誤ると:** AD を ID ソースにしていると、リージョンを追加できません。
 
 ### トラブルシュート {#idc-troubleshooting}
 
@@ -182,6 +228,8 @@ Identity Center 自体の障害に備えるには、IdP から各アカウント
 
 AWS で Active Directory を使うための選択肢です。
 
+**提供単位:** ディレクトリはリージョンのリソースで、VPC の中に置きます。Managed AD と AD Connector は、異なる AZ の 2 つのサブネットを指定します。
+
 | 観点 | Managed Microsoft AD | AD Connector | Simple AD |
 | --- | --- | --- | --- |
 | 実体 | 本物の Windows Server AD | オンプレ AD へのプロキシ | Samba 4 |
@@ -195,6 +243,11 @@ AWS で Active Directory を使うための選択肢です。
 | IAM Identity Center | 可 | 可 | 不可 |
 | 他アカウントとの共有 | 可 | 不可 | 不可 |
 
+- **Managed AD の例:** RDS for SQL Server の Windows 認証と、EC2 のドメイン参加に使います。
+- **AD Connector の例:** オンプレの AD 利用者が、社内のパスワードで WorkSpaces に入ります。
+- **Simple AD の例:** 既存の顧客が、Linux サーバーのドメイン参加に使います。新規は Managed AD を選びます。
+- **誤ると:** 8,000 ユーザーを Simple AD の large（5,000）に入れると上限を超えます。
+
 ### Managed Microsoft AD {#managed-ad}
 
 | 設定 | 内容 | 既定と範囲 | 誤ったときの症状 |
@@ -207,6 +260,11 @@ AWS で Active Directory を使うための選択肢です。
 | マルチリージョン | Enterprise のみ | 合計 5 リージョン | |
 | 共有 | 他のアカウントへドメイン参加を共有 | Standard 25、Enterprise 500、Hybrid 125 | EC2 のドメイン参加に使える |
 | ログ | DC のセキュリティログを CloudWatch Logs へ | リージョンごとに有効化 | 有効化前のログは届かない |
+
+- **DC の台数の例:** 既定の 2 台で認証の遅延が出るなら、`update-number-of-domain-controllers --desired-number 4` で増やします。上限は 20 台です。
+- **エディションの例:** 15,000 オブジェクトなら Standard、100,000 オブジェクトや複数リージョンなら Enterprise です。Standard の 30,000 を超えると Enterprise が必要です。
+- **スナップショットの例:** 6 個目の手動スナップショットは作れません。古いものを消します。181 日前のものからは復元できません。
+- **共有の例:** Standard は 25 アカウント、Enterprise は 500 アカウントまで共有できます。30 アカウントで EC2 をドメイン参加させるなら、Enterprise です。
 
 ### 信頼関係 {#ad-trust}
 
@@ -227,7 +285,13 @@ AWS で Active Directory を使うための選択肢です。
 
 双方向で権限を絞りたいなら、選択的認証で AWS アプリのサービスアカウントだけに限定します。
 
+- **一方向の例:** オンプレの利用者が Managed AD の EC2 にログインするなら、Managed AD 側がオンプレを信頼する一方向で足ります。
+- **双方向の例:** オンプレの AD 利用者を Identity Center で使うなら、双方向にします。
+- **誤ると:** 信頼に必要なポートを開けないと `Verify` が失敗します。ネットワークのつながりと DNS の条件付きフォワーダーを順に確認します。
+
 **Hybrid Edition** は、信頼を結ばずに既存の AD を AWS に拡張する形です。ユーザーを同期せず、同じ認証情報を使えます。AWS は定期的にディレクトリを評価します。
+
+- **例:** 社内の `corp.example.com` のままで、東京の RDS や EC2 を同じドメインに参加させたい場合に使います。
 
 ### AD Connector {#ad-connector}
 
@@ -245,6 +309,9 @@ AWS で Active Directory を使うための選択肢です。
 - マルチ VPC を意識しません。WorkSpaces などは同じ VPC に置きます。
 - オンプレのパスワードポリシー（期限、履歴、ロック）がそのまま効きます。
 - オンプレとの接続が切れると認証できなくなるので、VPN と Direct Connect の冗長性が重要です。
+- **例:** オンプレの DNS を `10.0.0.10` と `10.0.0.11`、VPC のサブネットを `10.1.1.0/24` と `10.1.2.0/24` にします。この 2 つの CIDR から TCP/UDP 53、88、389 を DC へ通します。
+- **誤ると:** DNS の `_ldap._tcp.corp.example.com` が引けないと、接続に失敗します。
+- **誤ると:** `corp.example.com` のコネクターで `child.corp.example.com` のユーザーを認証しようとしても、1 対 1 なのでできません。子ドメイン用にもう 1 つ作ります。
 
 ### Simple AD {#simple-ad}
 
@@ -252,6 +319,8 @@ AWS で Active Directory を使うための選択肢です。
     AWS は代替として Managed Microsoft AD か AD Connector を案内しています。既存の顧客は機能を維持します。
 
 Samba 4 の簡易ディレクトリです。ユーザー、グループ、グループポリシー、Linux と Windows のドメイン参加、Kerberos SSO に対応します。MFA、信頼、PowerShell、LDAPS、スキーマ拡張、RDS SQL Server、FSx、Identity Center には対応しません。
+
+- **誤ると:** 既存の Simple AD に MFA を足したい場合は、対応がないので Managed AD に移行します。
 
 ### MFA と LDAPS {#ad-mfa-ldaps}
 
@@ -262,11 +331,18 @@ Samba 4 の簡易ディレクトリです。ユーザー、グループ、グル
 | クライアント側 LDAPS | AWS アプリとオンプレ AD の間を暗号化。Managed AD と AD Connector に対応 | CA 証明書を登録。Managed AD はディレクトリに最大 5 個 |
 | 細かいパスワードポリシー | OU やグループごとのポリシー | 特権ユーザーだけ厳しくする |
 
+- **RADIUS の例:** Managed AD のサブネットから RADIUS サーバーの `10.0.0.20` へ、UDP 1812 を許可します。
+- **サーバー側 LDAPS の例:** 自社 CA の証明書を AD に登録し、社内の LDAP アプリを 636 番ポートで接続します。
+- **細かいポリシーの例:** 一般は最小 12 文字、`Domain Admins` は最小 16 文字にします。
+- **誤ると:** 2025 年 10 月 7 日より後に作ったディレクトリでは、RADIUS サーバーが VPC から経路で届かないと、MFA が失敗します。
+
 ## CloudHSM {#cloudhsm}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 FIPS 検証済みの **単一テナントの HSM** を VPC で使えるサービスです。鍵とユーザーは利用者が管理し、AWS は鍵を見られません。
+
+**提供単位:** クラスターはリージョンのリソースで、HSM は VPC 内の AZ ごとのサブネットに置きます。
 
 ### KMS との比較 {#cloudhsm-vs-kms}
 
@@ -282,6 +358,9 @@ FIPS 検証済みの **単一テナントの HSM** を VPC で使えるサービ
 | 向いている場面 | ほとんどの場合 | TDE、SSL オフロード、CA の鍵、規制の要件 |
 
 AWS は、カスタムキーストアは規制で明確に必要な場合にだけ選ぶよう案内しています。詳細は [KMS](kms.md) を参照してください。決済用の HSM が必要なら AWS Payment Cryptography です。
+
+- **例:** 「単一テナントの HSM で鍵を管理し、Oracle の TDE で使う」なら CloudHSM です。S3 の暗号化なら KMS で足ります。
+- **誤ると:** CloudHSM の鍵を S3 の暗号化に直接指定することはできません。KMS のキーストアを通します。
 
 ### クラスター {#cloudhsm-clusters}
 
@@ -300,6 +379,11 @@ AWS は、カスタムキーストアは規制で明確に必要な場合にだ�
 2. CSR を取得し、自分の鍵で署名して初期化する。
 3. CloudHSM CLI の `cluster activate` で有効化する。
 
+- **HSM の数の例:** 2 つの AZ に 2 台置くと、1 台が止まっても残りで動きます。3 台で 3 AZ にすると、AZ 障害の間も 2 台残ります。
+- **モードの例:** 規制で FIPS が必須なら、作成時に FIPS を選びます。後から非 FIPS に変えられません。
+- **クォータの例:** 既定の 6 台を超えて 8 台にするには、引き上げを申請します。クラスターの上限は 28 台です。
+- **誤ると:** 1 台のまま本番にすると、HSM の障害でそのクラスターの暗号操作が止まります。
+
 ```bash
 aws cloudhsmv2 create-cluster \
   --hsm-type hsm2m.medium \
@@ -313,6 +397,9 @@ aws cloudhsmv2 create-cluster \
 | ユーザー | 1,024 |
 | 同時接続 | 900 |
 
+- **計算の例:** 対称鍵 15,000 個と非対称鍵 1,600 個で 16,600 個なので、合計 16,666 の上限に収まります。非対称鍵が 3,334 個になると、3,333 の上限を超えます。
+- **例:** アプリのサーバーが 500 台、それぞれ接続を 1 本なら 500 本です。900 の上限には収まります。
+
 ### HSM のユーザー {#cloudhsm-users}
 
 | ユーザー | できること |
@@ -325,6 +412,9 @@ aws cloudhsmv2 create-cluster \
 **IAM ユーザーとは別物** です。IAM はクラスターや HSM の作成を制御し、HSM の中の操作は HSM のユーザーが制御します。AWS は鍵やユーザーを見られず、暗号操作もできません。
 
 M of N の制御（クォーラム認証）を使うと、2 人以上の承認を必須にできます。
+
+- **例:** 3 人の管理者のうち 2 人の承認（2 of 3）を必須にすると、1 人の管理者だけではユーザーを削除できません。
+- **誤ると:** IAM の `AdministratorAccess` を持つ人でも、HSM の鍵は使えません。逆に、CU の名前とパスワードをなくすと、AWS にも取り戻せません。
 
 ### バックアップとログ {#cloudhsm-backups}
 
@@ -340,6 +430,10 @@ M of N の制御（クォーラム認証）を使うと、2 人以上の承認�
 
 **症状:** 暗号操作を調べたいときに CloudTrail を見ても HSM の中の操作はありません。CloudWatch Logs の監査ログを見ます。
 
+- **保持の例:** `Type=DAYS,Value=90` は 90 日です。`Value=6` は 7 未満なので拒否されます。クラスターの最後のバックアップは消えません。
+- **コピーの例:** `aws cloudhsmv2 copy-backup-to-region --destination-region ap-northeast-3 --backup-id backup-1234567890abcde` で大阪に写します。
+- **誤ると:** コピー先のバックアップは保持ポリシーの対象外なので、手で消さない限り残ります。
+
 ### KMS の CloudHSM キーストア {#cloudhsm-key-store}
 
 KMS の API や AWS サービスとの統合を保ったまま、鍵の素材を自分の CloudHSM に置く方法です。
@@ -352,11 +446,17 @@ KMS の API や AWS サービスとの統合を保ったまま、鍵の素材を
 | 対応する鍵 | 対称の暗号化キー | 非対称や HMAC は不可 |
 | 切断時 | 暗号操作ができない | KMS キーを使うサービスが失敗 |
 
+- **例:** `aws kms create-custom-key-store --custom-key-store-name hsm-store --cloud-hsm-cluster-id cluster-1a23b4cdefg --key-store-password <kmsuser のパスワード> --trust-anchor-certificate file://customerCA.crt` で作ります。
+- **誤ると:** クラスターの HSM が 2 台未満になると、キーストアの条件を満たさなくなります。AZ の異なる 2 台を保ちます。
+- **上限の例:** カスタムキーストアはアカウントとリージョンごとに 10 個で、CloudHSM キーストアは秒間 1,800 回までです。これを超える処理には向きません。
+
 ## Verified Permissions {#verified-permissions}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 自作アプリの **認可を外部に切り出す** サービスです。Cedar でポリシーを書き、アプリは「この主体はこの操作をしてよいか」を問い合わせます。認証は Cognito や OIDC の IdP が担います。
+
+**提供単位:** ポリシーストアはリージョンのリソースで、VPC の外にあります。
 
 ```text
 permit (
@@ -395,11 +495,19 @@ aws verifiedpermissions is-authorized \
 
 API Gateway では、Lambda オーソライザーから呼ぶ構成が AWS のブログで紹介されています。
 
+- **`IsAuthorized` の例:** alice が `managers` に属し、経費 `exp-42` の `amount` が 50,000 なら、応答は `"decision": "ALLOW"` です。150,000 なら `DENY` です。
+- **テンプレートの例:** `permit(principal == ?principal, action == Action::"view", resource == ?resource);` を 1 つ作り、ユーザーごとにリンクします。テンプレートを直すと、リンク先すべてに反映されます。
+- **`forbid` の例:** `forbid(principal, action, resource) when { resource.locked == true };` は、`permit` があっても拒否します。
+- **ID ソースの例:** Cognito のアプリクライアントを ID ソースにすると、`IsAuthorizedWithToken` に渡した ID トークンの `sub` が主体になります。
+- **誤ると:** 10,001 バイトのポリシーは上限を超えます。スキーマを 100,000 バイト以内に保ちます。
+
 ## Verified Access {#verified-access}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 VPN なしで社内アプリへアクセスさせるサービスです。リクエストごとに、ユーザーと端末の信頼データをポリシーで評価します。
+
+**提供単位:** インスタンスはリージョンのリソースで、VPC の外から、VPC 内のアプリへ接続します。
 
 ```mermaid
 flowchart TD
@@ -437,6 +545,10 @@ when {
 
 `idc` はポリシー参照名で、信頼プロバイダーの作成時に決めます。
 
+- **例:** 信頼プロバイダーの参照名を `idc` にすると、ポリシーは `context.idc.user.email.address` のように書けます。`jamf` なら `context.jamf.risk` です。
+- **誤ると:** 参照名を `idc` にしてポリシーで `context.okta` と書くと、一致せず全員拒否されます。
+- **エンドポイントの例:** ALB の `internal.example.com` を HTTPS で公開します。SSH や RDS は CIDR やネットワークインターフェイスのエンドポイントと接続クライアントを使います。
+
 **症状:** ポリシーを通ったのにアプリに届かない場合は、アプリ側のセキュリティグループがエンドポイントからの通信を許可しているか確認します。
 
 Client VPN との違いです。VPN はネットワーク全体に入るのに対し、Verified Access はアプリ単位でリクエストごとに判断します。ネットワークの経路を減らせるので、不要なネットワークアクセスの削減につながります。
@@ -447,6 +559,8 @@ Client VPN との違いです。VPN はネットワーク全体に入るのに�
 
 意図しないアクセスを見つけ、ポリシーを検証するツールです。基本は [IAM のページ](iam.md#access-analyzer) にあります。
 
+**提供単位:** 分析ツールはリージョンのリソースで（未使用アクセスはリージョンを問いません）、VPC の外にあります。
+
 | 分析ツール | 分かること | `type` | リージョン | 料金 |
 | --- | --- | --- | --- | --- |
 | 外部アクセス | 信頼ゾーンの外への共有 | `ACCOUNT`、`ORGANIZATION` | **リージョンごと** | 無料 |
@@ -454,6 +568,10 @@ Client VPN との違いです。VPN はネットワーク全体に入るのに�
 | 未使用アクセス | 未使用のロール、キー、パスワード、権限 | `ACCOUNT_UNUSED_ACCESS`、`ORGANIZATION_UNUSED_ACCESS` | **リージョンを問わない** | ロールとユーザーの数で課金 |
 
 組織を対象にできるのは、管理アカウントか委任管理者です。同じアカウントを信頼ゾーンにする分析ツールはリージョンに 1 つ、組織は 5 つまでです。
+
+- **`type` の例:** `aws accessanalyzer create-analyzer --analyzer-name org-external --type ORGANIZATION` を、東京と大阪の両方で実行します。外部アクセスはリージョンごとです。
+- **未使用の例:** `--type ACCOUNT_UNUSED_ACCESS --configuration '{"unusedAccess":{"unusedAccessAge":90}}'` で 90 日に設定します。
+- **誤ると:** 東京だけで作ると、`us-west-2` のバケットの公開を検出できません。
 
 ### 外部アクセスの検出 {#aa-external}
 
@@ -483,11 +601,16 @@ Client VPN との違いです。VPN はネットワーク全体に入るのに�
 
 アーカイブルールは新しい検出結果を自動でアーカイブします。既存の検出結果は、ルールを手動で適用します。S3 の意図した公開などに使います。
 
+- **例:** バケットポリシーで `444455556666` に `s3:GetObject` を許可すると、信頼ゾーンがこのアカウントなら 30 分以内に検出結果が出ます。組織を信頼ゾーンにして `444455556666` が組織内なら、出ません。
+- **アーカイブの例:** 公開サイトの `public-site` バケットを、`resource` のフィルターでアーカイブします。新しい別のバケットの公開は、引き続き Active で検出されます。
+
 ### 内部アクセスの検出 {#aa-internal}
 
 監視するリソースを選んで作る、別の分析ツールです。アイデンティティポリシー、リソースポリシー、SCP、RCP、権限境界を合わせて評価します。結果は `ListFindingsV2` で取得します。
 
 外部と内部を合わせると、リソースへのアクセスの全体像が分かります。
+
+- **例:** 顧客データの `customers` バケットを監視に指定すると、組織内のどのロールがこのバケットを読めるかが一覧で分かります。
 
 ### 未使用アクセスの検出 {#aa-unused}
 
@@ -498,6 +621,9 @@ Client VPN との違いです。VPN はネットワーク全体に入るのに�
 | 種類 | 未使用のロール、キーとパスワード、権限 | |
 
 [Security Hub](threat-detection.md#security-hub-unified) を有効にすると、90 日の分析が自動で動きます。
+
+- **例:** 追跡期間が 90 日なら、95 日前に最後に使ったロールは未使用になります。60 日前に作ったロールは、一度も使っていなくても未使用の日数が 90 日に達していないので、まだ検出されません。
+- **誤ると:** 緊急用のロールは普段使わないので、タグで除外しないと検出され続けます。
 
 ### ポリシーの検証とチェック {#aa-policy-checks}
 
@@ -531,6 +657,12 @@ aws accessanalyzer validate-policy \
 
 検出結果は EventBridge と Security Hub CSPM に送られます。委任管理者を変更すると、前の管理者の組織の分析ツールは無効になります。
 
+- **`CheckNoNewAccess` の例:** 元のポリシーが `s3:GetObject` で、PR が `s3:*` に広げると、結果が `FAIL` になります。CI を失敗させます。
+- **`CheckAccessNotGranted` の例:** ポリシーに `iam:PassRole` が含まれると `FAIL` です。
+- **`CheckNoPublicAccess` の例:** `"Principal": "*"` で条件なしのバケットポリシーは `FAIL` です。
+- **`CreateAccessPreview` の例:** バケットポリシーの変更案を渡すと、適用せずに新しい検出結果が分かります。
+- **誤ると:** ポリシーの生成に証跡がないと、分析できません。CloudTrail を有効にしてから 90 日分を使います。
+
 ## SCP と権限境界の組み合わせ {#multi-account-access}
 
 基本は [ポリシー評価](iam.md#policy-evaluation)、[権限境界と SCP](iam.md#boundaries-scp)、[クロスアカウントアクセス](iam.md#cross-account) にあります。ここでは複数アカウントでの組み合わせを扱います。Organizations の設定は [ガバナンス](governance.md) を参照してください。
@@ -547,6 +679,8 @@ aws accessanalyzer validate-policy \
 | リソースポリシー | リソース | あり | |
 
 SCP と権限境界とアイデンティティポリシーは **すべてが許可** して初めて操作できます。
+
+- **例:** SCP が `s3:*` を許可し、権限境界が `s3:GetObject` だけで、IAM ポリシーが `s3:*` なら、結果は `s3:GetObject` だけです。
 
 ### クロスアカウントの評価 {#cross-account-evaluation}
 
@@ -581,6 +715,9 @@ flowchart TD
 
 SCP や RCP の明示的な拒否は、どの場合でも優先されます。
 
+- **例:** `444455556666` のロールがあなたのバケットに `s3:GetObject` を呼びます。相手の SCP がその操作を拒否していれば、あなたのバケットポリシーが許可していても拒否されます。
+- **例:** 外部のアカウントからの呼び出しには、あなたの組織の SCP は効きません。止めるなら、バケットポリシーか RCP を使います。
+
 ### SCP と RCP の例外 {#guardrail-exceptions}
 
 | 例外 | SCP | RCP |
@@ -593,6 +730,9 @@ SCP や RCP の明示的な拒否は、どの場合でも優先されます。
 | 委任管理者（メンバー） | 効く | 効く |
 
 組織のルートから `FullAWSAccess` を外すと、許可がなくなりメンバーの操作がすべて失敗します。テストは OU で順に行います。
+
+- **例:** SCP で 10,240 文字を超えるなら、複数の SCP に分けます。ルート、OU、アカウントごとに直接付けられるのは 10 個までです。
+- **誤ると:** 管理アカウントの CloudTrail を SCP で止めようとしても効きません。管理アカウントは SCP の対象外です。
 
 | 上限 | SCP | RCP |
 | --- | --- | --- |
@@ -608,6 +748,8 @@ SCP や RCP の明示的な拒否は、どの場合でも優先されます。
 | 暗号化されたメッセージを解読 | [`DecodeAuthorizationMessage`](iam.md#decode-authorization) |
 | 想定の検証 | [ポリシーシミュレーター](iam.md#policy-simulator) |
 | 意図しない許可の発見 | [Access Analyzer](#access-analyzer) |
+
+- **例:** `get-caller-identity` で `assumed-role/App/job` を確認し、エラーの `with an explicit deny in a service control policy` で SCP と分かります。IAM ポリシーを直しても解決しません。
 
 ## データ境界 {#data-perimeter}
 
@@ -665,6 +807,10 @@ SCP の例です。組織外のバケットへの書き込みを拒否します�
 | VPC の外で動く Lambda | VPC 内で動かす。またはネットワークの条件から除外 |
 
 **症状:** データ境界の導入後に CloudTrail のログ配信が止まる場合は、サービスプリンシパルの例外を確認します。
+
+- **信頼できる ID の例:** 組織外のアカウント `444455556666` のロールは、バケットポリシーが許可していても、上の RCP で `aws:PrincipalOrgID` が一致せず拒否されます。
+- **信頼できるリソースの例:** 組織内のロールが、組織外のバケットに `PutObject` しようとすると、上の SCP で拒否されます。
+- **想定のネットワークの例:** `aws:SourceIp` が `192.0.2.0/24` でなく、`aws:SourceVpc` も `vpc-1a2b3c4d` でなければ拒否します。
 
 既存の許可が広すぎないかは [Access Analyzer](#access-analyzer) で確認します。VPC 側の設定は [エンドポイントポリシー](networking.md#endpoint-policies) を参照してください。
 

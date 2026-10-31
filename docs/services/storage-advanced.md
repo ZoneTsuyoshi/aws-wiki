@@ -56,9 +56,15 @@ EBS、EFS の設定は [ストレージの選び方](storage.md)、S3 は [S3](s
 | 最小の遅延のディスク、データは消えてよい | インスタンスストア |
 | EC2 1 台の永続ディスク | EBS |
 
+**例**: Linux の Web サーバー 10 台で 500 GB の画像を共有するなら EFS です。Windows の 300 人の部署の共有フォルダを AD の権限で使うなら FSx for Windows です。ML の学習で S3 の 100 TB を 1 週間だけ高速に読むなら FSx for Lustre です。
+
+**誤ると**: EFS と違って FSx の多くは確保した容量に課金されます。100 GB しか使わない共有に 2 TB を確保すると、使わない分にも費用がかかります。
+
 ## インスタンスストア {#instance-store}
 
 ホストの物理ディスクに置く一時的なブロックストレージです。追加料金はなく、インスタンスの料金に含まれます。
+
+**提供単位**: インスタンスと同じホストにあるので AZ 単位です。VPC とは関係なく、そのインスタンスからしか使えません([リソースの提供単位](resource-scope.md#scope-zonal))。
 
 | イベント | データ |
 | --- | --- |
@@ -78,6 +84,10 @@ EBS、EFS の設定は [ストレージの選び方](storage.md)、S3 は [S3](s
 
 **例**: Cassandra のような 3 台の複製を持つデータベースなら、1 台が消えても他から戻せるので、低遅延のインスタンスストアを使えます。
 
+**例**: 動画変換の作業領域です。S3 から 50 GB を読み、NVMe のインスタンスストアで変換して、結果を S3 へ戻します。途中でインスタンスが消えても、やり直せます。
+
+**例**: `reboot` の後はデータが残ります。`aws ec2 stop-instances` の後に起動すると、ディスクは空になります。
+
 **落とし穴**: EBS と違ってスナップショットを取れません。残したいデータは EBS や S3 へコピーします。コストのために夜間停止すると、データが消えます。
 
 ## FSx for Windows File Server {#fsx-windows}
@@ -85,6 +95,8 @@ EBS、EFS の設定は [ストレージの選び方](storage.md)、S3 は [S3](s
 [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 Windows Server で動くマネージドのファイルサーバーです。既存の Windows アプリを変更せずに移せます。
+
+**提供単位**: ファイルシステムはリージョンの VPC の中に作ります。Single-AZ は 1 つの AZ、Multi-AZ は 2 つの AZ のサブネットに置きます([リソースの提供単位](resource-scope.md#two-axes))。
 
 ### 主な設定 {#fsx-windows-settings}
 
@@ -95,7 +107,7 @@ Windows Server で動くマネージドのファイルサーバーです。既�
 | 容量 | SSD 32 GiB〜64 TiB、HDD 2,000 GiB〜64 TiB | 増やすだけ。1 回 10% 以上、次は 6 時間後 | 減らせない |
 | 変更後の制限 | 6 時間または最適化の完了の長いほう | | すぐに連続で増やせない |
 | スループット | 32〜12,288 MBps | 512 MBps など段階で選ぶ。メモリ量もここで決まる | 小さいとキャッシュが効かず遅い |
-| SSD IOPS | 自動は 3 IOPS/GiB、最大 400,000。手動は 96〜400,000 で 3〜50 IOPS/GiB | 2,048 GiB なら自動で 6,144 IOPS | 不足すると待ち時間が伸びる |
+| SSD IOPS | 自動は 3 IOPS/GiB、最大 400,000。手動は 96〜400,000 で 3〜50 IOPS/GiB(東京など一部のリージョンは 3〜500) | 2,048 GiB なら自動で 6,144 IOPS | 不足すると待ち時間が伸びる |
 | AD | AWS Managed Microsoft AD か自己管理の AD | 作成時に参加 | AD のサブネット、ポートが違うと作成に失敗 |
 | 自動バックアップ | 既定で有効。コンソールの保持は 30 日、0〜90 日 | 0 は無効 | 消えた後に復元できない |
 
@@ -108,6 +120,19 @@ aws fsx create-file-system --file-system-type WINDOWS \
   --windows-configuration \
     "ActiveDirectoryId=d-1234567890,DeploymentType=MULTI_AZ_1,PreferredSubnetId=subnet-aaaa1111,ThroughputCapacity=512,AutomaticBackupRetentionDays=30"
 ```
+
+**計算の例**(上の 2,048 GiB、512 MBps の場合):
+
+| 項目 | 計算 | 結果 |
+| --- | --- | --- |
+| 自動の SSD IOPS | 2,048 × 3 | 6,144 IOPS |
+| 手動の SSD IOPS の上限 | 2,048 × 50 | 102,400 IOPS(東京などは 2,048 × 500 でも上限の 400,000 IOPS まで) |
+| 次に増やせる最小の容量 | 2,048 × 1.1 | 約 2,253 GiB 以上 |
+| サーバーのメモリ | スループットの表より | 32 GB |
+
+**スループットの例**: `ThroughputCapacity=32` はメモリ 4 GB、`12288` はメモリ 512 GB です。数百人が同じファイルを読む環境でメモリが小さいと、キャッシュに載らずディスクの読み取りが増えます。
+
+**誤ると**: 空き容量は常に 20% 以上残すことが推奨です。全容量を使い切ると、性能が落ち、データの不整合を招くおそれがあります。増やす要求の後は 6 時間と最適化の完了のどちらか長いほうを待つので、一杯になってからでは間に合いません。
 
 ### デプロイタイプの違い {#fsx-windows-deployment}
 
@@ -128,6 +153,10 @@ aws fsx create-file-system --file-system-type WINDOWS \
 
 **スループットの変更**: Multi-AZ ではサーバーの入れ替えでフェイルオーバーとフェイルバックが起きます。アイドルの時間帯に行います。
 
+**例**: 部署の共有で DFS レプリケーションが必要なら Single-AZ 1、SQL Server の共有なら Multi-AZ です。安価な大容量のアーカイブ共有なら Multi-AZ の HDD にします。
+
+**誤ると**: SQL Server の共有を Single-AZ 1 に作ると、継続的に利用可能な共有を使えません。業務時間中にスループットを変えると、Multi-AZ で 2 回切り替わります。
+
 ### Windows の機能 {#fsx-windows-features}
 
 | 機能 | 内容 | 例 |
@@ -139,6 +168,8 @@ aws fsx create-file-system --file-system-type WINDOWS \
 | SMB マルチチャネル | 1 クライアントから全性能を出す | 動画編集 |
 | ACL、暗号化 | NTFS の ACL、KMS、SMB の Kerberos | 転送中も自動で暗号化 |
 
+**シャドウコピーの注意の例**: シャドウコピーはファイルシステムの容量を変更分だけ使います。バックアップの代わりにはなりません。ファイルシステムごと消した場合は、バックアップがないと戻せません。
+
 **落とし穴**: 通信は TCP 445 です。セキュリティグループと、AD へのポートを許可します。オンプレミスからは Direct Connect か VPN で接続します。
 
 ## FSx for Lustre {#fsx-lustre}
@@ -146,6 +177,8 @@ aws fsx create-file-system --file-system-type WINDOWS \
 [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 高速な並列ファイルシステムです。HPC、機械学習、動画処理、金融モデルに使います。POSIX 準拠で、Linux のみです。
+
+**提供単位**: ファイルシステムは 1 つの AZ のサブネットに置き、VPC の中から接続します。Intelligent-Tiering のクラスはデータを複数の AZ に複製します([リソースの提供単位](resource-scope.md#two-axes))。
 
 ### デプロイとストレージクラス {#fsx-lustre-deployment}
 
@@ -182,6 +215,12 @@ aws fsx create-file-system --file-system-type LUSTRE \
     "DeploymentType=PERSISTENT_2,PerUnitStorageThroughput=250,DataCompressionType=LZ4"
 ```
 
+`--storage-capacity` は GiB の値で、2400 は 2.4 TiB です。上の例の性能は 2.4 × 250 で 600 MBps です。
+
+**例**: 3 時間で 900 GB を読む処理は、900,000 MB ÷ 10,800 秒で約 83 MBps が必要です。Scratch 2 の 1.2 TiB なら容量に収まり、1.2 × 200 で 240 MBps あります。
+
+**誤ると**: 3,000 のような刻みに合わない容量は作れません。Scratch で学習中のサーバーが故障すると、データが失われて I/O エラーになります。数週間の処理で Scratch を選んではいけません。
+
 ### S3 との連携 {#fsx-lustre-s3}
 
 S3 バケットをリンクすると、オブジェクトをファイルとして見せられます。
@@ -195,6 +234,23 @@ S3 バケットをリンクすると、オブジェクトをファイルとし�
 | データリポジトリタスク | 一括でインポート、エクスポート |
 
 **例**: S3 の学習データ 100 TB を GPU インスタンスで読みます。Lustre を S3 にリンクし、学習中だけ Scratch 2 を作り、結果をエクスポートしたら消します。
+
+```bash
+# ファイルシステムの /train/ を S3 のプレフィックスに対応させる
+aws fsx create-data-repository-association \
+  --file-system-id fs-0123456789abcdef0 \
+  --file-system-path /train/ \
+  --data-repository-path s3://train-data/images/ \
+  --s3 "AutoImportPolicy={Events=[NEW,CHANGED,DELETED]},AutoExportPolicy={Events=[NEW,CHANGED,DELETED]}"
+
+# 結果を一括で S3 へ書き出す
+aws fsx create-data-repository-task --type EXPORT_TO_REPOSITORY \
+  --file-system-id fs-0123456789abcdef0 --report Enabled=false
+```
+
+**例**: インポート直後の `ls` はメタデータだけなので速く終わりますが、最初の `cat` は S3 からデータを読むので遅くなります。
+
+**誤ると**: Scratch を消す前にエクスポートを実行し忘れると、Lustre の中だけにある結果を失います。
 
 **落とし穴**:
 
@@ -211,6 +267,8 @@ EC2、ECS(EC2 上)、EKS(CSI ドライバー)で接続します。同じ VPC の
 [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 NetApp の ONTAP を使うマネージドのファイルシステムです。複数のプロトコルで同じデータを見せられ、NetApp の運用をそのまま使えます。
+
+**提供単位**: ファイルシステムはリージョンの VPC の中に作ります。Single-AZ は 1 つの AZ、Multi-AZ は 2 つの AZ のサブネットに HA ペアを置きます([リソースの提供単位](resource-scope.md#two-axes))。
 
 ### デプロイタイプ {#fsx-ontap-deployment}
 
@@ -231,6 +289,12 @@ Multi-AZ はスタンバイを別の AZ に置き、AZ の障害でも継続し�
 | スループットの最小 | 第 2 世代の 1 HA ペアは 384 MBps |
 | スループットの最大 | 第 2 世代の Single-AZ は 73,728 MBps、Multi-AZ は 6,144 MBps |
 | ボリュームあたりのスナップショット | 1,023 |
+
+**例**:
+
+- **SSD の削減**: 10 TiB を減らすなら 9% 以上小さくするので、9.1 TiB 以下です。7 TiB を使っている状態で 9 TiB にすると、前は 70%、後は約 78% で条件を満たします。8 TiB を使っていると、後が約 89% になるので減らせません。
+- **スケールアウト**: `SINGLE_AZ_2` で 6 HA ペアなら、1 ペアあたりの SSD の上限 512 TiB まで置けますが、全体は 1 PiB が上限です。
+- **スナップショット**: 1 時間に 1 回取り続けると、1,023 ÷ 24 で約 42 日で上限に達します。古いものを消すポリシーにします。
 
 ### ストレージ階層と階層化ポリシー {#fsx-ontap-tiering}
 
@@ -256,6 +320,13 @@ aws fsx create-volume --volume-type ONTAP --name data \
 
 **例**: 100 TiB のうち 90% が冷たいデータなら、SSD は 19 TiB(冷たい 90 TiB のメタデータ 9 TiB + 頻繁に使う 10 TiB)以上を見込みます。
 
+**ポリシーごとの例**:
+
+- **Auto**: `CoolingPeriod=31` なら、31 日読まれないブロックがキャパシティプールへ移ります。読むと SSD へ戻ります。
+- **Snapshot Only**: 業務データは SSD のまま、既定の 2 日で古いスナップショットの分を移します。DB のボリュームに向きます。
+- **All**: 読まない前提のバックアップのコピーです。
+- **None**: 常に低遅延が必要な DB です。**誤ると**: 冷たいデータも SSD に残り、確保する SSD が増えます。
+
 **落とし穴**: 長期保存のデータを最初から All にすると、読んでも SSD に戻らず遅いままです。移行は Auto で、最低 2 日のクーリングを使います。
 
 ### データ管理の機能 {#fsx-ontap-features}
@@ -271,11 +342,22 @@ aws fsx create-volume --volume-type ONTAP --name data \
 
 **例**: オンプレミスの NetApp があるなら、SnapMirror でそのまま AWS へ複製し、切り替えられます。
 
+**例**: 同じボリュームを Linux から NFS で、Windows から SMB で読みます。部門ごとに SVM を分けます。
+
+```bash
+aws fsx create-storage-virtual-machine \
+  --file-system-id fs-0123456789abcdef0 --name dept-a
+```
+
+**誤ると**: SMB を使う SVM を AD に参加させていないと、Windows のユーザーは AD の権限で接続できません。
+
 ## FSx for OpenZFS {#fsx-openzfs}
 
 [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 ZFS や Linux のファイルサーバーをアプリの変更なしで移せます。NFS でアクセスし、スナップショットとクローンが高速です。
+
+**提供単位**: ファイルシステムはリージョンの VPC の中に作ります。Single-AZ は 1 つの AZ、Multi-AZ は 2 つの AZ のサブネットに置きます([リソースの提供単位](resource-scope.md#two-axes))。
 
 ### デプロイタイプと性能 {#fsx-openzfs-deployment}
 
@@ -299,9 +381,13 @@ ZFS や Linux のファイルサーバーをアプリの変更なしで移せま
 aws fsx create-file-system --file-system-type OPENZFS \
   --storage-capacity 1024 \
   --subnet-ids subnet-aaaa1111 \
-  --openzfs-configuration \
+  --open-zfs-configuration \
     "DeploymentType=SINGLE_AZ_HA_2,ThroughputCapacity=640,RootVolumeConfiguration={DataCompressionType=ZSTD}"
 ```
+
+**例**: `DeploymentType` は、開発用なら非 HA、分析なら Single-AZ の HA、重要な本番の DB なら Multi-AZ です。
+
+**誤ると**: 非 HA に本番を置くと、ファイルサーバーの障害で約 30 分止まります。`ThroughputCapacity=640` は Single-AZ 2 の値です。Single-AZ 1 では 512 や 1024 を選ぶので、640 は使えません。
 
 ### 機能 {#fsx-openzfs-features}
 
@@ -314,6 +400,18 @@ aws fsx create-file-system --file-system-type OPENZFS \
 | ボリューム | 圧縮、NFS エクスポート、クォータの単位。最大 100 | チームごとに分ける |
 | オンデマンドレプリケーション | スナップショットをファイルシステムの間、リージョン間、アカウント間で転送 | 読み取りレプリカ、DR |
 | S3 アクセスポイント | S3 の API でも読み書きできる | 分析ツールから読む |
+
+**ボリュームの例**: チーム A に 500 GiB の上限を付け、圧縮して作ります。
+
+```bash
+aws fsx create-volume --volume-type OPENZFS --name team-a \
+  --open-zfs-configuration \
+    "ParentVolumeId=fsvol-0123456789abcdef0,StorageCapacityQuotaGiB=500,DataCompressionType=ZSTD"
+```
+
+**例**: 圧縮率が 3 倍のログなら、300 GiB のデータが 100 GiB に収まります。圧縮率は例で、データによって変わります。
+
+**例**: 1 日 24 回スナップショットを取ると、700 ÷ 24 で約 29 日で上限に達します。
 
 **落とし穴**:
 
@@ -336,6 +434,15 @@ SOA では、ファイルを前の状態へ戻す方法が問われます。
 
 **例**: Lustre を S3 にリンクしているなら、S3 が保管の主体です。S3 のバージョニングで世代を管理します。
 
+**例**: Windows の共有で `AutomaticBackupRetentionDays=30` なら、30 日前までのバックアップが残ります。0 にすると自動バックアップは止まります。
+
+```bash
+aws fsx create-backup --file-system-id fs-0123456789abcdef0 \
+  --tags Key=reason,Value=before-upgrade
+```
+
+**誤ると**: Lustre の Persistent で既定の 0 日のままだと、自動バックアップはありません。S3 にリンクしたファイルシステムではバックアップ自体を使えないので、S3 への書き出しを確認します。
+
 ## S3 の高度な機能 {#s3-advanced}
 
 S3 の基本は [S3](s3.md) にあります。ここではマルチリージョンの設計を中心に述べます。
@@ -353,6 +460,8 @@ S3 の基本は [S3](s3.md) にあります。ここではマルチリージョ�
 ### Multi-Region Access Points {#mrap}
 
 グローバルなエンドポイントを 1 つ持ち、複数のリージョンのバケットへ振り分けます。
+
+**提供単位**: MRAP はグローバルで VPC の外にあり、裏のバケットはそれぞれリージョン単位です。VPC からはインターフェイスエンドポイントで接続します。
 
 | 構成 | 動作 | 使う場面 |
 | --- | --- | --- |
@@ -392,16 +501,18 @@ sequenceDiagram
 ```bash
 aws s3control submit-multi-region-access-point-routes \
   --region ap-northeast-1 \
-  --account-id 123456789012 \
-  --mrap arn:aws:s3::123456789012:accesspoint/mfzwi23gnjvgw.mrap \
+  --account-id 111122223333 \
+  --mrap arn:aws:s3::111122223333:accesspoint/mfzwi23gnjvgw.mrap \
   --route-updates \
     Bucket=app-tokyo,TrafficDialPercentage=0 \
     Bucket=app-singapore,TrafficDialPercentage=100
 ```
 
-**同期を保つ**: 切り替えの前後でどちらのバケットにも書けるように、双方向の CRR を設定します。複製の時間を保証したいなら RTC を使います。大半のオブジェクトは数秒で複製され、99.99% が 15 分以内です。
+**同期を保つ**: 切り替えの前後でどちらのバケットにも書けるように、双方向の CRR を設定します。複製の時間を保証したいなら RTC を使います。大半のオブジェクトは数秒で複製され、99.9% が 15 分以内です。
 
 **例**: 東京とシンガポールのバケットを MRAP でつなぎます。東京が障害になったら、東京を 0、シンガポールを 100 にします。障害を試すときも同じ操作をします。
+
+**誤ると**: 同じ切り替えの `--region` に `ap-southeast-1` を指定すると失敗します。使えるのは上の表の 5 つのリージョンだけです。東京が落ちたときに備えて、`us-west-2` なども使える手順にします。CRR がないと、切り替えの直後に `GetObject` が 404 になります。
 
 | 問い | 答え |
 | --- | --- |
@@ -414,18 +525,29 @@ aws s3control submit-multi-region-access-point-routes \
 
 分析向けの**テーブルバケット**です。Apache Iceberg 形式で保存し、Athena、Redshift などから SQL でクエリします。自前で管理するテーブルより高い TPS とスループットを出します。同じリージョン、別のリージョン、別のアカウントへのレプリケーションにも対応します。
 
+**提供単位**: テーブルバケットはリージョン単位で VPC の外にあります。
+
+**例**: 毎日 10 GB ずつ増える注文の履歴を、汎用バケットの Parquet の代わりにテーブルとして持ちます。Athena から `SELECT` し、行の更新や削除も Iceberg の形で扱えます。
+
 分析の全体像は [データエンジニアリング](data-engineering.md) を参照してください。
 
 ### S3 Files {#s3-files}
 
 S3 バケットやプレフィックスを、EC2、Lambda、EKS、ECS からファイルシステムとしてマウントする機能です。データの正本は S3 に残ります。
 
+**提供単位**: バケットはリージョン単位です。ファイルシステムへの接続は、VPC の AZ ごとに最大 1 つのマウントターゲットを通ります。
+
 | 項目 | 内容 |
 | --- | --- |
 | 動作 | オブジェクトをファイルとして見せ、使うデータを高性能ストレージに読み込む |
-| サイズのしきい値 | 高性能ストレージに読み込むサイズ。既定 1 MiB で変更可 |
+| サイズのしきい値 | 高性能ストレージに読み込むファイルのサイズ。既定 128 KiB 未満で変更可 |
+| 大きな読み取り | 1 MiB 以上の読み取りは、高性能ストレージにあっても S3 から直接読む |
 | 期限切れ | 読まれないデータを高性能ストレージから外す。1〜365 日、既定 30 日 |
 | 同期 | ファイルシステムとバケットを双方向で同期 |
+
+**例**: `ls /mnt/s3files/data/images/` を初めて実行すると、1,000 ファイルのメタデータを読み込むので数秒かかることがあります。2 回目以降の `ls` は低遅延です。50 KB のファイルのデータは高性能ストレージへ入り、10 MB のファイルは S3 から直接読みます。
+
+**誤ると**: 期限切れを 1 日にすると、毎週読むファイルも高性能ストレージから外れ、次の読み取りが S3 からの取得で遅くなります。
 
 | 迷う組み合わせ | 見分け方 |
 | --- | --- |

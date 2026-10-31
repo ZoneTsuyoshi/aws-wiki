@@ -29,7 +29,28 @@ flowchart TD
 
 インスタンスストアは一時データ用です。インスタンスを終了すると内容が失われます。
 
+**提供単位**:
+
+| サービス | 単位 | VPC |
+| --- | --- | --- |
+| EBS ボリューム | AZ。スナップショットはリージョン | 外。同じ AZ のインスタンスに付ける |
+| EFS(Regional) | リージョン | 接続はサブネットのマウントターゲット |
+| EFS One Zone | AZ | 接続はサブネットのマウントターゲット |
+| S3 バケット | リージョン | 外 |
+
+詳しくは [リソースの提供単位](resource-scope.md) を参照してください。
+
+**選び方の例**:
+
+- 1 台の EC2 で動く PostgreSQL のデータは、低遅延のブロックが必要なので EBS です。
+- 10 台の EC2 と Lambda で同じ設定ファイルと 20 GB のモデルを読むなら EFS です。
+- スマホから投稿された 100 万枚の画像を HTTPS で配るなら S3 です。
+
+**誤ると**: Lambda に EBS を付けることはできません。別の AZ の EC2 から同じ EBS を読むこともできません。
+
 ## EBS のボリュームタイプ {#ebs-volume-types}
+
+**提供単位**: ボリュームは AZ 単位で、VPC には属しません。同じ AZ のインスタンスにだけ付けられます([リソースの提供単位](resource-scope.md#scope-zonal))。
 
 | タイプ | 特徴 | サイズ | 最大 IOPS | 最大スループット | ブート | Multi-Attach |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -46,6 +67,16 @@ flowchart TD
 | `gp2` のベースライン | 3 IOPS/GiB(最小 100、最大 16,000)。1 TiB 未満は 3,000 IOPS までバースト |
 | `gp2` から `gp3` | 稼働中に変更でき、GiB 単価は最大 20% 低い |
 | HDD | ブートボリュームにできない |
+
+**タイプごとの例**:
+
+- **`gp3`**: Web サーバーのルートや、中規模の DB です。既定の 3,000 IOPS で足りることが多く、まず検討します。
+- **`gp2`**: 1,000 GiB なら 3,000 IOPS、5,334 GiB で上限の 16,000 IOPS です。
+- **`io2` Block Express**: 1 ミリ秒未満の遅延と 100,000 IOPS が必要な基幹 DB です。100,000 ÷ 1,000 で 100 GiB 以上にします。
+- **`st1`**: 5 TiB のログ処理です。ベースラインは 5 × 40 で 200 MiB/s です。
+- **`sc1`**: 月に数回しか読まない 10 TiB のデータです。ベースラインは 10 × 12 で 120 MiB/s です。
+
+**誤ると**: 小さなランダム I/O の DB を `st1` に置くと、IOPS が最大 500 なので遅くなります。`st1` をブートに指定した起動は失敗します。
 
 ### IOPS とスループットの設定 {#ebs-performance-settings}
 
@@ -78,6 +109,13 @@ aws ec2 create-volume --availability-zone ap-northeast-1a --size 100 \
   --volume-type gp3 --iops 6000 --throughput 250 --encrypted
 ```
 
+**誤ると**:
+
+- `gp3` の 100 GiB に `--iops 60000` を指定すると、100 × 500 の 50,000 を超えるので拒否されます。
+- `gp3` で `--iops 3000 --throughput 1000` を指定すると、3,000 × 0.25 の 750 MiB/s を超えるので拒否されます。4,000 IOPS 以上にします。
+- `io1` の 100 GiB に 6,000 IOPS を指定すると、100 × 50 の 5,000 を超えるので拒否されます。
+- インスタンス側の EBS 帯域が 500 MiB/s なら、ボリュームを 1,000 MiB/s にしても 500 MiB/s しか出ません。
+
 ### ボリュームの変更と AZ の制約 {#ebs-modify}
 
 Elastic Volumes で、サイズ、タイプ、IOPS、スループットを稼働中に変更できます。
@@ -93,6 +131,18 @@ Elastic Volumes で、サイズ、タイプ、IOPS、スループットを稼働
 !!! note "変更の制限は緩和された"
     古い資料には変更の間隔は 6 時間とあります。現在は 24 時間の中で 4 回までです。
 
+**例**: 100 GiB の `gp2` を 200 GiB の `gp3` にして、6,000 IOPS を指定します。
+
+```bash
+aws ec2 modify-volume --volume-id vol-0123456789abcdef0 \
+  --size 200 --volume-type gp3 --iops 6000
+# ボリュームが optimizing になったら、OS 側を広げる(XFS の例)
+sudo growpart /dev/nvme0n1 1
+sudo xfs_growfs -d /
+```
+
+**誤ると**: OS の拡張を忘れると、`df` は 100 GiB のままです。24 時間の中で 5 回目の変更は失敗するので、次に変更できる時刻を待ちます。
+
 ボリュームは 1 つの AZ に属し、同じ AZ のインスタンスにしかアタッチできません。
 
 **例**: `ap-northeast-1a` のボリュームを `1c` のインスタンスで使うなら、スナップショットを取り、`1c` にボリュームを作ります。
@@ -104,11 +154,17 @@ Elastic Volumes で、サイズ、タイプ、IOPS、スループットを稼働
 | Windows | `io2` のみ |
 | ファイルシステム | XFS や EXT4 は同時利用を想定していない。クラスター対応のものを使う |
 
+**例**: クラスター型のアプリの 3 台で 1 つの `io2` を共有します。3 台は同じ AZ の Nitro インスタンスで、書き込みの順序はアプリが制御します。
+
+**誤ると**: 2 台で同じボリュームを EXT4 としてマウントして書くと、データが壊れることがあります。17 台目はアタッチできません。Multi-Attach のボリュームはブートに使えません。
+
 ### スナップショット {#ebs-snapshots}
 
 [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 ボリュームの増分バックアップです。S3 に保存されますが、S3 の API やコンソールからは見えません。
+
+**提供単位**: スナップショットはリージョン単位で、VPC の外にあります。同じリージョンの任意の AZ にボリュームを作れます。
 
 | 項目 | 内容 | 落とし穴 |
 | --- | --- | --- |
@@ -126,6 +182,29 @@ Elastic Volumes で、サイズ、タイプ、IOPS、スループットを稼働
 | Recycle Bin | 誤って消したスナップショット、ボリューム、AMI を保持期間内なら戻せる |
 
 **例**: 数 TB のスナップショットから作ったボリュームで、最初の読み取りが遅いなら Fast Snapshot Restore を検討します。通常はブロックに初めてアクセスするときに遅延が発生します。
+
+**増分の計算**: 100 GiB を使っているボリュームで 1 回目を取ると 100 GiB です。5 GiB を書き換えて 2 回目を取ると、増えるのは 5 GiB で合計 105 GiB です。1 回目を消しても、2 回目が参照するデータは残るので、減るのは書き換えられた古い 5 GiB だけで約 100 GiB です。
+
+**Fast Snapshot Restore のクレジットの計算**: 同時に作れるボリューム数は、スナップショットのサイズで決まります。バケットの大きさは `MAX(1, MIN(10, 1024 ÷ サイズ GiB))` で、1 時間の補充数は `MIN(10, 1024 ÷ サイズ GiB)` です。
+
+| スナップショット | バケット | 補充 |
+| --- | --- | --- |
+| 128 GiB | 8 | 毎時 8 個 |
+| 1,024 GiB | 1 | 毎時 1 個 |
+| 2,048 GiB | 1 | 毎時 0.5 個 |
+
+**誤ると**: 128 GiB のスナップショットは有効にした直後はクレジットが 0 です。9 個目のボリュームやクレジットがない時点で作ったボリュームは、通常の遅い復元になります。
+
+**DR のコピーの例**:
+
+```bash
+aws ec2 copy-snapshot --region ap-southeast-1 \
+  --source-region ap-northeast-1 \
+  --source-snapshot-id snap-0123456789abcdef0 \
+  --encrypted --kms-key-id alias/dr
+```
+
+**誤ると**: 整合性を考えずに書き込み中の DB のスナップショットを取ると、復元後にリカバリが必要になることがあります。AWS は自動で取らないので、Data Lifecycle Manager か AWS Backup を設定しないと、誰も取っていない状態が続きます。
 
 ## EBS の暗号化 {#ebs-encryption}
 
@@ -147,9 +226,24 @@ KMS キーを使い、保存データと、インスタンスとボリューム�
 2. `--encrypted` と KMS キーを指定して、スナップショットをコピーします。
 3. そこからボリュームを作って付け替えます。
 
+**デフォルト暗号化の例**:
+
+```bash
+aws ec2 enable-ebs-encryption-by-default --region ap-northeast-1
+aws ec2 modify-ebs-default-kms-key-id --region ap-northeast-1 --kms-key-id alias/ebs-app
+```
+
+**誤ると**:
+
+- 東京で有効にしても、シンガポールのボリュームは暗号化されません。リージョンごとに有効にします。
+- カスタマーマネージドキーのキーポリシーで EC2 の利用を許可していないと、ボリュームのアタッチやインスタンスの起動に失敗します。
+- キーを無効にすると、アタッチ済みのボリュームも再アタッチの時に使えなくなります。
+
 ## EFS の設定 {#efs-settings}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
+**提供単位**: Regional はリージョン単位で、One Zone は AZ 単位です。接続は VPC のサブネットに置くマウントターゲットを通ります([リソースの提供単位](resource-scope.md#scope-regional-vpc))。
 
 ### ファイルシステムのタイプとパフォーマンスモード {#efs-performance-mode}
 
@@ -162,6 +256,16 @@ KMS キーを使い、保存データと、インスタンスとボリューム�
 
 パフォーマンスモードは作成後に変更できません。General Purpose で IOPS の上限が気になるなら、`PercentIOLimit` を監視します。
 
+**例**: 1 つの AZ で作り直せる開発用のデータなら One Zone にします。本番の共有ファイルは Regional です。
+
+```bash
+aws efs create-file-system --encrypted \
+  --performance-mode generalPurpose --throughput-mode elastic \
+  --tags Key=Name,Value=shared
+```
+
+**誤ると**: One Zone の AZ が止まると、そのデータは読めません。別の AZ の EC2 からのマウントには AZ 間の通信料もかかります。
+
 ### スループットモード {#efs-throughput-mode}
 
 | モード | 動作 | 向く場面 |
@@ -173,6 +277,17 @@ KMS キーを使い、保存データと、インスタンスとボリューム�
 **計算の例**: Bursting で Standard に 100 GiB あるなら、ベースラインは 5 MiB/s です。24 時間アイドルで 432,000 MiB のクレジットがたまり、100 MiB/s で 72 分書けます。`BurstCreditBalance` がなくなるとベースラインまで落ちます。
 
 **落とし穴**: Provisioned に切り替えるか量を変更した後、24 時間は他のモードへの切り替えと量の削減ができません。
+
+**モードの選び方の計算**: ピークが 1,000 MiB/s のとき、平均が 30 MiB/s なら 3% なので Elastic です。平均が 200 MiB/s なら 20% なので Provisioned を検討します。
+
+**Bursting のバーストの計算**: Standard に 2 TiB あるなら、ベースラインは 2 × 50 で 100 MiB/s、クレジットがあれば 2 × 100 で 200 MiB/s まで出ます。
+
+```bash
+aws efs update-file-system --file-system-id fs-12345678 \
+  --throughput-mode provisioned --provisioned-throughput-in-mibps 256
+```
+
+**誤ると**: 小さな Bursting のファイルシステムで `BurstCreditBalance` が尽きると、100 GiB なら 5 MiB/s まで落ち、アプリのファイル操作が急に遅くなります。Provisioned を大きくしすぎると、使わない分にも課金されます。
 
 ### 暗号化とアクセス制御 {#efs-encryption}
 
@@ -187,6 +302,19 @@ KMS キーを使い、保存データと、インスタンスとボリューム�
 sudo mount -t efs -o tls,accesspoint=fsap-12345678 fs-12345678:/ /mnt/shared
 ```
 
+**強制の例**: 未暗号化のファイルシステムの作成を拒否します。
+
+```json
+{
+  "Effect": "Deny",
+  "Action": "elasticfilesystem:CreateFileSystem",
+  "Resource": "*",
+  "Condition": {"Bool": {"elasticfilesystem:Encrypted": "false"}}
+}
+```
+
+**誤ると**: CLI で `--encrypted` を付け忘れると、未暗号化のまま作られ、後から暗号化できません。マウントに `tls` を付けないと、NFS の通信は暗号化されません。
+
 ### ライフサイクルとストレージクラス {#efs-lifecycle}
 
 | ポリシー | デフォルト | 動作 |
@@ -196,6 +324,20 @@ sudo mount -t efs -o tls,accesspoint=fsap-12345678 fs-12345678:/ /mnt/shared
 | Standard への移行 | なし(戻らない) | 「初回アクセス時」を選ぶと戻る |
 
 Standard は読み取りの遅延が最短 1 ミリ秒です。IA と Archive は数十ミリ秒です。`ls` などのメタデータ操作はアクセスに数えません。
+
+値は `AFTER_1_DAY`、`AFTER_7_DAYS`、`AFTER_14_DAYS`、`AFTER_30_DAYS`、`AFTER_60_DAYS`、`AFTER_90_DAYS`、`AFTER_180_DAYS`、`AFTER_270_DAYS`、`AFTER_365_DAYS` から選びます。
+
+**例**: 既定の値に、初回アクセスで戻す設定を加えます。
+
+```bash
+aws efs put-lifecycle-configuration --file-system-id fs-12345678 \
+  --lifecycle-policies \
+  '[{"TransitionToIA":"AFTER_30_DAYS"},{"TransitionToArchive":"AFTER_90_DAYS"},{"TransitionToPrimaryStorageClass":"AFTER_1_ACCESS"}]'
+```
+
+**例**: 31 日読んでいない 1 GB のログは IA へ移ります。`ls` で一覧しても移動は止まりません。IA のファイルへの書き込みは、まず Standard に入り、24 時間後から再び移行の対象になります。
+
+**誤ると**: 小さなファイルを多く読むアプリで「戻さない」既定のままにすると、IA へ移ったファイルを読むたびに数十ミリ秒かかり、読み取りの料金もかかり続けます。
 
 ### アクセスポイント {#efs-access-points}
 
@@ -209,11 +351,23 @@ Standard は読み取りの遅延が最短 1 ミリ秒です。IA と Archive �
 
 **例**: アプリ A に `/app-a`(UID 1001)のアクセスポイントを渡すと、`/app-b` は見えません。IAM ポリシーでアプリ A に使えるアクセスポイントを限定すれば、ほかのチームのデータに触れません。
 
+```bash
+aws efs create-access-point --file-system-id fs-12345678 \
+  --posix-user Uid=1001,Gid=1001 \
+  --root-directory "Path=/app-a,CreationInfo={OwnerUid=1001,OwnerGid=1001,Permissions=750}"
+```
+
+`Permissions=750` なので、所有者の UID 1001 は読み書きでき、同じグループは読むだけで、他は入れません。
+
 **落とし穴**: ルートディレクトリが存在せず、作成時の権限も指定していないと、EFS はディレクトリを作らず、マウントに失敗します。セキュリティグループはアクセスポイントではなくマウントターゲットに付きます。
+
+**誤ると**: `Uid=1001` のアクセスポイントで、所有者が UID 1002、権限が 700 のファイルを読むと `Permission denied` です。アプリの実行ユーザーが何であっても、1001 として判定されます。
 
 ## EFS を Lambda とコンテナで使う {#efs}
 
 EFS は NFS(ポート 2049)でマウントします。VPC の各 AZ にマウントターゲットを作り、セキュリティグループで 2049 番を許可します。
+
+**例**: マウントターゲットのセキュリティグループ `sg-efs` は、TCP 2049 の送信元を Lambda や ECS タスクの `sg-app` にします。`0.0.0.0/0` にはしません。
 
 ### Lambda {#efs-lambda}
 
@@ -227,6 +381,10 @@ EFS は NFS(ポート 2049)でマウントします。VPC の各 AZ にマウン
 
 `/tmp` は実行環境ごとの一時領域で、他の実行環境と共有されません。関数の間でファイルを共有したい、大きなモデルを置きたい場合に EFS を使います。
 
+**例**: 20 GB の推論モデルは、[`/tmp` の上限](lambda.md#ephemeral-storage)の 10,240 MB に入りません。EFS に置いて `/mnt/models` で読みます。
+
+**誤ると**: `LocalMountPath=/models` は `/mnt/` で始まらないので設定できません。`Arn` にファイルシステムの ARN を渡しても拒否されます。
+
 関数の設定は `FileSystemConfigs` です。
 
 | 項目 | 値 |
@@ -237,7 +395,7 @@ EFS は NFS(ポート 2049)でマウントします。VPC の各 AZ にマウン
 ```bash
 aws lambda update-function-configuration --function-name infer \
   --file-system-configs \
-  Arn=arn:aws:elasticfilesystem:ap-northeast-1:123456789012:access-point/fsap-12345678abcdef012,LocalMountPath=/mnt/models
+  Arn=arn:aws:elasticfilesystem:ap-northeast-1:111122223333:access-point/fsap-12345678abcdef012,LocalMountPath=/mnt/models
 ```
 
 ポリシーが設定されていないファイルシステムは、マウントターゲットに接続できるクライアントなら誰でも使えます。ポリシーがあるときだけ、実行ロールに `ClientMount` と `ClientWrite` が必要です。
@@ -276,6 +434,10 @@ ECS ではタスク定義の `volumes` に `efsVolumeConfiguration` を指定し
 - アクセスポイントで POSIX ユーザーとルートディレクトリを強制し、タスクロールで使えるアクセスポイントを制限できます。
 - Fargate のタスクには EBS ボリュームも付けられますが、タスク間で共有したいなら EFS です。
 
+**例**: `"mountPoints": [{"sourceVolume": "shared", "containerPath": "/data"}]` なら、アプリは `/data` として読み書きします。`transitEncryption` が `ENABLED` なので、通信も暗号化されます。
+
+**誤ると**: `authorizationConfig` にアクセスポイントを指定したまま `rootDirectory` に `/app` を書くと、タスクの起動に失敗します。Fargate の 1.3.0 では EFS を使えません。
+
 コンテナの全体像は [コンテナ](containers.md) を参照してください。
 
 ## データの保持 {#retention}
@@ -300,6 +462,15 @@ ECS ではタスク定義の `volumes` に `efsVolumeConfiguration` を指定し
 | データ | 起動後 | 残す |
 
 EFS の IA や Archive にあるファイルは、デフォルトではアクセスされても Standard に戻りません。性能が重要なら、初回アクセスで Standard に戻す設定にします。ファイルのメタデータは常に Standard に置かれます。
+
+**例**: 起動中のインスタンスのルートボリュームを残すようにします。
+
+```bash
+aws ec2 modify-instance-attribute --instance-id i-0123456789abcdef0 \
+  --block-device-mappings '[{"DeviceName":"/dev/xvda","Ebs":{"DeleteOnTermination":false}}]'
+```
+
+**誤ると**: CLI で起動時に付けたデータボリュームは既定で削除されるので、終了と一緒にデータが消えます。逆に Auto Scaling で残す設定にすると、インスタンスが入れ替わるたびに使わないボリュームが増え、100 GiB ずつ課金が続きます。
 
 ## 既定値と上限のまとめ {#numbers}
 

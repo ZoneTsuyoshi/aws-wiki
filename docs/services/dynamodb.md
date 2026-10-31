@@ -4,6 +4,8 @@
 
 フルマネージドのキーバリュー型 NoSQL データベースです。アクセスパターンが決まっていて、規模が変わっても一定の低レイテンシで読み書きしたいときに使います。
 
+**提供単位**: テーブルはリージョン単位で VPC の外にあり、AZ は選びません。VPC からはゲートウェイエンドポイントか NAT 経由で呼びます([リソースの提供単位](resource-scope.md#scope-regional-outside))。
+
 [![DynamoDBの読み書きと周辺機能](../assets/diagrams/dynamodb-read-write.png)](../assets/diagrams/dynamodb-read-write.png)
 
 ## キーの設計 {#keys}
@@ -17,6 +19,14 @@
 
 キー属性に使える型は文字列 (S)、数値 (N)、バイナリ (B) だけです。サイズ上限はパーティションキーが 2,048 バイト、ソートキーが 1,024 バイトです。
 
+**例**:
+
+- **シンプル**: セッションを `sessionId` だけで引くなら、`GetItem` で 1 件を取るだけなのでパーティションキーのみで足ります。
+- **複合**: 顧客の注文を期間で引くなら、`customerId` と `orderedAt` にします。`customerId = C-42 AND orderedAt BETWEEN 2026-10-01 AND 2026-10-31` のように 1 回の `Query` で読めます。
+- **長さ**: 3,000 バイトの URL をそのままパーティションキーにすると、2,048 バイトを超えて `ValidationException` になります。SHA-256 の 16 進表記(64 文字)をキーにして、URL は別の属性に入れます。
+
+**誤ると**: シンプルなキーで作った後に「顧客ごとの一覧」が必要になっても、キーは変更できません。GSI を足すか、新しいテーブルへ移行します。
+
 ### 高カーディナリティのパーティションキー {#high-cardinality}
 
 パーティションキーの値はハッシュされ、データの配置先が決まります。1 パーティションの上限は 1 秒あたり 3,000 読み込みユニットと 1,000 書き込みユニットです。テーブル全体に余裕があっても、特定のキーにアクセスが集中するとスロットリングが起きます。
@@ -29,6 +39,20 @@
 | `date#3`(サフィックスで分散) | `date` | 当日分にだけ書き込みが集まるホットキーになる |
 
 時系列データのように偏りを避けられない場合は、キーに乱数や計算したサフィックスを付けて分散させます。これを書き込みシャーディングと呼びます。
+
+**計算の例**: 1 KB 以下のイベントを毎秒 5,000 件書き、キーを `2026-10-31` だけにすると、1 パーティションの上限 1,000 WCU の 5 倍が集中します。サフィックスを 0〜9 の 10 種類にすると、5,000 ÷ 10 で 1 キーあたり 500 WCU に収まります。
+
+```python
+import zlib
+
+# 同じ order_id は常に同じサフィックスになるので、後から 1 件を引ける
+suffix = zlib.crc32(order_id.encode()) % 10
+item = {"PK": f"2026-10-31#{suffix}", "SK": order_id}
+```
+
+**代償**: その日の全件を読むには、`#0` から `#9` まで 10 回 `Query` します。
+
+**誤ると**: テーブル全体の `ConsumedWriteCapacityUnits` には余裕があるのに、スロットリングが続きます。`status` のように値が 3 種類のキーでは、容量を増やしても解消しません。
 
 ### 属性とデータ型 {#attributes}
 
@@ -49,6 +73,13 @@
 | 空の値 | 空の String と Binary はキー以外なら可。空のセットは不可。空の List と Map は可 |
 | セット | 要素は同じ型で一意。順序は保たれない |
 
+**例**:
+
+- **Number の精度**: 38 桁の整数は保存できますが、39 桁は例外になります。40 桁の識別子は String で持ちます。
+- **ネスト**: `order.items[0].options.color` は 4 階層です。33 階層のドキュメントは書き込めません。
+- **空の値**: `{"memo": ""}` と `{"tags": []}` は保存できます。`{"colors": set()}` のような空のセットは例外になり、キー属性を空文字列にしても例外になります。
+- **セット**: `{"red", "red"}` は重複で拒否されます。`{"red", 1}` のように型を混ぜることもできません。順序を残したいなら List を使います。
+
 ### 項目サイズの数え方 {#item-size}
 
 項目のサイズは、属性名と値の長さの合計です。1 KB は 1,024 バイトで数えます。
@@ -64,6 +95,14 @@
 
 **例**: `customerEmailAddressVerified` という 28 バイトの属性名を `cev` に変えると、1 項目あたり 25 バイト減ります。1,010 バイトの項目に 28 バイトの属性名の Boolean を足すと 1,039 バイトになり、1 回の書き込みは 1 WCU から 2 WCU に増えます。
 
+**計算の例**: `{"orderId": "A-1001", "total": 1980, "paid": true}` は次の合計で約 26 バイトです。
+
+| 属性 | 計算 | バイト |
+| --- | --- | --- |
+| `orderId` | 属性名 7 + 値 6 | 13 |
+| `total` | 属性名 5 + 有効桁 3 桁(末尾の 0 は数えない)で 2 + 1 | 8 |
+| `paid` | 属性名 4 + 1 | 5 |
+
 **落とし穴**: 属性名はすべての項目で繰り返し保存され、400 KB の上限にも数えられます。上限を超える書き込みは拒否されます。大きなデータは S3 に置き、項目にはキーだけを持たせます。
 
 ### 単一テーブル設計の基本 {#single-table}
@@ -73,6 +112,18 @@
 - `PK` と `SK` のような汎用名のキーを使い、`USER#42`、`ORDER#2026-10-31` のような接頭辞で種類を区別します。
 - 先にアクセスパターンを洗い出し、それに合わせてキーと GSI を決めます。
 - 結合がないため、まとめて読みたいデータは同じパーティションキーに置きます。
+
+**例**: ユーザーと注文を同じテーブルに入れます。
+
+| `PK` | `SK` | 内容 |
+| --- | --- | --- |
+| `USER#42` | `PROFILE` | 氏名、メール |
+| `USER#42` | `ORDER#2026-10-30#A-1001` | 注文 1 |
+| `USER#42` | `ORDER#2026-10-31#A-1002` | 注文 2 |
+
+`PK = USER#42` だけで `Query` すると、プロフィールと注文が 1 回で返ります。`begins_with(SK, "ORDER#")` を足すと注文だけになり、`ScanIndexForward=False` で新しい順に並びます。
+
+**誤ると**: 接頭辞を付けずに `SK` へ日付だけを入れると、プロフィールと注文をキーで区別できず、`FilterExpression` に頼ることになります。読んだ分の RCU は減りません。
 
 ## 読み取りの整合性 {#read-consistency}
 
@@ -92,6 +143,19 @@
 `GetItem`、`Query`、`Scan` に指定します。デフォルトは `false`(結果整合性)です。`BatchGetItem` はテーブルごとに指定します。
 
 **例**: 注文を確定した直後に、同じ人が画面で注文を読むなら `ConsistentRead=True` にします。4 KB 以下の項目を毎秒 100 件読むと、消費は 50 RCU から 100 RCU に倍増します。必要な画面だけに絞ります。
+
+**3 つの読み方の比較**: 4 KB 以下の項目を 10 件読むと、結果整合性は 5 RCU、強力な整合性は 10 RCU、`TransactGetItems` は 20 RCU です。
+
+`BatchGetItem` では、テーブルごとに指定します。
+
+```python
+client.batch_get_item(RequestItems={
+    "Orders": {"Keys": keys, "ConsistentRead": True},
+    "Products": {"Keys": product_keys},  # こちらは結果整合性のまま
+})
+```
+
+**誤ると**: 既定のまま「書いた直後の読み取り」をすると、更新前の値を画面に出すことがあります。逆に全画面で `ConsistentRead=True` にすると、読み取りの費用が 2 倍になります。
 
 **落とし穴**: 存在しない項目を読んでも RCU は消費されます。
 
@@ -146,6 +210,17 @@ resp = table.query(
 
 `Limit=10` はフィルター前の 10 件を意味します。その中に配送済みが 3 件しかなければ、`Items` は 3 件で、`LastEvaluatedKey` が付いて返ります。10 件そろうまでページを読み進めるか、配送済みだけをスパースインデックスに入れます。
 
+パラメータごとの値の例です。
+
+- **`KeyConditionExpression`**: `PK = :u AND SK BETWEEN :from AND :to` に `:from=ORDER#2026-10-01`、`:to=ORDER#2026-10-31` を渡します。**誤ると**: `status = :s` のようにキー以外を書くと `ValidationException` です。
+- **`FilterExpression`**: 1 KB の項目を 100 件読んで 3 件に絞っても、100 KB ÷ 4 KB × 0.5 で 12.5 RCU のままです。
+- **`ProjectionExpression`**: `"orderId, #t"`(`total` は予約語なので `#t` に置き換える)で 2 属性に絞っても、30 KB の項目を強力な整合性で読めば 32 KB ÷ 4 KB で 8 RCU です。減るのは転送量だけです。
+- **`ExclusiveStartKey`**: 応答の `{"PK": "USER#42", "SK": "ORDER#2026-09-30#A-0900"}` をそのまま渡します。**誤ると**: 値を組み立て間違えると、続きと違う位置から読みます。
+- **`ScanIndexForward`**: 省略すると古い順なので、`Limit=1` では最古の 1 件が返ります。最新の 1 件には `False` を指定します。
+- **`ReturnConsumedCapacity`**: `TOTAL` なら応答に `{"TableName": "Orders", "CapacityUnits": 12.5}` が付きます。`INDEXES` なら GSI や LSI ごとの内訳も付きます。既定の `NONE` では何も付きません。
+- **`Select`**: `COUNT` で 1 KB の項目 200 件を数えると、200 KB ÷ 4 KB × 0.5 で 25 RCU です。項目を返さなくても同じ消費です。**誤ると**: `ALL_ATTRIBUTES` と `ProjectionExpression` を併用すると `ValidationException` です。
+- **`IndexName`**: `IndexName="status-index"` と `Key("status").eq("PENDING")` を組み合わせます。**誤ると**: テーブルの `PK` で条件を書くと、インデックスのキーと合わず `ValidationException` です。
+
 ### 並列スキャン {#parallel-scan}
 
 通常の Scan は順番に処理するため、大きなテーブルでは時間がかかります。並列スキャンは複数のワーカーがそれぞれ次のパラメータを指定して Scan します。
@@ -168,6 +243,12 @@ resp = table.scan(Segment=worker_no, TotalSegments=4, Limit=100)
 | `TotalSegments` | 1〜1,000,000 | 1 なら順次スキャンと同じ |
 | `Segment` | 0 以上、`TotalSegments` 未満 | 片方だけの指定はできない |
 
+**例**: 4 つのワーカーなら `TotalSegments=4` で、`Segment` は 0、1、2、3 です。
+
+**計算の例**: 1 回の Scan が上限の 1 MB を読むと、1,024 KB ÷ 4 KB × 0.5 で 128 RCU です。4 ワーカーが同時に読めば 512 RCU になり、500 RCU のテーブルでは超えます。1 KB の項目で `Limit=100` にすると、1 回は 100 KB ÷ 4 KB × 0.5 で 12.5 RCU に下がります。
+
+**誤ると**: `Segment=4` と `TotalSegments=4` の組み合わせは `ValidationException` です。番号は 3 までです。
+
 **Scan の RCU の例**: 1 KB の項目を 1,000 件評価する場合、合計 1,000 KB を 4 KB で割って 250 とし、結果整合性なので半分の 125 RCU です。`FilterExpression` で 1 件に絞っても 125 RCU のままです。Scan も強力な整合性を指定できます(GSI を除く)。その場合は 250 RCU です。
 
 ### 射影式とフィルター式 {#expressions}
@@ -183,6 +264,17 @@ resp = table.scan(Segment=worker_no, TotalSegments=4, Limit=100)
     1 MB の上限と `Limit` は、フィルターを適用する前の読み取り量に対して働きます。そのため `FilterExpression` を付けると、結果が 0 件なのに `LastEvaluatedKey` が返るページが発生します。
 
 予約語と同じ名前の属性は `ExpressionAttributeNames` で置き換えます(`#s` に `status` を割り当てるなど)。値は `ExpressionAttributeValues` で渡します(`:v` など)。
+
+```python
+table.query(
+    KeyConditionExpression="PK = :u",
+    FilterExpression="#s = :v",
+    ExpressionAttributeNames={"#s": "status"},
+    ExpressionAttributeValues={":u": "USER#42", ":v": "SHIPPED"},
+)
+```
+
+**誤ると**: `FilterExpression="status = :v"` と直接書くと、`status` が予約語なので `ValidationException` です。`FilterExpression` にキー属性を書いた場合も同じです。キーの絞り込みは `KeyConditionExpression` に移します。
 
 ### ページネーション {#pagination}
 
@@ -207,6 +299,12 @@ while True:
 - 最後のページかどうかの判定は、`LastEvaluatedKey` が無いことだけで行います。
 - `Count` はフィルター後の件数、`ScannedCount` はフィルター前に評価した件数です。差が大きいなら非効率なアクセスです。
 - `ReturnConsumedCapacity` を `TOTAL` または `INDEXES` にすると、消費したキャパシティを確認できます。
+
+**例**: 1 人の注文の合計が 3.5 MB なら、1 MB ずつ 3 ページと 0.5 MB の 1 ページで、4 回の `Query` になります。
+
+**例**: `Count=3`、`ScannedCount=1000` なら、1,000 件読んで 3 件しか使っていません。GSI やキー設計を見直します。
+
+**誤ると**: `Items` が 0 件になった時点で打ち切ると、後ろのページにある一致を取りこぼします。1 ページ目の `Count` を総数として表示すると、件数も少なく出ます。
 
 ## LSI と GSI {#indexes}
 
@@ -241,6 +339,17 @@ flowchart TD
 - **GSI のキーは一意でなくて構いません**: 同じキー値を持つ項目が複数入ります。
 - **複数属性キー**: GSI はパーティションキーとソートキーをそれぞれ最大 4 属性で構成できます。文字列を連結した合成キーを作らずに済みます。
 
+**例**:
+
+- **LSI**: `customerId` が同じ注文を、`orderedAt` に加えて `total` の順でも読みたいなら、テーブル作成時に `total` をソートキーとする LSI を定義します。
+- **GSI**: `sku` から注文を引くなら、パーティションキーがテーブルと違うので GSI です。
+- **LSI の 10 GB**: 1 人の顧客の項目とその LSI の合計が 10 GB に達すると、その顧客への書き込みだけが `ItemCollectionSizeLimitExceededException` になります。他の顧客は書けます。
+- **複数属性キー**: `tenantId` と `region` をパーティションキーに、`status` と `createdAt` をソートキーにすれば、`tenantId#region` のような連結が不要です。
+
+**スパースインデックスの計算**: 1 KB の注文 100 万件のうち未処理が 2,000 件だとします。Scan で探すと、1,000,000 KB ÷ 4 KB × 0.5 で 125,000 RCU です。`pendingAt` のスパース GSI なら、2,000 KB ÷ 4 KB × 0.5 で 250 RCU です。
+
+**誤ると**: 処理が終わっても `pendingAt` を `REMOVE` しないと、インデックスに残り続けて処理済みも検索されます。
+
 ### 射影とフェッチ {#projection}
 
 `ProjectionType` で、インデックスにコピーする属性を決めます。
@@ -262,6 +371,21 @@ flowchart TD
 
 **例**: 注文の一覧画面で `orderedAt` と `total` だけを表示するなら、GSI を `INCLUDE` にして `NonKeyAttributes=["total"]` とします。後から `address` も必要になると、射影は作成後に変更できないので、GSI を作り直します。
 
+**計算の例**: 8 KB の項目を毎秒 100 件追加します。`ALL` なら GSI に 8 KB ずつ書くので 8 WCU × 100 で 800 WCU です。200 バイトだけ `INCLUDE` すれば 1 WCU × 100 で 100 WCU です。
+
+```yaml
+GlobalSecondaryIndexes:
+  - IndexName: by-orderedAt
+    KeySchema:
+      - {AttributeName: customerId, KeyType: HASH}
+      - {AttributeName: orderedAt, KeyType: RANGE}
+    Projection:
+      ProjectionType: INCLUDE
+      NonKeyAttributes: [total]
+```
+
+**誤ると**: LSI を `KEYS_ONLY` にして全属性を読む画面に使うと、毎回フェッチが起きます。4 KB の項目を強力な整合性で 10 件フェッチすれば、インデックスの分に加えて約 10 RCU 増えます。
+
 ### GSI のキャパシティとバックプレッシャー {#gsi-backpressure}
 
 GSI はテーブルとは別のキャパシティを持ちます。テーブルへの書き込みは非同期で GSI に反映されますが、GSI の書き込み容量が足りないと **テーブルの書き込みまで抑制** されます。これをバックプレッシャーと呼びます。
@@ -279,12 +403,16 @@ GSI への書き込み回数は、更新の内容で変わります。
 
 GSI の消費は、項目全体ではなくインデックスの項目サイズで計算します。8 KB の項目でも、GSI に 500 バイトだけ射影していれば GSI への書き込みは 1 WCU です。
 
+**計算の例**: 毎秒 500 件の更新のうち、400 件が射影された属性の変更、100 件がインデックスのキー値の変更だとします。射影は 1 KB 以下です。GSI の消費は 400 × 1 + 100 × 2 で 600 WCU です。テーブルと同じ 500 WCU にしても足りません。
+
 既存のテーブルに GSI を追加すると、状態は `CREATING` になり、既存データをコピーするバックフィルが行われます。この間はクエリできません。
 
 - 進捗は CloudWatch の `OnlineIndexPercentageProgress` で確認します。
 - ベーステーブルの `WriteThrottleEvents` と `ThrottledRequests` を監視します。
 - 作成中の GSI には Auto Scaling が効きません。`ACTIVE` になるまでは手動で容量を管理します。
 - キーの型が合わない既存項目はインデックスに入りません。新しい書き込みで型が合わないと `ValidationException` になります。
+
+**例**: `price` を Number のキーとして GSI を作ると、`price` を文字列 `"1980"` で持つ既存項目はインデックスに入りません。クエリの件数がテーブルより少なくなります。同じ形で新しく書くと、書き込み自体が失敗します。
 
 LSI はテーブルのキャパシティを消費するので、独自の設定はありません。`ReturnItemCollectionMetrics=SIZE` を指定すると、項目コレクションの推定サイズが応答に含まれ、10 GB の上限に近づいていないか確認できます。
 
@@ -299,6 +427,10 @@ LSI はテーブルのキャパシティを消費するので、独自の設定�
 | 上限 | テーブル単位のデフォルトクォータと任意の最大スループット | 設定値とアカウントのクォータ |
 
 テーブルと GSI の 1 テーブルあたりのデフォルトクォータは、どちらのモードでも読み書き各 40,000 ユニットです。引き上げを申請できます。
+
+**例**: 開店直後のセールで負荷が読めないなら、オンデマンドにします。日中ずっと毎秒 800 件前後で安定しているなら、プロビジョンドと Auto Scaling を比べます。
+
+**誤ると**: 夜間に 0 件、昼に数千件という負荷を固定のプロビジョンドにすると、夜は未使用分に課金され、昼はスロットリングします。
 
 ### オンデマンドの設定と動作 {#on-demand}
 
@@ -315,6 +447,15 @@ LSI はテーブルのキャパシティを消費するので、独自の設定�
 **例**: 過去のピークが毎秒 50,000 読み取りなら、100,000 までは瞬時に対応できます。セールで 300,000 に増えるなら、30 分以上かけて増やすか事前にウォームアップします。
 
 上限を毎秒 1,000 WRU に設定すると、超えた分は `ThrottlingException` になり、`ThrottlingReason` は `IndexWriteMaxOnDemandThroughputExceeded` のような形式になります。費用の暴走を防げますが、低すぎると正常な負荷でも失敗します。
+
+```bash
+aws dynamodb update-table --table-name Orders \
+  --on-demand-throughput MaxReadRequestUnits=10000,MaxWriteRequestUnits=1000
+```
+
+**例**: 新しいテーブルに毎秒 10,000 件を最初から書くと、初期性能の 4,000 件を超えるのでスロットリングすることがあります。移行のように開始時から大量に書くなら、徐々に増やします。
+
+**例**: プロビジョンドからオンデマンドへの切り替えは、24 時間で 4 回までです。検証で 5 回目を試すと拒否されます。
 
 !!! note "切り替え回数は緩和された"
     古い資料には切り替えは 24 時間に 1 回とあります。現在はプロビジョンドからオンデマンドへの切り替えは 24 時間で 4 回まで、逆方向は制限なしです。
@@ -351,6 +492,15 @@ aws application-autoscaling put-scaling-policy \
 ```
 
 **例**: 確保 200 WCU で消費が 150 WCU だと使用率は 75% です。目標の 70% を超えているので、150 ÷ 0.7 で約 215 WCU に増やします。
+
+設定ごとの値の例です。
+
+- **`--max-capacity`**: 上限 1,000 で消費が 900 WCU になると、900 ÷ 0.7 で約 1,286 WCU が必要ですが、1,000 で止まります。使用率は 90% になり、急増に耐える余裕がなくなります。
+- **`--min-capacity`**: 下限 100 なら、夜間に消費が 5 WCU でも 100 WCU 分の課金が続きます。
+- **`TargetValue`**: 20 は余裕が大きく費用が高めです。消費 100 WCU なら 500 WCU を確保します。90 なら約 112 WCU ですが、急増の吸収が難しくなります。
+- **減らす回数**: 1 日の始めの 4 回と、残り 23 時間に 1 回ずつで、計 27 回です。4 回分を使い切ると、次は 1 時間待ちます。
+- **バースト**: 確保 100 RCU で 5 分間まったく読まなければ、100 × 300 で最大 30,000 RCU 分が残ります。これを前提に容量を設計してはいけません。
+- **アカウント上限**: 既存の合計が読み取り 50,000 で上限が 80,000 なら、40,000 の新しいテーブルは合計 90,000 になるので作れません。先にクォータを引き上げます。
 
 **落とし穴**:
 
@@ -391,6 +541,8 @@ aws application-autoscaling put-scaling-policy \
 
 GSI への反映はインデックスの WCU を別途消費します。インデックスのキー値を A から B に変える更新は、削除と追加の 2 回の書き込みになります。
 
+**切り上げの差の例**: 1.5 KB の項目 10 件を強力な整合性で読みます。`Query` なら合計 15 KB を 16 KB に切り上げて 4 RCU です。`BatchGetItem` なら 1 件ごとに 4 KB へ切り上げて 10 RCU です。同じパーティションキーの項目なら `Query` が安く済みます。
+
 3 つの読み方を同じ条件で比べた計算と、複合の例です。
 
 | 条件 | 結果整合性 | 強力な整合性 | トランザクション |
@@ -421,6 +573,10 @@ GSI への反映はインデックスの WCU を別途消費します。イン�
 
 例外の `ThrottlingReason` フィールドで理由と対象リソースを確認できます。AWS SDK はこの種のエラーを自動で再試行しますが、応答しきれないほどの負荷なら、再試行の前にリクエスト頻度を下げます。再試行の設定は [SDK とレジリエンス](sdk-resilience.md) を参照してください。
 
+`ThrottlingReason` は、リソースの種類、操作、上限の種類をつなげた形式です。
+
+**例**: `TableReadKeyRangeThroughputExceeded` は、テーブルの読み取りが特定のキー範囲の上限を超えたという意味です。テーブルの容量を増やす前に、ホットキーを探します。`IndexWriteMaxOnDemandThroughputExceeded` なら、GSI の書き込みがオンデマンドの最大値を超えたので、`MaxWriteRequestUnits` を見直します。
+
 ### エラー名の一覧 {#error-names}
 
 | エラー | 状態 | 再試行 | 意味と対処 |
@@ -438,6 +594,12 @@ GSI への反映はインデックスの WCU を別途消費します。イン�
 | `ReplicatedWriteConflictException` | 400 | 可 | MRSC で同じ項目を別リージョンが更新中 |
 | `InternalServerError` | 500 | 可 | 書き込みは成否が不明。単一項目の書き込みは冪等にしてから再試行する |
 | `ServiceUnavailable` | 503 | 可 | 一時的な障害 |
+
+**例**:
+
+- **`ResourceNotFoundException`**: `CreateTable` の直後に `PutItem` すると、テーブルがまだ `CREATING` で失敗します。boto3 なら `client.get_waiter("table_exists").wait(TableName="Orders")` で待ちます。
+- **`LimitExceededException`**: デプロイで 600 個のテーブルを同時に作ると、500 個の上限を超えます。順に作ります。
+- **`InternalServerError`**: `UpdateItem` で 500 が返ると、加算が反映されたか分かりません。条件式やバージョンを付けて、再試行しても二重にならないようにします。
 
 ## 条件付き書き込み {#conditional-writes}
 
@@ -475,17 +637,29 @@ except ClientError as e:
 | --- | --- | --- | --- |
 | `SET` | 属性を追加または上書き | `SET price = :p` | 加算、`if_not_exists`、`list_append` も使える |
 | `REMOVE` | 属性を削除 | `REMOVE tags[1]` | リストの要素も消せる |
-| `ADD` | 数値を加算、セットに追加 | `ADD views :one` | Number とセットのみ。属性がなければ作る |
+| `ADD` | 数値を加算、セットに追加 | `ADD viewCount :one` | Number とセットのみ。属性がなければ作る |
 | `DELETE` | セットから要素を削除 | `DELETE colors :c` | セット専用 |
 
 各句は 1 回ずつ使えます。順序は自由です。
 
 | 関数 | 用途 | 例 |
 | --- | --- | --- |
-| `if_not_exists(path, value)` | 属性がなければ既定値を使う | `SET views = if_not_exists(views, :zero) + :one` |
+| `if_not_exists(path, value)` | 属性がなければ既定値を使う | `SET viewCount = if_not_exists(viewCount, :zero) + :one` |
 | `list_append(a, b)` | リストを連結 | `SET hist = list_append(hist, :new)` で末尾に追加 |
 
-**落とし穴**: `SET views = views + :one` は、`views` がない項目では失敗します。初回も考えるなら `if_not_exists` を付けるか `ADD` を使います。予約語と同じ属性名は `ExpressionAttributeNames` で置き換えないと `ValidationException` になります。
+**例**: 更新前が `{"viewCount": 5, "price": 100, "tags": {"a", "b"}, "memo": "x"}` の項目に、次の式を実行します。
+
+```text
+SET price = :p  ADD viewCount :one, tags :new  REMOVE memo
+```
+
+`:p=120`、`:one=1`、`:new={"c"}` なら、結果は `{"viewCount": 6, "price": 120, "tags": {"a", "b", "c"}}` です。
+
+**例**: `SET a = :x, b = a` の `b` には、更新前の `a` が入ります。同じ式の中の動作は、左から順に適用されません。
+
+**落とし穴**: `SET viewCount = viewCount + :one` は、`viewCount` がない項目では失敗します。初回も考えるなら `if_not_exists` を付けるか `ADD` を使います。予約語と同じ属性名は `ExpressionAttributeNames` で置き換えないと `ValidationException` になります。
+
+**誤ると**: `SET a = :x SET b = :y` のように `SET` を 2 回書くと `ValidationException` です。`SET a = :x, b = :y` とカンマで続けます。
 
 ### ConditionExpression {#condition-expression}
 
@@ -502,6 +676,14 @@ except ClientError as e:
 
 **例**: `attribute_not_exists(PK)` を付けた `PutItem` は、同じキーの項目があるときに `ConditionalCheckFailedException` になります。条件がなければ既存の項目を丸ごと上書きします。`PutItem` は部分更新ではないので、一部の属性だけ変えたいなら `UpdateItem` を使います。
 
+条件の書き方の例です。
+
+- **比較と `BETWEEN`**: `qty >= :n`(`:n=1`)で在庫切れの注文を防ぎます。`price BETWEEN :a AND :b` で価格の範囲を確かめます。
+- **`IN`**: `#s IN (:new, :paid)` で、発送済みの注文の取り消しを防ぎます。
+- **`attribute_type`**: `attribute_type(price, :t)` に `:t=N` を渡すと、`price` が Number のときだけ更新します。
+- **`contains`**: `NOT contains(tags, :t)` で、同じタグの重複登録を防ぎます。
+- **`size`**: `size(#i) < :max` に `:max=10` を渡すと(`items` は予約語なので `#i` に置き換える)、10 個目までしか追加できないカートになります。
+
 ### ReturnValues {#return-values}
 
 | API | 使える値 | 補足 |
@@ -513,6 +695,16 @@ except ClientError as e:
 
 `ReturnValuesOnConditionCheckFailure=ALL_OLD` を指定すると、条件不成立のときに現在の項目を例外に含めて返します。読み直しの RCU を節約できます。
 
+**値ごとの例**: `{"id": "c1", "n": 5, "name": "a"}` に `ADD n :one` を実行します。
+
+| 値 | 返る `Attributes` |
+| --- | --- |
+| `NONE` | なし |
+| `ALL_OLD` | `{"id": "c1", "n": 5, "name": "a"}` |
+| `UPDATED_OLD` | `{"n": 5}` |
+| `ALL_NEW` | `{"id": "c1", "n": 6, "name": "a"}` |
+| `UPDATED_NEW` | `{"n": 6}` |
+
 ### アトミックカウンター {#atomic-counter}
 
 `UpdateItem` の `SET n = n + :inc` や `ADD n :inc` は、他の書き込みと干渉せずに値を増やします。読み取りは不要です。
@@ -523,6 +715,8 @@ except ClientError as e:
 | --- | --- |
 | ページビュー、いいね数(多少の誤差を許せる) | アトミックカウンター |
 | 残高、在庫(誤差を許せない) | 条件付き書き込み、トランザクション |
+
+**例**: ページビュー 100 万回のうち 0.01% が再試行で二重になっても、1,000,000 × 0.0001 で 100 回の誤差です。集計には許容できます。同じ割合で残高が二重に増えるのは許容できません。
 
 ### 楽観的ロック {#optimistic-locking}
 
@@ -573,6 +767,13 @@ client.transact_write_items(
 - **キャパシティ**: 条件不成立でキャンセルされても消費します。
 - **制約**: 同じ項目を 1 つのトランザクションで 2 回指定できません。インデックスを対象にできません。Streams や GSI への反映は順次行われるため、消費側でアトミック性を前提にしないでください。
 
+**例**:
+
+- **合計サイズ**: 50 KB の項目を 100 件まとめると 5 MB で、4 MB の上限を超えて拒否されます。80 件(4 MB)以下に分けます。
+- **`CancellationReasons`**: 上のコードで在庫が足りないと、1 番目が `ConditionalCheckFailed`、2 番目が `None` です。順番で、どの動作が原因か分かります。
+- **`ConditionCheck`**: 会員が有効なときだけ注文するなら、書き換えない会員の項目に `ConditionCheck` を入れます。同じ会員の項目に `Update` も足すと、同じ項目の 2 回指定になり拒否されます。
+- **消費**: 1 KB 以下の 3 項目を書くトランザクションは、3 × 2 で 6 WCU です。条件不成立でも消費します。
+
 ### ClientRequestToken {#client-request-token}
 
 長さは 1〜36 文字です。**例**: `ClientRequestToken=order_id` で送信し、ネットワークエラーで 3 分後に同じ内容を再送しても、書き込みは 1 回だけです。10 分を過ぎると新しいリクエストとして扱われます。
@@ -595,6 +796,8 @@ client.transact_write_items(
 | トランザクションと `BatchWriteItem` の全体 | 直列化されない |
 
 複数の項目を一貫した状態で読みたいなら、`BatchGetItem` ではなく `TransactGetItems` を使います。
+
+**例**: 口座 A から B へ 1,000 円を移すトランザクションの実行中に `BatchGetItem` で両方を読むと、A は移動後、B は移動前の値が返ることがあります。コミット済みの値ですが、合計が 1,000 円ずれて見えます。`TransactGetItems` なら起きません。
 
 ## バッチ操作 {#batch}
 
@@ -632,6 +835,12 @@ boto3 の `table.batch_writer()` は分割と未処理分の再送を自動で�
 
 バッチの呼び出しは原子的ではありません。呼び出しが成功しても、途中までしか処理されていない場合があります。
 
+**例**: 60 件を書くなら、25 件、25 件、10 件の 3 回に分けます。30 件を 1 回で送ると、呼び出し全体が拒否されます。
+
+**例**: 25 件のうち 5 件が `UnprocessedItems` に残ったら、その 5 件だけを再送します。再送しないと、エラーなしで 5 件が抜けます。
+
+**費用の例**: 500 バイトの項目 25 件は、1 WCU × 25 で 25 WCU です。`PutItem` を 25 回呼ぶのと同じで、まとめても WCU は減りません。減るのは通信の往復です。
+
 ## TTL {#ttl}
 
 項目ごとの期限切れ時刻を指定すると、DynamoDB が自動で削除します。WCU を消費しません。
@@ -667,7 +876,11 @@ resp = table.query(
 )
 ```
 
+**値の例**: 2026 年 10 月 31 日 0 時(UTC)は `1793404800` です。30 日後に期限を切るなら、30 × 86,400 = 2,592,000 を足して `1795996800` にします。
+
 **落とし穴**: `Date.now()` のミリ秒をそのまま入れると、必要な秒単位の形式にならず、期待した時刻に削除されません。`2026-10-31T00:00:00Z` のような文字列は無視されます。
+
+**誤ると**: `1793404800000` のようなミリ秒は、秒として読むと遠い未来なので期限が来ません。項目が消えず、ストレージの費用が増え続けます。
 
 ## DynamoDB Streams {#streams}
 
@@ -691,6 +904,15 @@ resp = table.query(
 | `NEW_IMAGE` | 変更後の項目全体 |
 | `OLD_IMAGE` | 変更前の項目全体 |
 | `NEW_AND_OLD_IMAGES` | 変更前後の両方 |
+
+**例**:
+
+- **`KEYS_ONLY`**: 「変わった ID だけ」を別の処理へ渡し、受け手が最新の値を読み直す場合です。レコードが小さく済みます。
+- **`NEW_IMAGE`**: 検索用の OpenSearch へ最新の状態を同期します。
+- **`OLD_IMAGE`**: 削除された項目を監査用に S3 へ残します。削除のレコードには変更後の項目がありません。
+- **`NEW_AND_OLD_IMAGES`**: 価格が 1,000 円から 800 円に下がったときだけ通知します。
+
+**誤ると**: 1 つのシャードを 3 つの Lambda 関数で読むと、2 プロセスまでの目安を超えてスロットリングすることがあります。1 つの関数から EventBridge や SNS へ広げます。
 
 データを変更しない `PutItem` や `UpdateItem` はレコードを作りません。Lambda はイベントソースマッピングで読み取り、シャードの親子関係も順序も処理してくれます。詳しくは [Lambda](lambda.md) と [ストリーミング](streaming.md) を参照してください。
 
@@ -720,6 +942,8 @@ aws dynamodb update-table --table-name Orders \
 [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate }
 
 DynamoDB 専用のインメモリキャッシュで、VPC 内で動きます。アプリケーションは DAX クライアントに切り替えるだけで、ほぼ同じ API で使えます。
+
+**提供単位**: クラスターはリージョンの VPC の中に作り、ノードはサブネットグループの AZ に置きます。AZ の障害に備えて自分で複数の AZ に分けます([リソースの提供単位](resource-scope.md#scope-zonal))。
 
 | キャッシュ | 保存するもの | 更新 |
 | --- | --- | --- |
@@ -782,11 +1006,23 @@ aws dax update-parameter-group --parameter-group-name custom-ttl \
 | 過負荷 | `ThrottlingException` を返す。`ThrottledRequestCount` を監視し、ノードを増やす |
 | 管理系 API | `CreateTable` などは認識しない。DynamoDB に直接送る |
 
+設定ごとの値の例です。
+
+- **`record-ttl-millis`**: 600,000 なら 10 分です。商品名のように変わらない項目に向きます。**誤ると**: 別のアプリが DynamoDB へ直接書くと、最大 10 分は古い値を返します。
+- **`query-ttl-millis`**: 0 にすると `Query` と `Scan` の結果をキャッシュしません。**誤ると**: 3,600,000(1 時間)にすると、新しい注文が一覧に最大 1 時間出ません。
+- **ノード数**: 3 ならプライマリ 1 とレプリカ 2 です。`aws dax increase-replication-factor --cluster-name app --new-replication-factor 5` で 5 ノードに増やします。新しいノードはピアからキャッシュを同期するので、ピークの前に増やします。
+- **ノードタイプ**: 1 つのクラスターのノードは同じタイプです。大きくするときは、新しいクラスターを作って切り替えます。
+- **保存時と転送中の暗号化**: 後から付けられないので、作成時に決めます。**誤ると**: 既存のクラスターで `daxs://` に変えても接続できず、作り直しになります。
+- **ポート 8111**: **誤ると**: アプリのセキュリティグループから許可していないと、DAX クライアントの接続がタイムアウトします。
+- **ネガティブキャッシュ**: `GetItem` で「なし」と返った項目を、DynamoDB へ直接追加しても、TTL が切れるまで「なし」と返ります。
+
 ElastiCache や CloudFront との使い分けは [データベースとキャッシュ](databases.md) にまとめています。
 
 ## グローバルテーブル {#global-tables}
 
 複数リージョンにレプリカを持つマルチアクティブのテーブルです。どのレプリカにも読み書きできます。
+
+**提供単位**: グローバルテーブルは、各リージョンのテーブルを同期する機能です。レプリカはそれぞれリージョン単位で、VPC の外にあります([リソースの提供単位](resource-scope.md#scope-regional-outside))。
 
 | モード | 複製 | 整合性 | 補足 |
 | --- | --- | --- | --- |
@@ -805,6 +1041,12 @@ ElastiCache や CloudFront との使い分けは [データベースとキャッ
 
 **例**: 東京とバージニアで同じ項目をほぼ同時に更新すると、MREC では最新のタイムスタンプの更新だけが残り、もう片方は消えます。在庫の増減のように両方を反映したいなら、書き込むリージョンを 1 つに決めるか、MRSC を検討します。
 
+**例**: 在庫 10 の項目を、東京が 9 に、バージニアが 8 に `SET` します。後から書いた 8 だけが残り、1 個分の減算が消えます。MRSC なら片方が `ReplicatedWriteConflictException` になるので、読み直して再試行します。
+
+**TTL の費用の例**: 3 リージョンのテーブルで TTL が 100 万件を削除すると、他の 2 リージョンへの複製は 1,000,000 × 2 で 200 万件分の書き込みとして課金されます。
+
+**誤ると**: トランザクションで注文と在庫を同時に更新しても、別のリージョンでは片方だけ先に見えることがあります。別リージョンの読み取りで整合性を前提にしてはいけません。
+
 ## テーブルクラス {#table-classes}
 
 | 値 | 特徴 | 向く場面 |
@@ -815,6 +1057,15 @@ ElastiCache や CloudFront との使い分けは [データベースとキャッ
 性能、耐久性、API は同じで、セカンダリインデックスも同じクラスになります。変更は 30 日間に 2 回までで、バックグラウンドで行われ、その間もテーブルは使えます。
 
 **例**: ストレージ費用が、Standard でのスループット費用の 50% を超えるなら Standard-IA を検討します。過去の注文履歴やログのようなテーブルです。
+
+**判断の計算**: 架空の金額で、Standard のストレージが月 60、スループットが月 100 なら、60 ÷ 100 で 60% なので検討の対象です。ストレージが月 20 なら 20% なので Standard のままにします。
+
+```bash
+aws dynamodb update-table --table-name OrderHistory \
+  --table-class STANDARD_INFREQUENT_ACCESS
+```
+
+**誤ると**: 読み書きの多いテーブルを Standard-IA にすると、リクエストの単価が上がって総額が増えます。30 日に 2 回の制限があるので、すぐには戻せないことがあります。
 
 ## バックアップと復元 {#backup}
 
@@ -841,6 +1092,19 @@ aws dynamodb update-continuous-backups --table-name Orders \
 
 **例**: テストスクリプトが本番テーブルを 10 時 05 分に壊したら、10 時 04 分を指定して `Orders-restored` に復元します。アプリの接続先を変えるか、データを戻します。Streams や TTL は引き継がれないので、付け直さないとトリガーが動かず、期限切れの項目も消えません。
 
+```bash
+aws dynamodb restore-table-to-point-in-time \
+  --source-table-name Orders --target-table-name Orders-restored \
+  --restore-date-time 2026-10-31T10:04:00Z
+
+# スキーマ移行の前に、期限なしのバックアップを取る
+aws dynamodb create-backup --table-name Orders --backup-name before-migration
+```
+
+**例**: `RecoveryPeriodInDays=7` なら、8 日前の時点には戻せません。監査で 30 日前に戻す要件があるなら 30 以上にします。費用は変わりません。
+
+**誤ると**: `LatestRestorableDateTime` は通常、現在の約 5 分前です。10 時 06 分の時点では 10 時 04 分を指定できないことがあるので、少し待ってから復元します。
+
 ## 暗号化 {#encryption}
 
 保存データは常に暗号化されていて、無効にはできません。対象はプライマリキー、インデックス、Streams、グローバルテーブル、バックアップです。
@@ -854,6 +1118,13 @@ aws dynamodb update-continuous-backups --table-name Orders \
 キーの種類は後からでも切り替えられます。詳しくは [KMS](kms.md) を参照してください。
 
 **例**: CloudTrail で「誰がいつキーを使ったか」を監査し、キーを自分で無効化できるようにしたいなら、カスタマーマネージドキーを指定します。AWS 所有キーでは自分のアカウントの CloudTrail に使用記録が残りません。
+
+```bash
+aws dynamodb update-table --table-name Orders \
+  --sse-specification Enabled=true,SSEType=KMS,KMSMasterKeyId=alias/orders
+```
+
+**誤ると**: ソートキーに `user@example.com` のようなメールアドレスを入れると、下の注意のとおり一部が平文でメタデータに残ることがあります。ハッシュ値か内部の ID を使います。
 
 **注意**: 新しい DAX クラスターの保存時の暗号化は AWS マネージドキーを使います。ソートキーのうち範囲の境界を示す一部の値は、平文でテーブルのメタデータに保存されます。機密データをソートキーに入れないようにします。
 
@@ -882,7 +1153,7 @@ IAM ポリシーの条件キーで、項目と属性の単位までアクセス�
       "dynamodb:UpdateItem",
       "dynamodb:DeleteItem"
     ],
-    "Resource": "arn:aws:dynamodb:ap-northeast-1:123456789012:table/UserData",
+    "Resource": "arn:aws:dynamodb:ap-northeast-1:111122223333:table/UserData",
     "Condition": {
       "ForAllValues:StringEquals": {
         "dynamodb:LeadingKeys": ["${cognito-identity.amazonaws.com:sub}"]
@@ -899,6 +1170,22 @@ IAM ポリシーの条件キーで、項目と属性の単位までアクセス�
 - `dynamodb:FirstPartitionKeyValues` は `LeadingKeys` と同じ意味で使えます。複数属性のキーには `dynamodb:SecondPartitionKeyValues` なども用意されています。
 
 **例**: ID プールで認証したユーザー `us-east-1:abc` は、パーティションキーが同じ値の項目だけを読めます。別のユーザーのキーで `GetItem` すると `AccessDeniedException` です。パーティションキーに Cognito の `sub` を使わず、メールアドレスなどを使っていると、この方法では制御できません。
+
+**属性を絞る例**: `name` と `email` だけを読ませ、`salary` を隠します。条件は次のように書きます。
+
+```json
+{
+  "ForAllValues:StringEquals": {
+    "dynamodb:Attributes": ["userId", "name", "email"]
+  },
+  "StringEqualsIfExists": {
+    "dynamodb:Select": "SPECIFIC_ATTRIBUTES",
+    "dynamodb:ReturnValues": ["NONE", "UPDATED_OLD", "UPDATED_NEW"]
+  }
+}
+```
+
+**誤ると**: `dynamodb:Select` の制限がないと、`ProjectionExpression` を省略した `GetItem` で `salary` も返ります。`dynamodb:Attributes` はリクエストに書かれた属性だけを評価するからです。
 
 ## 既定値と上限のまとめ {#numbers}
 
