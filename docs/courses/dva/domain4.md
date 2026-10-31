@@ -113,6 +113,8 @@ CloudWatch のメトリクスとログから遅い処理を探します。
 
 ## 確認問題 {#self-check}
 
+まず基本を確認する問題です。本番形式の問題は[問題集](exercises/index.md)にあります（[オブザーバビリティ](exercises/observability.md)、[ネットワークと配信](exercises/networking.md)）。
+
 ??? question "問1: X-Ray で、ユーザー ID を指定してトレースを検索したいです。何に記録しますか？"
     アノテーションです。メタデータは検索に使えません。
 

@@ -31,6 +31,9 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
+      - name: Check exercises
+        run: python scripts/check_exercises.py
+
       - name: Generate diagrams
         run: for f in diagrams_src/*.py; do python "$f"; done
 

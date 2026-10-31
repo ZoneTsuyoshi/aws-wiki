@@ -45,6 +45,84 @@ flowchart TD
 | `gp2` から `gp3` | 稼働中に変更でき、GiB 単価は最大 20% 低い |
 | HDD | ブートボリュームにできない |
 
+### IOPS とスループットの設定 {#ebs-performance-settings}
+
+| タイプ | 設定できるもの | 計算の決まり |
+| --- | --- | --- |
+| `gp3` | サイズ、IOPS、スループット | IOPS はサイズ 1 GiB あたり最大 500。スループットは 1 IOPS あたり最大 0.25 MiB/s |
+| `gp2` | サイズのみ | 3 IOPS/GiB。スループットは 128〜250 MiB/s |
+| `io2` Block Express | サイズ、IOPS | IOPS はサイズ 1 GiB あたり最大 1,000。Nitro 以外では最大 32,000 IOPS |
+| `io1` | サイズ、IOPS | IOPS はサイズ 1 GiB あたり最大 50。100〜64,000 IOPS |
+| `st1` | サイズのみ | 1 TiB あたりベースライン 40 MiB/s、バースト 250 MiB/s |
+| `sc1` | サイズのみ | 1 TiB あたりベースライン 12 MiB/s、バースト 80 MiB/s |
+
+**計算の例**:
+
+| 条件 | 計算 | 結果 |
+| --- | --- | --- |
+| `gp2` の 200 GiB | 200 × 3 | 600 IOPS。3,000 までバースト |
+| `gp2` の 2 TiB | 2,048 × 3 | 6,144 IOPS |
+| `gp3` の 100 GiB で最大の IOPS | 100 × 500 | 50,000 IOPS |
+| `gp3` の 80,000 IOPS に必要なサイズ | 80,000 ÷ 500 | 160 GiB |
+| `gp3` の 2,000 MiB/s に必要な IOPS | 2,000 ÷ 0.25 | 8,000 IOPS |
+| `io1` の 100 GiB で最大の IOPS | 100 × 50 | 5,000 IOPS |
+| `io2` の 256,000 IOPS に必要なサイズ | 256,000 ÷ 1,000 | 256 GiB |
+| `st1` の最大スループットに必要なサイズ | 500 ÷ 40 | 12.5 TiB |
+
+**例**: 100 GiB の DB に 6,000 IOPS が必要なら、`gp2` では 2,000 GiB 確保することになります。`gp3` なら 100 GiB のまま 6,000 IOPS を指定できます。
+
+```bash
+aws ec2 create-volume --availability-zone ap-northeast-1a --size 100 \
+  --volume-type gp3 --iops 6000 --throughput 250 --encrypted
+```
+
+### ボリュームの変更と AZ の制約 {#ebs-modify}
+
+Elastic Volumes で、サイズ、タイプ、IOPS、スループットを稼働中に変更できます。
+
+| 項目 | 内容 |
+| --- | --- |
+| サイズ | 増やすだけ。減らせない。小さなボリュームを作ってデータを移す |
+| 回数 | 24 時間で 4 回まで。前の変更が `completed` になるまで次はできない |
+| 所要時間 | 1 TiB で最大 6 時間程度。サイズの拡張は `optimizing` になった時点で効く |
+| OS の作業 | サイズを増やしたらファイルシステムを拡張する |
+| ルートボリューム | `st1`、`sc1` には変更できない |
+
+!!! note "変更の制限は緩和された"
+    古い資料には変更の間隔は 6 時間とあります。現在は 24 時間の中で 4 回までです。
+
+ボリュームは 1 つの AZ に属し、同じ AZ のインスタンスにしかアタッチできません。
+
+**例**: `ap-northeast-1a` のボリュームを `1c` のインスタンスで使うなら、スナップショットを取り、`1c` にボリュームを作ります。
+
+| Multi-Attach の条件 | 内容 |
+| --- | --- |
+| 対象 | `io1`、`io2` のみ |
+| アタッチできる数 | 同じ AZ の Nitro インスタンス 16 台まで |
+| Windows | `io2` のみ |
+| ファイルシステム | XFS や EXT4 は同時利用を想定していない。クラスター対応のものを使う |
+
+### スナップショット {#ebs-snapshots}
+
+ボリュームの増分バックアップです。S3 に保存されますが、S3 の API やコンソールからは見えません。
+
+| 項目 | 内容 | 落とし穴 |
+| --- | --- | --- |
+| 増分 | 前回から変わったブロックだけ保存 | スナップショットを消しても、他が参照するデータは残る。容量が減るとは限らない |
+| 範囲 | リージョン内の全 AZ に複製 | 任意の AZ に復元できる |
+| 作成 | 非同期で、完了まで `pending` | 一貫性のため書き込みを止めるかアンマウントする。ルートならインスタンスを止める |
+| リージョン間コピー | 全量のコピーを作る | 費用が増える |
+| 別の KMS キーでコピー | 全量のコピーを作る | 費用が増える |
+| 自動化 | Data Lifecycle Manager、AWS Backup | AWS は自動ではバックアップしない |
+
+| 機能 | 内容 |
+| --- | --- |
+| Fast Snapshot Restore | スナップショットと AZ の組み合わせごとに有効にする。作成時から全性能を出せる |
+| Snapshots Archive | 全量に変換して保存する。90 日以上保持する場合、費用を最大 75% 下げられる |
+| Recycle Bin | 誤って消したスナップショット、ボリューム、AMI を保持期間内なら戻せる |
+
+**例**: 数 TB のスナップショットから作ったボリュームで、最初の読み取りが遅いなら Fast Snapshot Restore を検討します。通常はブロックに初めてアクセスするときに遅延が発生します。
+
 ## EBS の暗号化 {#ebs-encryption}
 
 KMS キーを使い、保存データと、インスタンスとボリュームの間の転送データを暗号化します。すべてのインスタンスタイプが対応しています。
@@ -54,6 +132,76 @@ KMS キーを使い、保存データと、インスタンスとボリューム�
 - **引き継ぎ**: 暗号化されたボリュームのスナップショットと、そこから作るボリュームも暗号化されます。解除はできません。
 - **キーの変更**: 既存のボリュームやスナップショットのキーは変えられません。スナップショットのコピー時に別のキーを指定します。
 - **共有**: 暗号化されたスナップショットは公開できません。特定のアカウントとは共有できます。
+- **デフォルトでの暗号化の範囲**: リージョンごとの設定です。既存のボリュームやスナップショットは変わりません。有効にすると、そのリージョンの個々のボリュームやスナップショットでは無効にできません。
+- **内部の動作**: AES-256 のデータキーを KMS が作り、暗号化したものをボリュームと一緒に保存します。アタッチ時に EC2 が `CreateGrant` を呼び、復号したキーをメモリに持ちます。キーポリシーで EBS の利用を許可していないと、アタッチに失敗します。
+
+**例**: 暗号化されていない本番のボリュームを暗号化するには次の順に行います。
+
+1. スナップショットを取ります。
+2. `--encrypted` と KMS キーを指定して、スナップショットをコピーします。
+3. そこからボリュームを作って付け替えます。
+
+## EFS の設定 {#efs-settings}
+
+### ファイルシステムのタイプとパフォーマンスモード {#efs-performance-mode}
+
+| 設定 | 値 | 動作 |
+| --- | --- | --- |
+| タイプ | Regional | 複数の AZ にデータを保存する |
+| タイプ | One Zone | 1 つの AZ。マウントターゲットも 1 つ。パフォーマンスモードは常に General Purpose |
+| パフォーマンスモード | General Purpose(デフォルト) | 操作あたりの遅延が最も低い。推奨 |
+| パフォーマンスモード | Max I/O | 前世代。遅延が大きい。One Zone と Elastic では使えない |
+
+パフォーマンスモードは作成後に変更できません。General Purpose で IOPS の上限が気になるなら、`PercentIOLimit` を監視します。
+
+### スループットモード {#efs-throughput-mode}
+
+| モード | 動作 | 向く場面 |
+| --- | --- | --- |
+| Elastic(デフォルト、推奨) | 使った分だけ自動で増減し、使った分を課金 | 急増する、予測しにくい。平均がピークの 5% 以下 |
+| Provisioned | 指定した量を確保 | 必要な量がわかっている。平均がピークの 5% 以上 |
+| Bursting | 容量に比例する。Standard の 1 TiB あたり 50 MiB/s。バーストは最低 100 MiB/s | 容量とともに必要な性能も増える |
+
+**計算の例**: Bursting で Standard に 100 GiB あるなら、ベースラインは 5 MiB/s です。24 時間アイドルで 432,000 MiB のクレジットがたまり、100 MiB/s で 72 分書けます。`BurstCreditBalance` がなくなるとベースラインまで落ちます。
+
+**落とし穴**: Provisioned に切り替えるか量を変更した後、24 時間は他のモードへの切り替えと量の削減ができません。
+
+### 暗号化とアクセス制御 {#efs-encryption}
+
+| 項目 | 内容 |
+| --- | --- |
+| 保存時の暗号化 | 作成時のみ。コンソールではデフォルトで有効、CLI、API、SDK では明示が必要 |
+| 既存の未暗号化を暗号化 | できない。別のファイルシステムにレプリケートする |
+| 転送中の暗号化 | マウントオプション `tls`。EFS マウントヘルパーを推奨 |
+| 強制 | IAM の `elasticfilesystem:Encrypted` で未暗号化の作成を拒否 |
+
+```bash
+sudo mount -t efs -o tls,accesspoint=fsap-12345678 fs-12345678:/ /mnt/shared
+```
+
+### ライフサイクルとストレージクラス {#efs-lifecycle}
+
+| ポリシー | デフォルト | 動作 |
+| --- | --- | --- |
+| IA への移行 | 30 日アクセスなし | Standard から IA へ |
+| Archive への移行 | 90 日アクセスなし | Standard や IA から Archive へ |
+| Standard への移行 | なし(戻らない) | 「初回アクセス時」を選ぶと戻る |
+
+Standard は読み取りの遅延が最短 1 ミリ秒です。IA と Archive は数十ミリ秒です。`ls` などのメタデータ操作はアクセスに数えません。
+
+### アクセスポイント {#efs-access-points}
+
+アプリごとの入口です。ファイルシステムごとに最大 10,000 個で、作成後は変更できません。
+
+| 設定 | 動作 |
+| --- | --- |
+| POSIX ユーザー(`Uid`、`Gid`) | すべてのファイル操作を、この ID として実行する。クライアント側の ID を無視する |
+| ルートディレクトリ | 指定したパスをルートとして見せる。デフォルトは `/` |
+| 作成時の権限(`OwnerUid`、`OwnerGid`、`Permissions`) | ルートディレクトリがなければ、この権限で作る |
+
+**例**: アプリ A に `/app-a`(UID 1001)のアクセスポイントを渡すと、`/app-b` は見えません。IAM ポリシーでアプリ A に使えるアクセスポイントを限定すれば、ほかのチームのデータに触れません。
+
+**落とし穴**: ルートディレクトリが存在せず、作成時の権限も指定していないと、EFS はディレクトリを作らず、マウントに失敗します。セキュリティグループはアクセスポイントではなくマウントターゲットに付きます。
 
 ## EFS を Lambda とコンテナで使う {#efs}
 
@@ -70,6 +218,32 @@ EFS は NFS(ポート 2049)でマウントします。VPC の各 AZ にマウン
 | 設定者の権限 | `elasticfilesystem:DescribeMountTargets` |
 
 `/tmp` は実行環境ごとの一時領域で、他の実行環境と共有されません。関数の間でファイルを共有したい、大きなモデルを置きたい場合に EFS を使います。
+
+関数の設定は `FileSystemConfigs` です。
+
+| 項目 | 値 |
+| --- | --- |
+| `Arn` | EFS アクセスポイントの ARN。ファイルシステムの ARN ではない |
+| `LocalMountPath` | `/mnt/` で始まるパス。例: `/mnt/models` |
+
+```bash
+aws lambda update-function-configuration --function-name infer \
+  --file-system-configs \
+  Arn=arn:aws:elasticfilesystem:ap-northeast-1:123456789012:access-point/fsap-12345678abcdef012,LocalMountPath=/mnt/models
+```
+
+ポリシーが設定されていないファイルシステムは、マウントターゲットに接続できるクライアントなら誰でも使えます。ポリシーがあるときだけ、実行ロールに `ClientMount` と `ClientWrite` が必要です。
+
+接続の問題は、関数の呼び出し時に次のエラーで現れます。
+
+| エラー | HTTP | 原因と対処 |
+| --- | --- | --- |
+| `EFSMountConnectivityException` | 408 | ネットワークに接続できない。セキュリティグループの 2049 番とルートを確認する |
+| `EFSMountTimeoutException` | 408 | 接続できたがマウントがタイムアウトした |
+| `EFSMountFailureException` | 403 | 権限か設定の問題。ファイルシステムのポリシーや実行ロールを確認する |
+| `EFSIOException` | 410 | 読み書き中のエラー |
+
+**例**: 複数の AZ のサブネットに接続した関数で、一部の呼び出しだけ `EFSMountConnectivityException` になるなら、一部の AZ にマウントターゲットがないか、そこから 2049 番が通っていないことを確認します。関数が接続する AZ ごとにマウントターゲットを作ります。
 
 Lambda は S3 バケットをファイルシステムとしてマウントする Amazon S3 Files にも対応しています。1 つの関数で使えるのは EFS か S3 Files のどちらかです。
 
@@ -119,6 +293,30 @@ ECS ではタスク定義の `volumes` に `efsVolumeConfiguration` を指定し
 
 EFS の IA や Archive にあるファイルは、デフォルトではアクセスされても Standard に戻りません。性能が重要なら、初回アクセスで Standard に戻す設定にします。ファイルのメタデータは常に Standard に置かれます。
 
+## 既定値と上限のまとめ {#numbers}
+
+| 項目 | 値 |
+| --- | --- |
+| `gp3` のベースライン | 3,000 IOPS、125 MiB/s |
+| `gp3` の最大 | 80,000 IOPS、2,000 MiB/s、64 TiB |
+| `gp3` の比率 | 500 IOPS/GiB、0.25 MiB/s/IOPS |
+| `gp2` | 3 IOPS/GiB、最大 16,000 IOPS、250 MiB/s |
+| `io2` Block Express | 1,000 IOPS/GiB、最大 256,000 IOPS、4,000 MiB/s、64 TiB |
+| `io1` | 50 IOPS/GiB、最大 64,000 IOPS、1,000 MiB/s、16 TiB |
+| `st1` | 最大 500 MiB/s、500 IOPS |
+| `sc1` | 最大 250 MiB/s、250 IOPS |
+| HDD のサイズ | 125 GiB〜16 TiB |
+| Multi-Attach | 同じ AZ の 16 台まで |
+| ボリュームの変更 | 24 時間で 4 回 |
+| Snapshots Archive | 90 日以上の保持向け |
+| EFS のポート | 2049 |
+| EFS のライフサイクル | 30 日で IA、90 日で Archive |
+| EFS のアクセスポイント | ファイルシステムごとに 10,000 |
+| EFS の接続数 | ファイルシステムごとに 25,000 |
+| Bursting のベースライン | 1 TiB あたり 50 MiB/s |
+| Provisioned の変更後の制限 | 24 時間 |
+| Lambda のマウントパス | `/mnt/` で始まる |
+
 ## 試験のポイント {#exam-points}
 
 | こう問われたら | 答え |
@@ -134,6 +332,14 @@ EFS の IA や Archive にあるファイルは、デフォルトではアクセ
 | インスタンス終了後もデータを残す | `DeleteOnTermination` を `false` |
 | EBS を別の AZ に移す | スナップショットから作成 |
 | EFS に接続できない | セキュリティグループのポート 2049、マウントターゲット |
+| EBS のサイズを小さくしたい | できない。小さなボリュームにデータを移す |
+| `gp3` で 500 IOPS/GiB を超えて指定できない | サイズを増やす |
+| 別リージョンの DR に EBS を持っていく | スナップショットをコピーする |
+| スナップショットからの復元直後が遅い | Fast Snapshot Restore |
+| アプリごとに EFS のディレクトリと ID を分ける | アクセスポイント |
+| EFS の未暗号化を暗号化 | 作成時のみ。新しいファイルシステムにレプリケートする |
+| EFS の負荷が急増する、読めない | Elastic スループット |
+| Lambda のマウントで `EFSMountConnectivityException` | セキュリティグループの 2049 番、AZ ごとのマウントターゲット |
 
 ## 関連ページ {#related}
 
@@ -153,3 +359,15 @@ EFS の IA や Archive にあるファイルは、デフォルトではアクセ
 - [Configuring file system access for Lambda](https://docs.aws.amazon.com/lambda/latest/dg/configuration-filesystem.html)
 - [Use Amazon EFS volumes with Amazon ECS](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/efs-volumes.html)
 - [Managing EFS storage lifecycle](https://docs.aws.amazon.com/efs/latest/ug/lifecycle-management-efs.html)
+- [Amazon EBS Provisioned IOPS SSD volumes](https://docs.aws.amazon.com/ebs/latest/userguide/provisioned-iops.html)
+- [Amazon EBS Throughput Optimized and Cold HDD volumes](https://docs.aws.amazon.com/ebs/latest/userguide/hdd-vols.html)
+- [Modify an Amazon EBS volume](https://docs.aws.amazon.com/ebs/latest/userguide/ebs-modify-volume.html)
+- [Multi-Attach](https://docs.aws.amazon.com/ebs/latest/userguide/ebs-volumes-multi.html)
+- [Amazon EBS snapshots](https://docs.aws.amazon.com/ebs/latest/userguide/ebs-snapshots.html)
+- [Fast snapshot restore](https://docs.aws.amazon.com/ebs/latest/userguide/ebs-fast-snapshot-restore.html)
+- [Encryption by default](https://docs.aws.amazon.com/ebs/latest/userguide/encryption-by-default.html)
+- [Amazon EFS performance specifications](https://docs.aws.amazon.com/efs/latest/ug/performance.html)
+- [Working with EFS access points](https://docs.aws.amazon.com/efs/latest/ug/efs-access-points.html)
+- [Encryption of data at rest (EFS)](https://docs.aws.amazon.com/efs/latest/ug/encryption-at-rest.html)
+- [FileSystemConfig (Lambda API)](https://docs.aws.amazon.com/lambda/latest/dg/API_FileSystemConfig.html)
+- [Invoke errors (Lambda API)](https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html)

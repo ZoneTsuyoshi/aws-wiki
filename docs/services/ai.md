@@ -66,6 +66,84 @@ Kiro は AWS が提供する AI 開発環境で、主に IDE と CLI で使い�
 !!! warning "Supervised モードはセキュリティ境界ではない"
     Kiro の公式ドキュメントは、Supervised はレビュー手順であって、サンドボックスやアクセス制御ではないと説明しています。権限は `deny` / `ask` / `allow` のルールで絞ります。ルールが競合すると最も厳しい効果が優先され、`deny` はどの `allow` でも覆せません。
 
+### Steering の読み込みモード {#steering-modes}
+
+Steering ファイルの先頭の YAML で指定します。YAML の前に空行や文字を置いてはいけません。
+
+| `inclusion` | 読み込まれるタイミング | 追加の項目 |
+|---|---|---|
+| `always`（既定） | すべてのやり取り | |
+| `fileMatch` | 一致するファイルを扱うとき | `fileMatchPattern`（文字列か配列） |
+| `manual` | チャットで `#ファイル名` と指定したとき | |
+| `auto` | 説明が依頼に合うとき | `name`、`description`（どちらも必須） |
+
+```markdown
+---
+inclusion: fileMatch
+fileMatchPattern: ["**/*.ts", "**/*.tsx"]
+---
+TypeScript では any を使わない。
+```
+
+**落とし穴:** カスタムエージェントには Steering が自動で読み込まれません。エージェント設定の `resources` に `file://.kiro/steering/**/*.md` を追加します。`AGENTS.md` にはこのモードの指定は使えず、常に読み込まれます。
+
+### Hooks の設定 {#hooks-settings}
+
+`.kiro/hooks/<id>.json` に書きます。CLI V3 は `~/.kiro/hooks/` も読みます。
+
+```json
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "lint-on-save",
+      "trigger": "PostFileSave",
+      "matcher": "\\.(ts|tsx)$",
+      "action": { "type": "command", "command": "npx eslint --fix" },
+      "timeout": 60
+    }
+  ]
+}
+```
+
+| フィールド | 必須 | 内容 |
+|---|---|---|
+| `version` | はい | 現在は `v1` |
+| `hooks[].name` | はい | 識別名 |
+| `hooks[].trigger` | はい | イベント名（パスカルケース） |
+| `hooks[].matcher` | いいえ | 対象の絞り込み。ツールやファイルのパターン |
+| `hooks[].action.type` | はい | `command` か `agent` |
+| `hooks[].action.command` | `command` のとき | シェルコマンド |
+| `hooks[].action.prompt` | `agent` のとき | エージェントへのプロンプト |
+| `hooks[].timeout` | いいえ | 秒。既定は 60、0 で無効 |
+| `hooks[].enabled` | いいえ | 既定は `true` |
+
+| アクション | 動作 | 使いどころ |
+|---|---|---|
+| Agent Prompt | プロンプトを送る。クレジットを消費する | 文脈に応じた判断 |
+| Shell Command | 終了コード 0 なら標準出力を文脈に追加。それ以外は標準エラーをエージェントに渡す | 決まった処理。ローカルで速い |
+
+**具体例:** Pre Tool Use のコマンドが 0 以外で終わると、そのツール呼び出しはブロックされます。本番の設定ファイルの書き込みを止めるのに使えます。
+
+**落とし穴:** ファイルのトリガーは、エージェントによる変更にだけ反応します。手で保存しても Hook は動きません。
+
+### MCP の設定 {#mcp-settings}
+
+| プロパティ | 対象 | 内容 |
+|---|---|---|
+| `command` | ローカル、必須 | サーバーの起動コマンド |
+| `args` | ローカル | コマンドの引数 |
+| `env` | 両方 | 環境変数。`${VAR}` で展開 |
+| `url` | リモート、必須 | HTTPS の URL（localhost は HTTP 可） |
+| `headers` | リモート | 接続時のヘッダー |
+| `disabled` | 両方 | 既定は `false` |
+| `autoApprove` | 両方 | 確認なしで実行するツール。`*` で全部 |
+| `disabledTools` | 両方 | エージェントに見せないツール |
+
+ワークスペース（`.kiro/settings/mcp.json`）とユーザー（`~/.kiro/settings/mcp.json`）の両方があれば統合され、ワークスペースが優先されます。
+
+**落とし穴:** `autoApprove: ["*"]` は、書き込みのツールも確認なしで動かします。秘密情報は `${VAR}` で参照し、値を直接書いたファイルをコミットしません。
+
 ### Amazon Q Developer の現状と Kiro との関係 {#q-developer}
 
 DVA-C02 が名指しする Amazon Q Developer は、IDE 向けの部分が Kiro へ移行中です。AWS の公式告知で確認できる日程は次のとおりです。
@@ -141,9 +219,135 @@ except ClientError as e:
 |---|---|
 | `end_turn` | 正常に完了 |
 | `max_tokens` | 上限で打ち切り。`maxTokens` を見直す |
+| `stop_sequence` | `stopSequences` のいずれかに達した |
+| `model_context_window_exceeded` | モデルのコンテキストの上限を超えた。入力を減らす |
+| `malformed_model_output` / `malformed_tool_use` | モデルの出力やツール呼び出しが不正。アプリ側で再試行などを判断する |
 | `tool_use` | モデルがツールの実行を要求している。アプリが実行して結果を返す |
 | `guardrail_intervened` | ガードレールが介入した。ブロックとマスクの両方でこの値になる |
 | `content_filtered` | コンテンツフィルターで応答が止められた |
+
+### Converse の全パラメータ {#converse-params}
+
+| パラメータ | 必須 | 内容 |
+|---|---|---|
+| `modelId` | はい | モデル、推論プロファイルなど。[下の表](#model-identifiers)を参照 |
+| `messages` | ※ | `role`（`user` か `assistant`）と `content` の配列 |
+| `system` | いいえ | システムプロンプトの配列 |
+| `inferenceConfig` | いいえ | 共通の推論パラメータ |
+| `toolConfig` | いいえ | ツールの定義と選択 |
+| `guardrailConfig` | いいえ | ガードレール |
+| `additionalModelRequestFields` | いいえ | モデル固有のパラメータ（例: `top_k`） |
+| `additionalModelResponseFieldPaths` | いいえ | モデル固有の応答を JSON Pointer で取得（例: `/stop_sequence`）。形式が不正だと 400 |
+| `promptVariables` | いいえ | プロンプト管理の変数。`modelId` がプロンプトでなければ無視 |
+| `requestMetadata` | いいえ | 呼び出しログの絞り込み用のキーと値。16 個まで |
+| `performanceConfig` | いいえ | `latency` を `standard` か `optimized` に |
+| `serviceTier` | いいえ | 処理の層 |
+| `outputConfig` | いいえ | 出力形式の設定 |
+
+※ `modelId` がプロンプト管理のリソースなら、メッセージの扱いが変わります。
+
+応答には、`output`、`stopReason`、`usage`、`metrics`（`latencyMs`）、`trace` などが入ります。
+
+### inferenceConfig {#inference-config}
+
+| フィールド | 範囲 | 既定 | 影響 |
+|---|---|---|---|
+| `maxTokens` | 1 以上 | モデルの最大値 | 応答の長さの上限。クォータからも先に差し引かれる |
+| `temperature` | 0〜1 | モデルの既定 | 低いと確率の高い語を選ぶ |
+| `topP` | 0〜1 | モデルの既定 | 0.8 なら上位 80% の候補から選ぶ |
+| `stopSequences` | 最大 2,500 個 | なし | 一致で生成を止める |
+
+**具体例:** `maxTokens` を省略するとモデルの最大値になります。クォータの予約が大きくなり、すぐスロットリングされる場合があります。実際の応答が 500 トークンなら、余裕を持って 1,000 にします。
+
+**落とし穴:** `top_k` のように共通でないものを `inferenceConfig` に入れると `ValidationException` です。`additionalModelRequestFields` に入れます。
+
+### モデル ID と推論プロファイル {#model-identifiers}
+
+`modelId` に渡せる値です。
+
+| 使うもの | 渡す値 | 例 |
+|---|---|---|
+| 基盤モデル | モデル ID または ARN | `arn:aws:bedrock:us-east-1::foundation-model/<model-id>` |
+| 推論プロファイル | プロファイル ID または ARN | `us.<model-id>`、`global.<model-id>` |
+| アプリケーション推論プロファイル | ARN | タグでコストを追跡 |
+| Provisioned Throughput | プロビジョンドモデルの ARN | |
+| カスタムモデル | デプロイまたはプロビジョンドモデルの ARN | |
+| プロンプト管理 | プロンプトのバージョンの ARN | |
+| Marketplace | エンドポイントの ID または ARN | |
+
+**クロスリージョン推論の違い:**
+
+| | 地理的（`us`、`eu`、`apac` など） | グローバル（`global`） |
+|---|---|---|
+| 処理される場所 | その地理の中のリージョン | 対応する商用リージョン全体 |
+| 向いている要件 | データの所在の要件がある | 要件がなく、コストを優先する（標準より約 10% 安い） |
+| SCP の注意 | プロファイルのすべての宛先リージョンを許可 | `aws:RequestedRegion` が `unspecified` のアクセスも許可 |
+
+CloudTrail の記録は呼び出し元のリージョンに残り、`additionalEventData.inferenceRegion` で処理したリージョンが分かります。
+
+**落とし穴:**
+
+- 推論プロファイルは Provisioned Throughput に対応しません。
+- 権限はプロファイルだけでなく、宛先の各リージョンの基盤モデルにも必要です（[IAM のスコープ](#iam-scope)）。
+- データの所在の要件があるのに `global` を選ぶと、要件を満たしません。
+
+### ツール利用の流れ {#tool-use-flow}
+
+モデルはツールを直接呼びません。実行はアプリの役目です。
+
+```mermaid
+sequenceDiagram
+    participant A as アプリ
+    participant B as Bedrock
+    participant T as ツール
+    A->>B: Converse（toolConfig 付き）
+    B-->>A: stopReason は tool_use、toolUse ブロック
+    A->>T: 認可してから実行
+    T-->>A: 結果
+    A->>B: Converse（toolResult、同じ toolUseId）
+    B-->>A: stopReason は end_turn
+```
+
+```python
+tool_config = {
+    "tools": [{
+        "toolSpec": {
+            "name": "get_order",
+            "description": "注文の状態を取得する",
+            "inputSchema": {"json": {
+                "type": "object",
+                "properties": {"orderId": {"type": "string"}},
+                "required": ["orderId"],
+            }},
+        },
+    }],
+    "toolChoice": {"auto": {}},
+}
+```
+
+| `toolChoice` | 動作 |
+|---|---|
+| `auto`（既定） | モデルがツールを使うか文章で答えるか決める |
+| `any` | 少なくとも 1 つのツールを要求する（文章は生成しない） |
+| `tool` | 指定のツールを要求する。対応するモデルは限られる |
+
+結果は `role: user` のメッセージで返します。`toolResult` の `toolUseId` を `toolUse` の ID と揃え、エラーなら `status: error` にします。応答メッセージをそのまま `messages` に追加してから、結果を追加します。
+
+**落とし穴:** `toolUseId` は `toolUse` の値をそのまま使います。結果を返す次の `Converse` にも、同じ `toolConfig` を渡します。
+
+### ストリームのイベント {#stream-events}
+
+| イベント | 内容 |
+|---|---|
+| `messageStart` | `role` |
+| `contentBlockStart` | ブロックの開始。ツールなら `toolUse` の `name` と ID |
+| `contentBlockDelta` | 差分。`text` や `toolUse.input`（JSON の断片） |
+| `contentBlockStop` | ブロックの終了 |
+| `messageStop` | `stopReason` |
+| `metadata` | `usage`、`metrics`（`latencyMs`） |
+| 例外 | `internalServerException`、`modelStreamErrorException`、`validationException`、`throttlingException`、`serviceUnavailableException` |
+
+**落とし穴:** トークン数は最後の `metadata` にしか来ません。途中でループを抜けると `usage` を取得できません。ツールの入力は断片で来るので、`contentBlockStop` までつなげてから JSON として解釈します。
 
 ### ストリーミング {#streaming}
 
@@ -213,6 +417,82 @@ result = json.loads(resp["body"].read())
 3. **出力トークンの消費率を意識する。** 一部のモデルは出力 1 トークンがクォータ上で複数トークン分になります（課金は実トークン数）。率はモデルごとに異なります。
 4. **容量を増やす。** クロスリージョン推論、クォータ引き上げ申請、Provisioned Throughput や Reserved Tier を検討します。使用量は CloudWatch の `InputTokenCount` と `OutputTokenCount` で確認できます。
 
+### スループットの選択肢 {#throughput-options}
+
+| 方式 | 使い方 | 向いている場面 |
+|---|---|---|
+| オンデマンド | `modelId` に基盤モデルや推論プロファイル | 通常の呼び出し |
+| Provisioned Throughput | モデルユニット（MU）を購入し、ARN を `modelId` に | 固定の高い処理量、カスタムモデル |
+| バッチ | `CreateModelInvocationJob` | 大量で即時性が不要な処理 |
+
+オンデマンドには処理の層（サービスティア）があります。
+
+| 層 | 値 | 特徴 |
+|---|---|---|
+| Standard | `default` | 既定 |
+| Priority | `priority` | 割増で最速。事前予約は不要 |
+| Flex | `flex` | 割引。処理時間が長くてもよい場面 |
+| Reserved | `reserved` | 容量を予約。最小は入力 100,000 TPM、出力 10,000 TPM。アカウントチーム経由 |
+
+`priority`、`default`、`flex` は同じオンデマンドクォータを共有します。`reserved` は別です。
+
+**Provisioned Throughput の設定:**
+
+| 項目 | 内容 |
+|---|---|
+| コミットメント | なし、1 か月、6 か月。**期間中は削除できない** |
+| 課金 | 時間単位で、削除するまで続く |
+| API | `CreateProvisionedModelThroughput` |
+| カスタムモデル | Provisioned Throughput、またはカスタムモデルのデプロイを使う |
+
+**バッチの設定:**
+
+| 項目 | 内容 |
+|---|---|
+| 入力 | S3 の JSONL。1 行に `recordId` と `modelInput` |
+| 出力 | S3。順序は入力と同じとは限らない |
+| `timeoutDurationInHours` | 24〜168 時間 |
+| 完了の通知 | EventBridge で状態の変化を受け取れる |
+| 制約 | プロビジョンドモデルでは使えない。`Converse` 形式のジョブでは `toolConfig` が 400 エラー |
+
+```json
+{"recordId": "CALL0000001", "modelInput": {"messages": [{"role": "user", "content": [{"text": "要約して"}]}]}}
+```
+
+**使い分け:** 夜間に 10 万件の要約をするならバッチです。ポーリングせず EventBridge で完了を検知します。
+
+### クォータとトークンの数え方 {#quotas-detail}
+
+| 項目 | 内容 |
+|---|---|
+| TPM | 1 分あたりのトークン。モデルごと |
+| TPD | 1 日あたりのトークン |
+| RPM | 埋め込みモデルはトークンではなくリクエスト数で制限 |
+| エンドポイント | `bedrock-runtime` と `bedrock-mantle` はクォータが別 |
+| 使用量の見積もり | `CountTokens` で呼び出し前に確認。`InvokeModel` と `Converse` の形式を受け付ける |
+
+**計算例:** 出力の消費率が 5 倍のモデルで、入力 1,000、`max_tokens` 8,000、実際の出力 100 とします。開始時に `1,000 + 8,000 = 9,000` が差し引かれます。完了時の消費は `1,000 + 100 × 5 = 1,500` で、差は戻ります。課金は実際の `1,100` トークンです。`max_tokens` が大きいと、戻るまでの間に次の呼び出しが詰まります。消費率はモデルごとに公式のページで確認します。
+
+**プロンプトキャッシュ:** 繰り返す長い文脈を再利用して、遅延と入力料金を下げます。`Converse` では `cachePoint` のブロックを置きます。TTL はヒットごとに延長され、モデルにより 5 分や 1 時間を選べます。結果は `usage` の `cacheReadInputTokens` と `cacheWriteInputTokens` で確認します。クォータの消費は `InputTokenCount` と `CacheWriteInputTokenCount` の合計で考えます。
+
+### CloudWatch のメトリクス {#bedrock-metrics}
+
+名前空間は `AWS/Bedrock`、ディメンションは `ModelId` などです。
+
+| メトリクス | 意味 |
+|---|---|
+| `Invocations` | リクエスト数。クライアント、サーバーのエラーは含み、**スロットリングされた分は含まない** |
+| `InvocationLatency` | 送信から最後のトークンまで（ms） |
+| `TimeToFirstToken` | 送信から最初のトークンまで（ms）。ストリーミング |
+| `InvocationClientErrors` | クライアント側のエラー |
+| `InvocationServerErrors` | サーバー側のエラー |
+| `InvocationThrottles` | スロットリングされた数 |
+| `InputTokenCount` / `OutputTokenCount` | トークン数 |
+| `CacheReadInputTokenCount` / `CacheWriteInputTokenCount` | キャッシュの読み書き |
+| `EstimatedTPMQuotaUsage` | TPM クォータの推定消費 |
+
+**具体例:** 体感の遅さを調べるなら、`TimeToFirstToken` で待ち時間を、`InvocationLatency` で全体を見ます。TPM に近づいたことを知るなら、`EstimatedTPMQuotaUsage` にアラームを作ります。
+
 ### Knowledge Bases を呼ぶ {#knowledge-bases}
 
 開発者が知っておくのは呼び方です。クライアントは `bedrock-agent-runtime` です。
@@ -238,6 +518,49 @@ print(resp["output"]["text"], resp["citations"], resp["sessionId"])
 ```
 
 `sessionId` は初回にサービスが生成するので、会話を続けるときに同じ値を渡します。マネージドナレッジベースでは `RetrieveAndGenerate` を使えず、`Retrieve` や `AgenticRetrieveStream` を使います。
+
+### Knowledge Bases のパラメータ {#kb-params}
+
+検索の設定は `retrievalConfiguration.vectorSearchConfiguration` に書きます。
+
+| パラメータ | 範囲、既定 | 内容 |
+|---|---|---|
+| `numberOfResults` | 1〜100、既定 5 | 取得するチャンクの最大数 |
+| `overrideSearchType` | `HYBRID`、`SEMANTIC` | 省略時は Bedrock が選ぶ |
+| `filter` | | メタデータの条件 |
+| `implicitFilterConfiguration` | | クエリからフィルターを自動生成 |
+| `rerankingConfiguration` | | リランクモデル |
+
+```python
+retrievalConfiguration={"vectorSearchConfiguration": {
+    "numberOfResults": 10,
+    "overrideSearchType": "SEMANTIC",
+    "filter": {"andAll": [
+        {"equals": {"key": "dept", "value": "support"}},
+        {"greaterThan": {"key": "year", "value": 2024}},
+    ]},
+}}
+```
+
+`filter` の演算子は、`equals`、`notEquals`、`greaterThan`、`greaterThanOrEquals`、`lessThan`、`lessThanOrEquals`、`in`、`notIn`、`startsWith`、`listContains`、`stringContains`、`andAll`、`orAll` です。
+
+`RetrieveAndGenerate` の主なパラメータです。
+
+| パラメータ | 内容 |
+|---|---|
+| `generationConfiguration.promptTemplate` | 生成のプロンプト |
+| `generationConfiguration.inferenceConfig` | `maxTokens`、`temperature` など |
+| `generationConfiguration.guardrailConfiguration` | ガードレール |
+| `sessionId` | 2〜100 文字。初回は自動生成。以降は同じ値を渡す |
+| `sessionConfiguration.kmsKeyArn` | セッションの暗号化の KMS キー |
+
+応答の `guardrailAction` が `INTERVENED` なら、ガードレールが介入しています。
+
+**落とし穴:**
+
+- ハイブリッド検索は、対応するベクトルストアと、フィルター可能なテキストフィールドが必要です。
+- `numberOfResults` は上限で、これより少なく返ることがあります。階層チャンクでは親チャンクにまとまるため、指定より少ないことがあります。
+- `Retrieve` の結果を自分でモデルに渡す場合は、`InvokeModel` の権限も別に必要です。
 
 ### Bedrock Agents を呼ぶ {#agents}
 
@@ -317,6 +640,32 @@ AWS 署名の代わりにベアラートークンで認証できます。環境�
 
 使用の可否は `bedrock:CallWithBearerToken`、長期キーの生成は `iam:CreateServiceSpecificCredential` で制御します。アプリは IAM ロールで呼ぶのが基本です。
 
+### IAM のアクションと条件キー {#iam-actions}
+
+| 操作 | アクション | リソース |
+|---|---|---|
+| `Converse`、`InvokeModel`、`StartAsyncInvoke` | `bedrock:InvokeModel` | 基盤モデル、推論プロファイル |
+| `ConverseStream`、`InvokeModelWithResponseStream` | `bedrock:InvokeModelWithResponseStream` | 同上 |
+| ガードレールの独立評価 | `bedrock:ApplyGuardrail` | ガードレール |
+| 検索と生成 | `bedrock:Retrieve`、`bedrock:RetrieveAndGenerate` | ナレッジベース |
+| バッチ | `bedrock:CreateModelInvocationJob` | |
+| モデルの一覧 | `bedrock:ListFoundationModels`、`bedrock:GetFoundationModel` | |
+| 推論プロファイルの確認 | `bedrock:GetInferenceProfile`、`bedrock:ListInferenceProfiles` | |
+| ユースケース | `bedrock:GetUseCaseForModelAccess`、`bedrock:PutUseCaseForModelAccess` | |
+| API キーの使用 | `bedrock:CallWithBearerToken` | |
+
+| 条件キー | 用途 |
+|---|---|
+| `bedrock:GuardrailIdentifier` | 指定のガードレールを強制する。ARN に `:<バージョン>` を付けられる |
+| `bedrock:InferenceProfileArn` | プロファイル経由の呼び出しに限定する |
+| `bedrock:DataRetentionMode` | データ保持の設定を制限する |
+| `aws:SourceVpce` | 特定の VPC エンドポイントからに限定する |
+| `aws:RequestedRegion` | リージョンを制限する。グローバル推論では `unspecified` |
+
+**具体例:** 公式のポリシー例では、`Resource` はガードレール本体の ARN です。バージョンに限定するなら条件キーで `...:guardrail/<id>:3` のように書きます。
+
+**落とし穴:** `Converse` 専用のアクションはありません。`bedrock:Converse` と書いても効きません。
+
 ## データプライバシー {#data-privacy}
 
 ### VPC エンドポイントでの接続 {#privatelink}
@@ -331,6 +680,7 @@ AWS 署名の代わりにベアラートークンで認証できます。環境�
 | `com.amazonaws.<region>.bedrock-agent` | エージェントのビルド時 API |
 | `com.amazonaws.<region>.bedrock-agentcore` | AgentCore のデータプレーン |
 | `com.amazonaws.<region>.bedrock-agentcore-control` | AgentCore のコントロールプレーン |
+| `com.amazonaws.<region>.bedrock-agentcore.gateway` | AgentCore Gateway |
 
 - **プライベート DNS:** 有効ならコード変更は不要です。無効なら `endpoint_url` に VPC エンドポイントの URL を渡します。
 - **エンドポイントポリシー:** 既定ではフルアクセスです。独自ポリシーで操作を絞れます。
@@ -376,8 +726,8 @@ Q Developer のオプトアウトは、IDE の設定または AWS Organizations 
 |---|---|---|
 | コンテンツフィルター | Hate、Insults、Sexual、Violence、Misconduct。強度は `NONE`〜`HIGH` | `BLOCK` / `NONE` |
 | プロンプト攻撃 | ジェイルブレイク、プロンプトインジェクション、プロンプト漏えい（Standard 層のみ）。コンテンツフィルターの一分類 | `BLOCK` / `NONE` |
-| 拒否トピック | 定義した話題（例: 投資助言）。1 ガードレールに最大 30 件 | `BLOCK` / `NONE` |
-| ワードフィルター | 指定語句の完全一致、管理された不適切語リスト | `BLOCK` / `NONE` |
+| 拒否トピック | 定義した話題（例: 投資助言）。1 ガードレールに最大 30 件。定義の長さは Classic 200 文字、Standard 1,000 文字 | `BLOCK` / `NONE` |
+| ワードフィルター | 指定語句（語単位、語句単位の一致。大文字小文字を区別しない）、管理された不適切語リスト | `BLOCK` / `NONE` |
 | 機密情報フィルター | 組み込みの PII と正規表現 | `BLOCK` / `ANONYMIZE` / `NONE` |
 | コンテキストグラウンディング | 応答が参照元に基づくか、質問に関連するか | `BLOCK` / `NONE` |
 | Automated Reasoning | 応答が定義した論理ルールに沿うか | 検証結果を返す |
@@ -387,6 +737,96 @@ Q Developer のオプトアウトは、IDE の設定または AWS Organizations 
 - **PHI:** 組み込みの PII に健康関連の番号（`CA_HEALTH_NUMBER` など）がありますが、対象は限られます。それ以外は正規表現で補います。
 - **層:** Standard 層はクロスリージョン推論が必須です。Classic 層は英語、フランス語、スペイン語に対応します。
 - **バージョン:** `DRAFT` は作業中の版です。`CreateGuardrailVersion` で番号付きの版を作り、本番ではそれを指定します。
+
+### ポリシーごとの設定 {#guardrail-policy-settings}
+
+`CreateGuardrail` の主なパラメータです。
+
+| パラメータ | 内容 | 上限 |
+|---|---|---|
+| `name` | 名前 | 1〜50 文字 |
+| `blockedInputMessaging` | 入力ブロック時の文 | 1〜500 文字。必須 |
+| `blockedOutputsMessaging` | 出力ブロック時の文 | 1〜500 文字。必須 |
+| `kmsKeyId` | カスタマー管理キー | 既定は AWS 管理キー |
+| `crossRegionConfig` | ガードレールプロファイル | Standard 層で必要 |
+| `contentPolicyConfig` | コンテンツとプロンプト攻撃 | |
+| `topicPolicyConfig` | 拒否トピック | |
+| `wordPolicyConfig` | ワード | |
+| `sensitiveInformationPolicyConfig` | 機密情報 | |
+| `contextualGroundingPolicyConfig` | グラウンディング | |
+
+**コンテンツフィルター:**
+
+```json
+{"contentPolicyConfig": {
+  "filtersConfig": [
+    {"type": "HATE", "inputStrength": "HIGH", "outputStrength": "HIGH",
+     "inputAction": "BLOCK", "outputAction": "BLOCK"},
+    {"type": "PROMPT_ATTACK", "inputStrength": "HIGH", "inputAction": "BLOCK"}
+  ],
+  "tierConfig": {"tierName": "STANDARD"}
+}}
+```
+
+強度を上げるほど、低い確信度の内容まで止めます。`HIGH` は確信度が `LOW` の内容も止めます。プロンプト攻撃は入力に対して設定します。
+
+**拒否トピック:**
+
+| 項目 | 上限 |
+|---|---|
+| トピック数 | 30 |
+| `name` | 名詞や語句で。説明を書かない |
+| `definition` | Classic 200 文字、Standard 1,000 文字 |
+| `examples` | 5 個、各 100 文字 |
+
+**ワードフィルター:**
+
+| 項目 | 上限 |
+|---|---|
+| カスタムの語句 | 10,000 個、1 項目 3 語まで |
+| 管理リスト | 不適切語（`PROFANITY`） |
+| 一致 | 語単位、語句単位。大文字小文字を区別しない |
+| ファイルの一括登録 | コンソールのみ |
+
+**機密情報フィルター:**
+
+| 項目 | 内容 |
+|---|---|
+| `piiEntitiesConfig` | `type`（`EMAIL` など）と `action`（`BLOCK`、`ANONYMIZE`、`NONE`） |
+| `regexesConfig` | `name`（100 文字）、`pattern`（500 文字）、`action`。**先読みと後読みは不可** |
+
+**コンテキストグラウンディング:**
+
+| 項目 | 内容 |
+|---|---|
+| `type` | `GROUNDING`（根拠があるか）、`RELEVANCE`（質問に関連するか） |
+| `threshold` | 0〜0.99。スコアが下回るとブロック。高いほど厳しい |
+| 必要な入力 | グラウンディングソース、クエリ、対象の応答 |
+| 長さの上限 | ソース 100,000 文字、クエリ 1,000 文字、応答 5,000 文字 |
+| 既定の層 | 未指定なら Classic |
+
+`Converse` では `guardContent` の `qualifiers` に `grounding_source`、`query`、`guard_content` を指定します。
+
+**具体例:** `threshold` を 0.7 にすると、グラウンディングのスコアが 0.7 未満の応答はブロックされます。1 にはできず、0.99 が最大です。
+
+**Automated Reasoning:** 他のフィルターのように止めるのではなく、応答が定義した論理ルールに沿うかを検証し、理由を返します。
+
+**検出モード:** `inputAction` や `outputAction` を `NONE` にすると、止めずにトレースで結果を確認できます。
+
+### バージョン {#guardrail-versions}
+
+| 項目 | 内容 |
+|---|---|
+| `DRAFT` | 作業中の版。編集できる |
+| 番号付き | `CreateGuardrailVersion` で作るスナップショット |
+| `guardrailVersion` の形式 | `DRAFT` または `1` からの番号 |
+| 版の ARN | なし。ガードレールの ARN に版は入らない |
+
+本番で `DRAFT` を指定すると、編集がそのまま本番へ反映されます。番号付きの版を指定します。
+
+`trace` の値は `enabled`、`disabled`、`enabled_full` です。`ApplyGuardrail` の `outputScope` は `INTERVENTIONS` か `FULL` で、`FULL` は検出されなかった項目も返します。
+
+クロスリージョンのガードレールでは、設定は元のリージョンに保存され、評価がその地理の中のリージョンへ送られます。
 
 ### 適用の流れ {#guardrail-flow}
 
@@ -582,6 +1022,68 @@ agent_rt.invoke_agent(
 
 **一般的な実践:** どの方式でも、承認後に実行する直前で金額やパラメータをアプリが再検証します。
 
+### AgentCore の構成要素と設定 {#agentcore-components}
+
+| サービス | 役割 |
+|---|---|
+| Harness | モデル、システムプロンプト、ツールを指定して 1 回の API で動かす管理型のエージェントループ |
+| Runtime | エージェントとツールをデプロイする実行基盤 |
+| Memory | 短期（イベント）と長期（抽出した知識）の記憶 |
+| Gateway | API、Lambda、MCP サーバーを MCP ツールとして公開 |
+| Identity | エージェントの ID と資格情報 |
+| Code Interpreter | 隔離された環境でコードを実行 |
+| Browser | 隔離されたブラウザ |
+| Observability | トレース、メトリクス、監査ログ（CloudWatch に保存） |
+| Evaluations | エージェントの品質の評価 |
+| Optimization | 推奨と A/B テストによる改善 |
+| Policy | ツール呼び出しの認可 |
+| Registry | エージェントやツールのカタログ |
+| Payments | 有料 API の少額決済 |
+
+**Runtime の主な設定と上限:**
+
+| 項目 | 値 |
+|---|---|
+| `lifecycleConfiguration.idleRuntimeSessionTimeout` | 既定 900 秒。60〜28800 秒（microVM） |
+| `lifecycleConfiguration.maxLifetime` | 既定 28800 秒。60〜28800 秒（microVM）。アイドルはこれ以下 |
+| 同期リクエスト | 15 分 |
+| ストリーミング | 60 分 |
+| 非同期ジョブ | 8 時間 |
+| ペイロード | 100 MB |
+| ストリームのチャンク | 10 MB |
+| Docker イメージ | 2 GB |
+| コードの直接デプロイ | 圧縮 250 MB、展開後 750 MB |
+| 環境変数 | 合計 4 KB |
+| 1 セッションのリソース | 2 vCPU、8 GB |
+| セッション ID | 33 文字以上 |
+
+**具体例:** 問い合わせが 30 分おきに来るチャットで既定の 15 分のままだと、毎回新しい microVM になり、メモリ上の文脈が消えます。`idleRuntimeSessionTimeout` を 3600 にするか、AgentCore Memory に残します。
+
+**VPC:** Runtime とツールは VPC に接続でき、指定のサブネットに ENI を作ります。パブリックサブネットに接続してもインターネットへは出られません。
+
+**Gateway の設定:**
+
+| 区分 | 選択肢 |
+|---|---|
+| ターゲット | MCP（複数をまとめて 1 つの仮想 MCP サーバーに）、HTTP（パスで個別に呼ぶ）、推論 |
+| 受信の認可 | JWT、IAM（`bedrock-agentcore:InvokeGateway`）、外部に委ねる方式 |
+| 送信の認可 | ゲートウェイのサービスロール（SigV4）、呼び出し元の IAM、OAuth（2LO、3LO、トークン交換）、トークンの受け渡し、API キー、なし（非推奨） |
+
+**Memory の用語:**
+
+| 用語 | 意味 |
+|---|---|
+| イベント | 短期記憶の単位。`CreateEvent` で保存 |
+| `actorId` | 誰の記憶か。利用者や他のエージェント |
+| `sessionId` | 1 回の連続したやり取り |
+| ストラテジー | 短期から長期へ抽出する規則。組み込みとカスタム |
+| 名前空間 | 長期記憶の整理のパス |
+| メモリレコード | 長期記憶の 1 件 |
+
+**落とし穴:** `actorId` を利用者ごとに分けないと、別の利用者の記憶が混ざります。Runtime のセッション分離とは別の話です。
+
+**Code Interpreter と Browser:** セッションの既定は 15 分で、最大 8 時間まで延ばせます。
+
 ## ログの機密情報保護 {#log-protection}
 
 ### モデル呼び出しログ {#invocation-logging}
@@ -591,6 +1093,22 @@ agent_rt.invoke_agent(
 - **対象:** `bedrock-runtime` 経由の `Converse`、`ConverseStream`、`InvokeModel`、`InvokeModelWithResponseStream` です。
 - **本文:** リクエストと応答を 100 KB まで記録します。それより大きい本文やバイナリは S3 に別オブジェクトで保存します。
 - **権限:** CloudWatch Logs には `bedrock.amazonaws.com` が引き受けるロールを用意し、S3 にはバケットポリシーを設定します。
+
+`LoggingConfig` の項目です。
+
+| 項目 | 内容 |
+|---|---|
+| `cloudWatchConfig` | `logGroupName`、`roleArn`、`largeDataDeliveryS3Config` |
+| `s3Config` | `bucketName`、`keyPrefix` |
+| `textDataDeliveryEnabled` | テキストを記録 |
+| `imageDataDeliveryEnabled` | 画像を記録 |
+| `embeddingDataDeliveryEnabled` | 埋め込みを記録 |
+| `videoDataDeliveryEnabled` | 動画を記録 |
+| `audioDataDeliveryEnabled` | 音声を記録 |
+
+**対象外:** `bedrock-mantle` エンドポイントの呼び出しは記録されません。
+
+**具体例:** 本文を残さずメタデータだけ記録したいなら、`textDataDeliveryEnabled` などを `false` にします。`requestMetadata` に `{"tenant": "a"}` を入れると、テナント別にログを絞り込めます。
 
 !!! warning "Guardrails のマスクはログに効かない"
     呼び出しログの `input` は、ガードレールが介入しても常に元のリクエストのままです。ブロックされた内容も平文で残ります。さらに、Guardrails のトレースの `match` と `modelOutput` にも元の値が入ります。ログの保護は別途必要で、トレースを通常のアプリログに書いてはいけません。
@@ -714,6 +1232,36 @@ Amazon Quick は、チャットを入口にして、データ分析、タスク�
 
 **開発者との接点:** OpenAPI 仕様や MCP サーバーからコネクタを作ると、Quick が外部サービスのデータを読み、処理を実行できます。Quick のナレッジベース機能は、S3、SharePoint、Confluence などの内容を取り込みます。
 
+## 既定値と上限のまとめ {#numbers}
+
+| 項目 | 値 |
+|---|---|
+| `temperature` / `topP` | 0〜1 |
+| `maxTokens` の既定 | モデルの最大値 |
+| `stopSequences` | 2,500 個 |
+| `requestMetadata` | 16 個 |
+| `toolChoice` の既定 | `auto` |
+| 呼び出しログの既定 | 無効 |
+| 呼び出しログの本文 | 100 KB まで |
+| Provisioned Throughput | コミットなし、1 か月、6 か月 |
+| Reserved 層の最小 | 入力 100,000 TPM、出力 10,000 TPM |
+| バッチの `timeoutDurationInHours` | 24〜168 |
+| `ModelNotReadyException` | SDK が最大 5 回再試行 |
+| 拒否トピック | 30 個、定義 200 / 1,000 文字、例 5 個、各 100 文字 |
+| ワードフィルター | 10,000 個、1 項目 3 語 |
+| 正規表現 | 名前 100 文字、パターン 500 文字 |
+| ガードレールのメッセージ | 500 文字 |
+| グラウンディングの `threshold` | 0〜0.99 |
+| グラウンディングの長さ | ソース 100,000、クエリ 1,000、応答 5,000 文字 |
+| `numberOfResults` | 既定 5、1〜100 |
+| `sessionId`（KB） | 2〜100 文字 |
+| Runtime のセッション ID | 33 文字以上 |
+| Runtime のアイドル、最大 | 既定 900 秒、28800 秒 |
+| Runtime のペイロード | 100 MB |
+| Runtime の同期、ストリーム、非同期 | 15 分、60 分、8 時間 |
+| Code Interpreter、Browser | 既定 15 分、最大 8 時間 |
+| Hook のタイムアウト | 既定 60 秒 |
+
 ## 試験のポイント {#exam-points}
 
 | こう問われたら | 答え |
@@ -749,6 +1297,27 @@ Amazon Quick は、チャットを入口にして、データ分析、タスク�
 | Q Developer でテストを生成するには（C02） | IDE のチャットまたは Generate tests（旧 `/test`） |
 | アラームの原因を AI で調べるには | CloudWatch investigations |
 | Quick と Quick Sight の違いは | Quick が全体の AI サービスで、Quick Sight はその BI 機能（対象外） |
+| `top_k` を `Converse` で渡すには | `additionalModelRequestFields` |
+| 応答のモデル固有の値を取得するには | `additionalModelResponseFieldPaths` |
+| ツールを必ず使わせるには | `toolChoice` の `any` または `tool` |
+| ツールの結果の返し方は | `toolResult`、同じ `toolUseId` |
+| データを特定の地理に留めてリージョンをまたぐには | 地理的な推論プロファイル（`global` は不可） |
+| 推論プロファイルと Provisioned Throughput は併用できるか | できない |
+| 固定の処理量が必要、カスタムモデルを使う | Provisioned Throughput |
+| 夜間の大量処理を安く行うには | バッチ、完了は EventBridge |
+| ガードレールの本番の指定は | 番号付きバージョン（`DRAFT` ではない） |
+| ガードレールのバージョン単位で IAM を絞るには | `bedrock:GuardrailIdentifier` の条件キー |
+| ハルシネーションを検出するには | コンテキストグラウンディングの `GROUNDING` |
+| 本番前に誤検知を確認するには | 検出モード（アクションを `NONE`） |
+| 正規表現で先読みが使えない | 機密情報フィルターの制約 |
+| Bedrock のスロットリングの見方 | `InvocationThrottles`（`Invocations` には含まれない） |
+| KB の検索件数の既定は | 5（`numberOfResults`、1〜100） |
+| 呼び出しログに本文を残したくない | `textDataDeliveryEnabled` などを `false` |
+| Runtime のセッションがすぐ消える | `idleRuntimeSessionTimeout` を伸ばす、Memory を使う |
+| AgentCore Gateway を IAM で呼ぶ権限は | `bedrock-agentcore:InvokeGateway` |
+| TypeScript を扱うときだけ規約を読ませるには | Steering の `inclusion: fileMatch` |
+| Hook のコマンドが失敗すると | Pre Tool Use ならツールをブロック |
+| `autoApprove` の意味は | 確認なしで実行するツール |
 
 ## 関連ページ {#related}
 
@@ -772,13 +1341,18 @@ Amazon Quick は、チャットを入口にして、データ分析、タスク�
 - [Guardrails の仕組み](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-how.html) / [作成](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-components.html) / [Converse での利用](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-use-converse-api.html) / [ApplyGuardrail](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-use-independent-api.html) / [機密情報フィルター](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-sensitive-filters.html) / [プロンプト攻撃](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-prompt-attack.html) / [入力タグ](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-tagging.html) / [ストリーミング](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-streaming.html) / [強制](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-permissions-id.html) / [層](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-tiers.html) / [拒否トピック](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-denied-topics.html) / [検出モード](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-harmful-content-handling-options.html)
 - [RetrieveAndGenerate](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_agent-runtime_RetrieveAndGenerate.html) / [ナレッジベースの権限](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base-prereq-permissions-general.html)
 - [Agents Classic のメンテナンスモード](https://docs.aws.amazon.com/bedrock/latest/userguide/agents-classic-maintenance-mode.html) / [InvokeAgent](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_agent-runtime_InvokeAgent.html) / [エージェントのテスト](https://docs.aws.amazon.com/bedrock/latest/userguide/agents-test.html) / [ユーザー確認](https://docs.aws.amazon.com/bedrock/latest/userguide/agents-userconfirmation.html) / [制御の返却](https://docs.aws.amazon.com/bedrock/latest/userguide/agents-returncontrol.html) / [エージェントの IAM 例](https://docs.aws.amazon.com/bedrock/latest/userguide/security_iam_id-based-policy-examples-agent.html)
-- [モデル呼び出しログ](https://docs.aws.amazon.com/bedrock/latest/userguide/model-invocation-logging.html)
+- [モデル呼び出しログ](https://docs.aws.amazon.com/bedrock/latest/userguide/model-invocation-logging.html) / [LoggingConfig](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_LoggingConfig.html)
+- [InferenceConfiguration](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InferenceConfiguration.html) / [ToolChoice](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html) / [ツール利用](https://docs.aws.amazon.com/bedrock/latest/userguide/tool-use.html)
+- [推論プロファイル](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html) / [クロスリージョン推論](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) / [サービスティア](https://docs.aws.amazon.com/bedrock/latest/userguide/service-tiers-inference.html) / [Provisioned Throughput](https://docs.aws.amazon.com/bedrock/latest/userguide/prov-throughput.html) / [バッチ](https://docs.aws.amazon.com/bedrock/latest/userguide/batch-inference.html) / [クォータ](https://docs.aws.amazon.com/bedrock/latest/userguide/quotas.html) / [プロンプトキャッシュ](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) / [ランタイムのメトリクス](https://docs.aws.amazon.com/bedrock/latest/userguide/monitoring-runtime-metrics.html)
+- [CreateGuardrail](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_CreateGuardrail.html) / [コンテンツフィルター](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-content-filters.html) / [ワードフィルター](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-word-filters.html) / [グラウンディング](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-contextual-grounding-check.html) / [バージョン](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-deploy.html)
+- [Knowledge Bases のクエリ設定](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-test-config.html) / [KnowledgeBaseVectorSearchConfiguration](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_agent-runtime_KnowledgeBaseVectorSearchConfiguration.html)
 
 **Amazon Bedrock AgentCore**
 
 - [概要](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/what-is-bedrock-agentcore.html) / [Runtime のセッション](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-sessions.html) / [Runtime のセキュリティ](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-security-best-practices.html)
 - [Gateway](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway.html) / [Gateway の概念](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-core-concepts.html) / [Identity](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/identity.html) / [Identity の機能](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/key-features-and-benefits.html)
 - [Policy](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy.html) / [Policy の概念](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy-core-concepts.html) / [時間的ポリシー](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy-temporal.html)
+- [ライフサイクル設定](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-lifecycle-settings.html) / [クォータ](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/bedrock-agentcore-limits.html) / [Gateway の受信認可](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-inbound-auth.html) / [送信認可](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-outbound-auth.html) / [Memory の用語](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/memory-terminology.html) / [VPC 接続](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agentcore-vpc.html)
 
 **Kiro と Amazon Q Developer**
 

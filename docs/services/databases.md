@@ -64,6 +64,76 @@ MySQL、PostgreSQL、MariaDB、Oracle、SQL Server、Db2 を実行するマネ�
 - レポートのような重いクエリをレプリカに逃がすと、本番の負荷を下げられます。
 - 両者は併用できます。
 
+Multi-AZ には 2 つの形態があります。「スタンバイは読めない」のは DB インスタンス配置のほうだけです。
+
+| 観点 | Multi-AZ DB インスタンス | Multi-AZ DB クラスター |
+| --- | --- | --- |
+| 構成 | プライマリ 1 + スタンバイ 1 | ライター 1 + 読み取り可能なリーダー 2(3 つの AZ) |
+| 複製 | 同期 | 準同期 |
+| スタンバイ、リーダーの読み取り | 不可 | 可 |
+
+| 設定 | 値 | 動作と落とし穴 |
+| --- | --- | --- |
+| フェイルオーバーの時間 | 通常 60〜120 秒 | DNS がスタンバイに切り替わる。接続は作り直す |
+| JVM の DNS キャッシュ | TTL を 60 秒以下に推奨 | 長いと古い IP に接続し続ける |
+| レプリカの数 | 1 つのインスタンスから同一リージョンに最大 15 個 | Auto Scaling はない |
+| レプリカの前提 | 自動バックアップの有効化 | バックアップ保持期間が 0 だと作成できない |
+| 遅延の監視 | `ReplicaLag` | 古い値が返る原因を確認する |
+| 書き込みの遅延 | Multi-AZ は同期複製のぶん増えることがある | シングル AZ より遅いことがある |
+
+**例**: 毎朝のレポートで本番が重いなら、リードレプリカを作りレポートをそちらに向けます。アプリの接続先を指定し直す必要があります。Multi-AZ に変更しても、読み取りの負荷は減りません。
+
+### IAM データベース認証 {#rds-iam-auth}
+
+パスワードの代わりに、AWS 署名バージョン 4 で作る認証トークンで接続します。MariaDB、MySQL、PostgreSQL で使えます。
+
+| 項目 | 内容 |
+| --- | --- |
+| 有効化 | DB の設定で有効にする(`--enable-iam-database-authentication`) |
+| トークンの寿命 | 15 分。接続の確立にだけ使い、既存の接続は切れない |
+| 必要な権限 | `rds-db:connect`。`rds:` ではない |
+| リソース | `arn:aws:rds-db:リージョン:アカウント:dbuser:リソース ID/DB ユーザー名` |
+| DB 側のユーザー | MySQL は `AWSAuthenticationPlugin`、PostgreSQL は `rds_iam` ロール |
+| 通信 | SSL/TLS を使う |
+
+```bash
+TOKEN=$(aws rds generate-db-auth-token \
+  --hostname mydb.example.ap-northeast-1.rds.amazonaws.com \
+  --port 3306 --username app_user --region ap-northeast-1)
+mysql -h mydb.example.ap-northeast-1.rds.amazonaws.com -u app_user \
+  --enable-cleartext-plugin --ssl-ca=global-bundle.pem --password="$TOKEN"
+```
+
+**落とし穴**:
+
+- Route 53 のカスタム DNS 名でトークンを作ることはできません。DB のエンドポイントを使います。
+- PostgreSQL では `rds_iam` を付けたユーザーは、パスワードで入れなくなります。
+- CloudWatch と CloudTrail は IAM 認証を記録しません。
+
+### Secrets Manager との統合 {#rds-secrets-manager}
+
+`--manage-master-user-password` を指定すると、RDS がマスターユーザーのパスワードを生成し、Secrets Manager で管理します。
+
+| 項目 | 内容 |
+| --- | --- |
+| ローテーション | デフォルトで 7 日ごと。スケジュールは変更できる |
+| 暗号化 | `aws/secretsmanager` かカスタマーマネージドキー(`MasterUserSecretKmsKeyId`)。管理を始めた後はキーを変更できない |
+| DB の削除 | シークレットも削除される |
+| 取得 | アプリは `GetSecretValue` で読む |
+
+**例**: Lambda の環境変数にパスワードを書く代わりに、シークレットを読むようにします。ローテーションで値が変わるので、長時間キャッシュすると認証エラーになります。ローテーションの詳細は [Secrets Manager と Parameter Store](secrets.md) を参照してください。
+
+### SSL/TLS {#rds-ssl}
+
+| エンジン | 強制する設定 | デフォルト |
+| --- | --- | --- |
+| PostgreSQL | パラメータ `rds.force_ssl=1` | バージョン 15 以降は 1(有効)。それより前は 0 |
+| MySQL | パラメータ `require_secure_transport=ON` | 無効 |
+
+設定はカスタムのパラメータグループで変えます。PostgreSQL で強制を有効にすると、SSL を使わない接続は拒否されます。
+
+クライアントは AWS の CA バンドル(`global-bundle.pem`)でサーバーを検証します。PostgreSQL の `sslmode=verify-full` はサーバー証明書とホスト名の両方を確認します。
+
 ## Aurora {#aurora}
 
 MySQL、PostgreSQL 互換のマネージドデータベースです。データは DB インスタンスから独立したクラスターボリュームに保存され、ライターとレプリカが共有します。
@@ -82,6 +152,58 @@ MySQL、PostgreSQL 互換のマネージドデータベースです。データ�
 
 !!! tip "リーダーエンドポイントの分散"
     リーダーエンドポイントは接続を分散します。分散の単位はクエリではなく接続です。接続プールを使う場合は接続を作り直すタイミングも考慮します。
+
+### エンドポイントの動作 {#aurora-endpoints}
+
+| エンドポイント | 細かい動作 |
+| --- | --- |
+| クラスター | 書き込みができる唯一のエンドポイント。フェイルオーバーで指す先が変わる |
+| リーダー | レプリカがなければプライマリに接続する。この場合は書き込みも通る |
+| カスタム | 1 クラスターに最大 5 個。最初は 1 つもない。自分でインスタンスを選ぶ |
+
+**例**: レポート用に大きなインスタンス 2 台、Web 用に小さなインスタンス 3 台がある場合、カスタムエンドポイントを 2 つ作ります。リーダーエンドポイントでは、レポートが小さなインスタンスに当たることがあります。
+
+**落とし穴**: カスタムエンドポイントの中のインスタンスは性能をそろえます。接続がどれに行くか選べないからです。
+
+### 昇格の優先度 {#aurora-failover-priority}
+
+レプリカには 0(最優先)から 15(最低)の優先度を付けます。同じ優先度なら、サイズの大きいレプリカが昇格します。レプリカがないとインスタンスを作り直すので、復旧に時間がかかります。
+
+データは 3 つの AZ にまたがる 6 つのストレージノードに同期して書き込まれます。
+
+### Aurora Serverless v2 {#aurora-serverless-v2}
+
+容量を ACU という単位で自動調整します。1 ACU は約 2 GiB のメモリと、対応する CPU とネットワークです。
+
+| 設定 | 値 | 動作 |
+| --- | --- | --- |
+| `MinCapacity` | 0 以上(0 は自動一時停止対応のバージョンのみ) | アイドル時の費用を決める。インスタンス数 × 最小 ACU が目安 |
+| `MaxCapacity` | 最大 256(プラットフォームのバージョンで異なる) | ピークの上限 |
+| `SecondsUntilAutoPause` | 300〜86,400 秒、デフォルト 300 | 最小 0 のとき、接続がないまま経過すると一時停止する |
+| スケーリング単位 | 0.5 ACU | インスタンスの追加なしで増減する |
+
+```bash
+aws rds modify-db-cluster --db-cluster-identifier my-cluster \
+  --serverless-v2-scaling-configuration \
+  MinCapacity=0,MaxCapacity=8,SecondsUntilAutoPause=600
+```
+
+**例**: 開発環境は夜間に接続がないので `MinCapacity=0` にします。朝の最初の接続は再開を待つため遅くなります。本番の Web アプリで同じ設定にすると、最初のリクエストがタイムアウトすることがあります。
+
+### Aurora グローバルデータベース {#aurora-global-database}
+
+1 つのプライマリリージョンと、最大 10 の読み取り専用セカンダリリージョンで構成します。
+
+| 項目 | 内容 |
+| --- | --- |
+| 書き込み | プライマリのクラスターのみ。グローバルデータベースのライターエンドポイントで接続する |
+| セカンダリの読み取り | 最大 16 個の読み取り専用インスタンス |
+| 書き込み転送 | 有効にするとセカンダリに来た書き込みをプライマリに転送する |
+| 切り替え(計画) | スイッチオーバー。リージョンのローテーションなどに使う |
+| 切り替え(障害) | フェイルオーバー。プライマリのリージョン障害時に使う |
+| 前提 | マネージドの切り替えには、同じメジャーとマイナーのエンジンバージョンが必要 |
+
+DynamoDB のグローバルテーブルと違い、どのリージョンにも書き込めるわけではありません。
 
 ## 接続プーリングと RDS Proxy {#connection-pooling}
 
@@ -120,6 +242,36 @@ DB への接続の確立は CPU とメモリを消費します。接続を使い
 | PostgreSQL | `SET`、`PREPARE`、一時テーブル、カーソル、`LISTEN`、シーケンス操作、セッションレベルのアドバイザリロック |
 
 CloudWatch の `DatabaseConnectionsCurrentlySessionPinned` で発生頻度を確認します。接続ごとに同じ `SET` を実行しているなら、プロキシの初期化クエリに移します。
+
+### RDS Proxy の設定 {#rds-proxy-settings}
+
+| 設定 | デフォルト | 範囲 | 動作 |
+| --- | --- | --- | --- |
+| `MaxConnectionsPercent` | 100(SQL Server は 10) | 1〜100 | DB の `max_connections` に対する、プールの上限の割合 |
+| `MaxIdleConnectionsPercent` | `MaxConnectionsPercent` の半分 | 0〜`MaxConnectionsPercent` | アイドル接続を残す割合。低いほど早く閉じる |
+| `ConnectionBorrowTimeout` | 120 秒 | 0〜300 秒 | 空き接続を待つ時間。超えるとタイムアウトエラー |
+| `IdleClientTimeout` | 1,800 秒(30 分) | - | アイドルのクライアント接続を閉じるまでの時間 |
+| `InitQuery` | なし | - | 新しい DB 接続を開くときに実行する SQL。パスワードなどは書かない |
+| `SessionPinningFilters` | なし | `EXCLUDE_VARIABLE_SETS` | 変数の `SET` によるピン留めを除外する。別の接続に変数が影響するおそれがある。PostgreSQL は非対応 |
+| `RequireTLS` | - | true / false | クライアント接続に TLS を強制する |
+| `DefaultAuthScheme` | `NONE` | `NONE`、`IAM_AUTH` | `IAM_AUTH` はプロキシから DB まで IAM で認証する |
+| `DebugLogging` | - | true / false | 詳細ログ。費用と性能に影響するので常用しない |
+
+**例**: `max_connections` が 1,000 の DB に、同じ DB を使うプロキシを 2 つ付けるなら、`MaxConnectionsPercent` をそれぞれ 40 にして、合計 800 接続にします。残りを管理者とほかの接続に残します。
+
+**症状と対処**:
+
+| 症状 | 原因と対処 |
+| --- | --- |
+| `Timed-out waiting to acquire database connection` | `ConnectionBorrowTimeout` 内に接続を取れない。ピン留めや長いトランザクションを確認し、`MaxConnectionsPercent` や DB の容量を増やす |
+| `MaxDatabaseConnectionsAllowed` に張り付く | プールの上限に達している |
+| 効果が出ない | ピン留めを確認する |
+
+CloudFormation や CLI では、接続設定はターゲットグループ `default` に付きます。プロキシを作ると自動で作られます。
+
+Secrets Manager で認証する場合は、プロキシの IAM ロールにシークレットの読み取りを許可します。ロールがシークレットを読めないと、プロキシは DB に接続できません。
+
+IAM 認証については、プロキシに接続するアプリの権限は `rds-db:connect` です。
 
 Lambda では、接続をハンドラの外で作り、実行環境の再利用時に使い回します。
 
@@ -170,6 +322,83 @@ def handler(event, context):
 !!! tip "選択の目安"
     データ構造、永続性、フェイルオーバーのいずれかが要件にあれば Valkey または Redis OSS。とにかく単純でマルチスレッドの性能が欲しければ Memcached です。
 
+一度作ったキャッシュのエンジンバージョンは、上げることはできますが、下げることはできません。
+
+### クラスターモード {#cluster-mode}
+
+| 観点 | 無効 | 有効 |
+| --- | --- | --- |
+| シャード | 1 | 1〜500 |
+| 読み取りレプリカ | 0〜5 | シャードごとに 0〜5 |
+| データの分割 | しない | シャードに分割 |
+| 自動フェイルオーバー | 任意 | 必須 |
+| オンラインのリシャード | なし | あり |
+| バックアップ | 1 つの .rdb | シャードごとの .rdb |
+| 接続先 | プライマリエンドポイント、リーダーエンドポイント | 設定エンドポイント |
+
+**例**: データが 1 ノードのメモリに収まらない、または書き込みが 1 ノードの限界を超えるならクラスターモードを有効にします。読み取りだけが足りないなら、無効のままレプリカを増やします。
+
+**落とし穴**: クラスターモードで使うクライアントは、クラスターに対応したものにします。クラスターモードを無効のまま読み取りをノードのエンドポイントに固定すると、ノードの増減で接続先を直す必要があります。リーダーエンドポイントはロードバランサーではなく、接続単位で DNS が振り分けるだけです。
+
+### レプリケーションと Multi-AZ {#elasticache-replication}
+
+複製は非同期です。プライマリが障害を起こすと、Multi-AZ が有効ならレプリカが自動で昇格し、プライマリエンドポイントの DNS が切り替わります。
+
+| 落とし穴 | 内容 |
+| --- | --- |
+| レプリカ 0 でノードが故障 | データをすべて失う |
+| フェイルオーバー直後 | 非同期複製のため、少量のデータを失うことがある |
+| Memcached | レプリケーションがない。ノードが落ちるとそのノードのデータは消える |
+
+Memcached のノードベースのクラスターでは、自動検出対応のクライアントが設定エンドポイントからノード一覧を取得します。
+
+### 認証と暗号化 {#elasticache-security}
+
+| 項目 | 内容 | 落とし穴 |
+| --- | --- | --- |
+| 転送中の暗号化 | `TransitEncryptionEnabled=true`。サーバーレスは常に有効 | クライアントでも TLS を有効にする。既存クラスターの変更は Valkey 7.2 以降、Redis OSS 7 以降 |
+| 保存時の暗号化 | `AtRestEncryptionEnabled=true`。Valkey ではデフォルト `true`。サーバーレスは常に有効 | ノードベースの Valkey と Redis OSS は作成時のみ。後から有効にするならバックアップから作り直す |
+| キー | サービス管理か、対称のカスタマーマネージドキー | - |
+| AUTH トークン | `--auth-token` で指定。16〜128 文字の印字可能文字 | 転送中の暗号化が必須。ノードベース専用 |
+| RBAC | ユーザーとユーザーグループで ACL を割り当てる | サーバーレスでは RBAC が必須。AUTH より優先して検討する |
+| IAM 認証 | 一時的な認証情報で接続する | パブリックエンドポイントのサーバーレスでは必須 |
+| mTLS | 非対応 | - |
+
+使えるのは、AUTH トークンでは次の記号だけです: `!`、`&`、`#`、`$`、`^`、`<`、`>`、`-`。
+
+トークンを無停止で変えるには、`ModifyReplicationGroup` を 2 段階で呼びます。
+
+```bash
+# 1. ROTATE: 新旧両方のトークンで接続できる
+aws elasticache modify-replication-group --replication-group-id app-cache \
+  --auth-token "$NEW_TOKEN" --auth-token-update-strategy ROTATE --apply-immediately
+# 2. アプリを新しいトークンに切り替えた後、SET: 新しいトークンだけにする
+aws elasticache modify-replication-group --replication-group-id app-cache \
+  --auth-token "$NEW_TOKEN" --auth-token-update-strategy SET --apply-immediately
+```
+
+### 追い出しとメモリ {#eviction}
+
+メモリが一杯になったときの動作は `maxmemory-policy` で決まります。デフォルトは `volatile-lru` です。
+
+| 値 | 動作 | 使いどころ |
+| --- | --- | --- |
+| `volatile-lru` | TTL 付きのキーから、最近使っていないものを消す | TTL を付けるキャッシュとデータの混在 |
+| `allkeys-lru` | すべてのキーから、最近使っていないものを消す | 純粋なキャッシュ |
+| `volatile-lfu`、`allkeys-lfu` | 使う頻度の低いものを消す | 頻度の偏りが大きい |
+| `volatile-random`、`allkeys-random` | ランダムに消す | - |
+| `volatile-ttl` | TTL が短いものから消す | - |
+| `noeviction` | 消さず、書き込みをエラーにする | データを失いたくない |
+
+**落とし穴**: デフォルトの `volatile-lru` で TTL を付けていないと、追い出せるキーがなくなり書き込みが失敗することがあります。TTL を付けるか、`allkeys-lru` にします。
+
+| メトリクスと設定 | 見方 |
+| --- | --- |
+| `Evictions` | 増え続けるならメモリ不足。スケールアップやシャードの追加を考える |
+| `CacheHitRate` | 低いなら TTL やキーの設計を見直す |
+| `DatabaseMemoryUsagePercentage` | 使用メモリの割合 |
+| `reserved-memory-percent` | データ以外に確保するメモリの割合。デフォルト 25 |
+
 ## キャッシュ戦略 {#caching-strategies}
 
 ```mermaid
@@ -213,6 +442,24 @@ def save_user(user_id, values):
     cache.set(f"user:{user_id}", json.dumps(user), ex=TTL)
     return user
 ```
+
+TTL は秒数です。Valkey と Redis OSS はミリ秒でも指定できます。`ex=300` のキーは 5 分後に期限切れになり、次の読み取りはキャッシュミスになります。
+
+**値の決め方の例**:
+
+| データ | TTL の例 | 理由 |
+| --- | --- | --- |
+| 商品の説明 | 3,600 秒 | ほとんど変わらない。更新時はライトスルーで上書きする |
+| 在庫数 | 30 秒 | 古いと困るが、毎回 DB を読むと重い |
+| 価格の決済時の確認 | キャッシュしない | 古い値を使えない |
+
+ここでの秒数は説明のための例です。どこまで古くても許せるかで決めます。
+
+**落とし穴**:
+
+- 遅延読み込みだけだと、DB を更新しても TTL まで古い値を返します。
+- ライトスルーだけだと、新しいノードやフェイルオーバーの後に、書かれるまでデータがありません。
+- すべてのキーを同じ TTL にすると一斉に切れて、DB に負荷が集中します。`ex=300 + random.randint(0, 60)` のように散らします。
 
 ## DAX、ElastiCache、CloudFront の使い分け {#cache-comparison}
 
@@ -294,6 +541,31 @@ def get_config():
 
 DynamoDB のプールモデルでは、テナント ID をパーティションキーの先頭に置きます。テナントごとのアクセスが自然に分散しますが、大きなテナントがホットキーになる場合はシャーディングを検討します。
 
+## 既定値と上限のまとめ {#numbers}
+
+| 項目 | 値 |
+| --- | --- |
+| RDS のリードレプリカ(同一リージョン) | 1 つのインスタンスから最大 15 個 |
+| Multi-AZ のフェイルオーバー | 通常 60〜120 秒 |
+| IAM 認証トークンの寿命 | 15 分 |
+| マスターユーザーのシークレットのローテーション | デフォルト 7 日 |
+| `rds.force_ssl` | PostgreSQL 15 以降は 1 がデフォルト |
+| Aurora レプリカ | 最大 15 個 |
+| Aurora の昇格優先度 | 0〜15 |
+| Aurora のカスタムエンドポイント | 1 クラスターに最大 5 個 |
+| Serverless v2 の容量 | 1 ACU は約 2 GiB。最小 0、0.5 単位 |
+| `SecondsUntilAutoPause` | 300〜86,400 秒 |
+| グローバルデータベースのセカンダリ | 最大 10 リージョン |
+| RDS Proxy の `ConnectionBorrowTimeout` | デフォルト 120 秒、最大 300 秒 |
+| RDS Proxy の `IdleClientTimeout` | デフォルト 1,800 秒 |
+| RDS Proxy の `MaxConnectionsPercent` | デフォルト 100(SQL Server は 10) |
+| RDS Proxy のピン留め | 16 KB を超えるステートメント |
+| ElastiCache のシャード | クラスターモード有効で最大 500 |
+| ElastiCache のレプリカ | シャードごとに最大 5 |
+| AUTH トークン | 16〜128 文字 |
+| `maxmemory-policy` | デフォルト `volatile-lru` |
+| `reserved-memory-percent` | デフォルト 25 |
+
 ## 試験のポイント {#exam-points}
 
 | こう問われたら | 答え |
@@ -314,6 +586,15 @@ DynamoDB のプールモデルでは、テナント ID をパーティション�
 | シンプルでマルチスレッドのキャッシュ | Memcached |
 | マルチテナントで強い分離が必要、規制がある | サイロモデル |
 | マルチテナントで費用効率を優先 | プールモデルと、テナント ID によるアクセス制御 |
+| DB のパスワードをアプリに持たせたくない | IAM データベース認証、または Secrets Manager |
+| IAM 認証で必要な権限 | `rds-db:connect` |
+| Aurora で用途別にインスタンスを分けたい | カスタムエンドポイント |
+| 夜間に Aurora の費用を下げたい | Serverless v2 の最小 0 ACU と自動一時停止 |
+| RDS Proxy で接続待ちのタイムアウト | `ConnectionBorrowTimeout`、ピン留め、`MaxConnectionsPercent` |
+| キャッシュのデータが 1 ノードに収まらない | クラスターモード有効 |
+| AUTH を有効にできない | 転送中の暗号化が必須 |
+| AUTH トークンを無停止で変えたい | `ROTATE` の後に `SET` |
+| `Evictions` が増える | メモリ不足。スケールするか TTL を見直す |
 
 ## 関連ページ {#related}
 
@@ -336,6 +617,19 @@ DynamoDB のプールモデルでは、テナント ID をパーティション�
 - [What is Amazon ElastiCache?](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/WhatIs.html)
 - [Comparing node-based Valkey, Memcached, and Redis OSS clusters](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/SelectEngine.html)
 - [Caching strategies](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/Strategies.html)
+- [Multi-AZ DB instance deployments](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZSingleStandby.html)
+- [Multi-AZ DB cluster deployments](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/multi-az-db-clusters-concepts.html)
+- [IAM database authentication](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.html)
+- [Password management with Secrets Manager](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-secrets-manager.html)
+- [ConnectionPoolConfiguration](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_ConnectionPoolConfiguration.html)
+- [Aurora Serverless v2: how it works](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-serverless-v2.how-it-works.html)
+- [Scaling to zero ACUs](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-serverless-v2-auto-pause.html)
+- [Aurora Global Database](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-global-database.html)
+- [Cluster mode disabled vs enabled](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/Replication.Redis-RedisCluster.html)
+- [AUTH command](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/auth.html)
+- [In-transit encryption](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/in-transit-encryption.html)
+- [At-rest encryption](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/at-rest-encryption.html)
+- [Engine-specific parameters](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/ParameterGroups.Engine.html)
 - [What is Amazon OpenSearch Service?](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/what-is.html)
 - [DAX: How it works](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DAX.concepts.html)
 - [SaaS Tenant Isolation Strategies: The isolation mindset](https://docs.aws.amazon.com/whitepapers/latest/saas-tenant-isolation-strategies/the-isolation-mindset.html)

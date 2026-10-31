@@ -131,6 +131,8 @@ Bedrock Guardrails で、コンテンツフィルター、拒否トピック、�
 
 ## 確認問題 {#self-check}
 
+まず基本を確認する問題です。本番形式の問題は[問題集](exercises/index.md)にあります（[IAM と STS](exercises/iam.md)、[KMS と暗号化](exercises/kms.md)、[AI サービス](exercises/ai.md) など）。
+
 ??? question "問1: スマホアプリの利用者をログインさせ、その利用者に S3 への一時的なアクセスを許可します。何を組み合わせますか？"
     Cognito ユーザープールでログインさせ、ID プールで AWS の一時的な認証情報に交換します。
 

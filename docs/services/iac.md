@@ -86,6 +86,34 @@ Outputs:
       Name: !Sub "${Stage}-orders-table"
 ```
 
+### セクションの詳細 {#section-details}
+
+| セクション | 書けるもの | 注意 |
+|---|---|---|
+| `AWSTemplateFormatVersion` | `2010-09-09` のみ | リテラルで書く。パラメータや関数は不可 |
+| `Description` | 0〜1,024 バイトの文字列 | リテラルで書く |
+| `Metadata` | 任意の情報 | `AWS::CloudFormation::Interface` でコンソールのパラメータを並べ替えられる |
+| `Parameters` | 最大 200 個 | 値は 4,096 バイトまで |
+| `Rules` | `RuleCondition`、`Assertions` | パラメータの組み合わせを作成前に検証 |
+| `Mappings` | 最大 200 個。2 段階のキー | パラメータ、擬似パラメータ、関数は書けない |
+| `Conditions` | `Fn::Equals` などの条件 | パラメータ、他の条件、マッピングを参照できる |
+| `Transform` | マクロの一覧。書いた順に処理 | `AWS::Serverless-2016-10-31`、`AWS::Include`、`AWS::LanguageExtensions` など |
+| `Resources` | 最大 500 個 | 必須 |
+| `Outputs` | 最大 200 個 | `Condition` と `Export` を書ける |
+
+```yaml
+Rules:
+  ProdNeedsLargeInstance:
+    RuleCondition: !Equals [!Ref Stage, prod]
+    Assertions:
+      - Assert: !Contains [[m7g.large, m7g.xlarge], !Ref InstanceType]
+        AssertDescription: "prod では m7g.large 以上を指定してください"
+```
+
+**例**: `Stage=prod`、`InstanceType=t3.micro` で作ると、リソースを作る前に検証で失敗し、`AssertDescription` が表示されます。
+
+テンプレートの大きさは、リクエストの本文で 51,200 バイト、S3 経由で 1 MB までです。本文の上限を超えるなら、S3 に置いて `--template-url` か `aws cloudformation package` を使います。
+
 ### パラメータ {#parameters}
 
 - `Type`: `String`、`Number`、`List<Number>`、`CommaDelimitedList` など
@@ -99,6 +127,30 @@ Outputs:
 ```yaml
 MasterUserPassword: "{{resolve:secretsmanager:my-db-secret:SecretString:password}}"
 ```
+
+| 属性 | 対象 | 意味 |
+|---|---|---|
+| `Type` | 必須 | `String`、`Number`、`List<Number>`、`CommaDelimitedList` など |
+| `Default` | | 既定値 |
+| `AllowedValues` | | 許可する値の一覧 |
+| `AllowedPattern` | `String`、`CommaDelimitedList` | 値**全体**に一致する正規表現 |
+| `MinLength`、`MaxLength` | `String` | 文字数 |
+| `MinValue`、`MaxValue` | `Number` | 値の範囲 |
+| `ConstraintDescription` | | 制約違反のときのメッセージ |
+| `NoEcho` | | 値を `***` で隠す |
+| `Description` | | 説明 |
+
+**落とし穴**: YAML で `AllowedValues` に `Yes`、`No` と書くと真偽値になります。文字列にするには引用符で囲みます。`NoEcho` は `Outputs` や `Metadata` に書いた値までは隠しません。
+
+動的参照の種類は次のとおりです。テンプレートに 60 個まで書けます。
+
+| 形式 | 取得先 |
+|---|---|
+| `{{resolve:ssm:/app/url:3}}` | Parameter Store の `String`、バージョン 3 |
+| `{{resolve:ssm-secure:/app/pass:3}}` | Parameter Store の `SecureString`(対応するリソースのみ) |
+| `{{resolve:secretsmanager:id:SecretString:password}}` | Secrets Manager |
+
+**落とし穴**: `AWS::CloudFormation::Init` のメタデータと EC2 の `UserData` では解決されません。`AWS::Serverless` などのトランスフォームには解決前の文字列が渡ります。
 
 ### マッピングと条件 {#mappings-conditions}
 
@@ -135,6 +187,62 @@ MasterUserPassword: "{{resolve:secretsmanager:my-db-secret:SecretString:password
 
 擬似パラメータの `AWS::Region`、`AWS::AccountId`、`AWS::StackName` は `!Ref` や `!Sub` で使えます。
 
+#### 関数の使用例 {#intrinsic-examples}
+
+```yaml
+# Ref と GetAtt の違い
+BucketName: !Ref ReportBucket            # バケットの名前
+BucketArn: !GetAtt ReportBucket.Arn      # 属性を指定
+
+# Sub と変数マップ、リテラル
+Url: !Sub "https://${Api}.execute-api.${AWS::Region}.${AWS::URLSuffix}/${Stage}"
+Key: !Sub
+  - "${Prefix}/${AWS::AccountId}"
+  - Prefix: reports
+Note: !Sub "echo ${!NOT_REPLACED}"       # ${NOT_REPLACED} のまま残る
+
+# Select、Split、Join
+FirstAz: !Select [0, !GetAZs ""]
+First: !Select [0, !Split [",", "a,b,c"]]   # a
+Name: !Join ["-", [!Ref Stage, orders]]     # prod-orders
+
+# Cidr: /16 から 3 つの /24 を作る
+Subnets: !Cidr ["10.0.0.0/16", 3, 8]
+
+# If と NoValue
+KmsKeyId: !If [IsProd, !Ref Key, !Ref AWS::NoValue]
+
+# UserData
+UserData: !Base64 |
+  #!/bin/bash
+  dnf install -y httpd
+```
+
+| 関数 | 注意 |
+|---|---|
+| `Fn::GetAZs` | `""` は `AWS::Region` と同じ |
+| `Fn::Cidr` | 第 3 引数はホスト部のビット数。8 なら `/24`(IPv4) |
+| `Fn::And`、`Fn::Or` | 条件は 2〜10 個 |
+| `Fn::Not` | 1 個の条件を反転 |
+| `Fn::ToJsonString`、`Fn::Length`、`Fn::ForEach` | `Transform: AWS::LanguageExtensions` が必要 |
+| `Fn::Transform` | テンプレートの一部にマクロを適用 |
+| `Fn::GetStackOutput` | 別アカウント、別リージョンのスタック出力を参照 |
+
+#### 擬似パラメータ {#pseudo-parameters}
+
+| 名前 | 値の例 |
+|---|---|
+| `AWS::AccountId` | `123456789012` |
+| `AWS::NotificationARNs` | スタックの通知先 ARN の一覧 |
+| `AWS::NoValue` | プロパティを削除する |
+| `AWS::Partition` | `aws`、`aws-cn`、`aws-us-gov` |
+| `AWS::Region` | `ap-northeast-1` |
+| `AWS::StackId` | スタックの ARN |
+| `AWS::StackName` | スタック名 |
+| `AWS::URLSuffix` | `amazonaws.com` |
+
+ARN を書くときは、`arn:aws:` と固定せず `arn:${AWS::Partition}:` にすると他のパーティションでも動きます。
+
 ### リソースの属性: DeletionPolicy {#deletion-policy}
 
 | 値 | スタック削除時の動作 |
@@ -149,6 +257,119 @@ MasterUserPassword: "{{resolve:secretsmanager:my-db-secret:SecretString:password
 `DeletionPolicy` はテンプレートからリソースを外す更新でも効きます。一方、プロパティ変更による**置き換え**では効きません。置き換えで元のリソースを残すには `UpdateReplacePolicy` を使います。
 
 他に `DependsOn`（作成順の指定）、`CreationPolicy`（起動完了の信号を待つ）、`UpdatePolicy`（Auto Scaling グループの更新方法）があります。
+
+### その他のリソース属性 {#resource-attributes}
+
+#### DependsOn {#depends-on}
+
+作成の順序を明示します。削除は逆の順序です。`!Ref` や `!GetAtt` を使うと依存は暗黙に決まるので、書く必要はありません。
+
+**例**: `AWS::EC2::EIP` が VPC のインターネットゲートウェイのアタッチメントに依存するときなど、参照のない依存に使います。
+
+#### UpdateReplacePolicy {#update-replace-policy}
+
+`Delete`、`Retain`、`Snapshot` を指定します。**置き換えのとき**に古いリソースをどうするかを決めます。`DeletionPolicy` はスタックの削除とテンプレートからの除去のときに効きます。データを守るなら両方を書きます。
+
+#### CreationPolicy {#creation-policy}
+
+対象は `AWS::AutoScaling::AutoScalingGroup`、`AWS::EC2::Instance`、`AWS::CloudFormation::WaitCondition` です。
+
+| 項目 | 既定値 | 説明 |
+|---|---|---|
+| `ResourceSignal.Count` | 1 | 待つ成功シグナルの数 |
+| `ResourceSignal.Timeout` | `PT5M` | 待ち時間。最大 12 時間 |
+| `AutoScalingCreationPolicy.MinSuccessfulInstancesPercent` | 100 | 成功が必要な割合 |
+
+```yaml
+WebGroup:
+  Type: AWS::AutoScaling::AutoScalingGroup
+  CreationPolicy:
+    ResourceSignal:
+      Count: 3
+      Timeout: PT15M
+```
+
+**症状**: `cfn-signal` を送らない、タイムアウトが短い、またはインスタンスからエンドポイントに届かないと、シグナルが足りずに `CREATE_FAILED` になり、ロールバックします。
+
+#### UpdatePolicy {#update-policy}
+
+| ポリシー | 項目 | 既定値 |
+|---|---|---|
+| `AutoScalingRollingUpdate` | `MaxBatchSize` | 1(最大 100) |
+| | `MinInstancesInService` | 0 |
+| | `MinActiveInstancesPercent` | 100 |
+| | `MinSuccessfulInstancesPercent` | 100 |
+| | `PauseTime` | `WaitOnResourceSignals` が `true` なら `PT5M` |
+| | `WaitOnResourceSignals` | `false` |
+| | `SuspendProcesses` | 未指定 |
+| `AutoScalingReplacingUpdate` | `WillReplace` | `true` で新しいグループを作る |
+| `AutoScalingScheduledAction` | `IgnoreUnmodifiedGroupSizeProperties` | スケジュールアクションで変わった容量を更新で戻さない |
+| `CodeDeployLambdaAliasUpdate` | `ApplicationName`、`DeploymentGroupName` など | エイリアスの更新で CodeDeploy を動かす |
+
+`AutoScalingReplacingUpdate` の `WillReplace: true` は `AutoScalingRollingUpdate` より優先されます。
+
+**例**: 6 台のグループで、`MaxBatchSize: 2`、`MinInstancesInService: 4`、`WaitOnResourceSignals: true`、`PauseTime: PT10M` なら、2 台ずつ置き換え、シグナルを最大 10 分待ちます。
+
+#### Metadata 属性 {#metadata-attribute}
+
+リソースに任意の JSON を付けます。`AWS::CloudFormation::Init` は `cfn-init` が読む設定です。
+
+### ヘルパースクリプト {#cfn-helpers}
+
+| スクリプト | 役割 |
+|---|---|
+| `cfn-init` | `AWS::CloudFormation::Init` を読み、パッケージの導入やファイルの作成を行う |
+| `cfn-signal` | `CreationPolicy` や `WaitCondition` にシグナルを送る |
+| `cfn-get-metadata` | メタデータを取得する |
+| `cfn-hup` | メタデータの変更を検知し、フックを動かすデーモン。確認の間隔は既定で 15 分 |
+
+`cfn-init` は `packages`、`groups`、`users`、`sources`、`files`、`commands`、`services` の順に処理します。順序を変えるには `configSets` を使います。
+
+```yaml
+Instance:
+  Type: AWS::EC2::Instance
+  CreationPolicy:
+    ResourceSignal: {Timeout: PT10M}
+  Metadata:
+    AWS::CloudFormation::Init:
+      config:
+        packages:
+          dnf: {httpd: []}
+        files:
+          /var/www/html/index.html:
+            content: "hello"
+        services:
+          systemd:
+            httpd: {enabled: true, ensureRunning: true}
+  Properties:
+    ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64}}"
+    InstanceType: t3.micro
+    UserData: !Base64
+      Fn::Sub: |
+        #!/bin/bash
+        /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource Instance --region ${AWS::Region}
+        /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource Instance --region ${AWS::Region}
+```
+
+`-e $?` で `cfn-init` の終了コードを渡します。失敗すれば `FAILURE` のシグナルになります。
+
+`cfn-hup` のフックは `triggers=post.add`、`post.update`、`post.remove` と `action=` を書きます。
+
+### カスタムリソース {#custom-resources}
+
+CloudFormation にない処理を Lambda か SNS で実行します。種類は `AWS::CloudFormation::CustomResource` か `Custom::名前` です。
+
+| 項目 | 内容 |
+|---|---|
+| `ServiceToken` | 必須。Lambda か SNS の ARN |
+| `ServiceTimeout` | 1〜3,600 秒。既定は 3,600 秒 |
+| リクエスト | `RequestType` が `Create`、`Update`、`Delete` |
+| 応答先 | リクエストの署名付き S3 URL。`Status` は `SUCCESS` か `FAILED` |
+| 応答の項目 | `Status`、`PhysicalResourceId`、`StackId`、`RequestId`、`LogicalResourceId`、`Data` |
+
+**例**: スタック作成時に S3 へ初期データを入れる Lambda です。`Fn::GetAtt` で `Data` のキーを読めます。
+
+**症状**: 関数が例外で落ちて応答を送らないと、スタックは `ServiceTimeout` まで待ち、既定では 1 時間動きません。`Delete` の処理を忘れるとスタックの削除でも止まります。必ず `try` と `finally` で応答し、短い `ServiceTimeout` を指定します。
 
 ## テンプレートの更新と変更の確認 {#updating-stacks}
 
@@ -188,6 +409,59 @@ aws cloudformation execute-change-set \
 
 変更セットは更新の成功を保証しません。実行時の条件による失敗は起こりえます。
 
+`describe-change-set` の主な項目です。
+
+| 項目 | 値 | 意味 |
+|---|---|---|
+| `Action` | `Add`、`Modify`、`Remove` | 変更の種類 |
+| `Replacement` | `True`、`False`、`Conditional` | 置き換えの有無 |
+| `Scope` | `Properties`、`Tags` など | 変更の範囲 |
+
+`Conditional` は実行時の値で決まります。**例**: `!GetAtt` の値に依存するプロパティがあるときです。
+
+`--change-set-type CREATE` で新しいスタックの変更セットも作れます。ネストされたスタックも確認するなら `--include-nested-stacks` を指定します。
+
+### スタックポリシー {#stack-policy}
+
+更新時の保護です。削除からの保護ではありません。
+
+| 状態 | 動作 |
+|---|---|
+| 設定なし(既定) | 全リソースの更新を許可 |
+| 設定あり | **明示的に Allow したものだけ更新できる**。`Deny` は `Allow` より優先 |
+
+```json
+{
+  "Statement": [
+    {"Effect": "Allow", "Action": "Update:*", "Principal": "*", "Resource": "*"},
+    {
+      "Effect": "Deny",
+      "Action": ["Update:Replace", "Update:Delete"],
+      "Principal": "*",
+      "Resource": "LogicalResourceId/OrdersTable"
+    }
+  ]
+}
+```
+
+アクションは `Update:Modify`、`Update:Replace`、`Update:Delete`、`Update:*` です。
+
+保護されたリソースを 1 回だけ更新するなら、`update-stack` の `--stack-policy-during-update-body` で一時的なポリシーを渡します。
+
+**症状**: ポリシーで拒否された更新は失敗します。
+
+**削除からの保護**には、スタックの終了保護(`--enable-termination-protection`)を使います。親で設定するとネストされたスタックにも適用され、ネストされたスタックに直接は設定できません。
+
+### 機能の承認(capabilities) {#capabilities}
+
+| 値 | 必要な場面 |
+|---|---|
+| `CAPABILITY_IAM` | IAM リソースを含む |
+| `CAPABILITY_NAMED_IAM` | 名前を指定した IAM リソースを含む |
+| `CAPABILITY_AUTO_EXPAND` | マクロやトランスフォームを含み、変更セットの確認なしで直接デプロイする |
+
+**症状**: `RoleName` を指定したロールを `CAPABILITY_IAM` でデプロイすると、`InsufficientCapabilities` になります。`CAPABILITY_NAMED_IAM` にします。
+
 ### ドリフト検出 {#drift}
 
 手作業の変更などで、実際の設定がテンプレートとずれた状態を検出します。
@@ -199,6 +473,12 @@ aws cloudformation execute-change-set \
 
 ドリフトを検出するだけで自動修復はしません。差分を考慮して更新する機能として、ドリフト対応の変更セット（drift-aware change sets）もあります。
 
+| 項目 | 値 |
+|---|---|
+| スタックの状態 | `DRIFTED`、`IN_SYNC`、`NOT_CHECKED` |
+| リソースの状態 | `DELETED`、`MODIFIED`、`IN_SYNC`、`NOT_CHECKED` |
+| プロパティの差分 | `ADD`、`NOT_EQUAL`、`REMOVE` |
+
 ### ネストされたスタックと StackSets {#nested-stacks-stacksets}
 
 | 機能 | 用途 |
@@ -208,6 +488,29 @@ aws cloudformation execute-change-set \
 | StackSets | 1 回の操作で複数のアカウントとリージョンへ展開する |
 
 部品の再利用ならネスト、ライフサイクルの違うスタック間の共有ならエクスポートです。
+
+#### ネストとエクスポートの比較 {#nested-vs-exports}
+
+| 観点 | ネストされたスタック | エクスポートと `ImportValue` |
+|---|---|---|
+| 関係 | 親子。親と一緒に更新される | 独立したスタック |
+| 値の渡し方 | `Parameters` と `!GetAtt Child.Outputs.Name` | `Export` と `!ImportValue` |
+| 変更 | テンプレートを変えて親を更新 | 参照があると値を変更、削除できない |
+| 向く場面 | 再利用する部品 | ネットワークなど別のチームが管理する基盤 |
+
+ネストの子テンプレートは `TemplateURL` で S3 の URL を指定します。ローカルのファイルは `aws cloudformation package` で S3 に上げて URL に置き換えられます。
+
+**例**: VPC のスタックが `prod-vpc-id` をエクスポートし、アプリのスタックが参照しています。参照されている間は、VPC のスタックでこの出力を変更すると失敗します。先に参照側を変えます。
+
+#### StackSets の設定 {#stacksets-settings}
+
+| 項目 | 内容 |
+|---|---|
+| セルフマネージド権限 | `AWSCloudFormationStackSetAdministrationRole` と `AWSCloudFormationStackSetExecutionRole` を自分で作る |
+| サービスマネージド権限 | AWS Organizations と連携。ロールは自動。新しいアカウントへの自動デプロイが可能 |
+| `MaxConcurrentCount`、`MaxConcurrentPercentage` | 同時に処理するアカウント数 |
+| `FailureToleranceCount`、`FailureTolerancePercentage` | 許容する失敗の数 |
+| `RegionConcurrencyType` | リージョンを順に、または並列に処理 |
 
 ## スタックのロールバックと失敗 {#stack-failures}
 
@@ -222,6 +525,18 @@ aws cloudformation execute-change-set \
 | 更新のロールバックも失敗 | `UPDATE_ROLLBACK_FAILED` | `continue-update-rollback` |
 
 開発時は「正常にプロビジョニングされたリソースを保持する」オプションを使うと、成功したリソースを残し、失敗した場所から再開できます。
+
+#### 作成の失敗時の動作 {#on-failure}
+
+| 指定 | 動作 |
+|---|---|
+| `--on-failure ROLLBACK` | 既定。リソースを消す |
+| `--on-failure DO_NOTHING` | そのまま残す。原因の調査に使う |
+| `--on-failure DELETE` | スタックごと消す |
+| `--disable-rollback` | 残す。`--on-failure` と同時に指定できない |
+| `--timeout-in-minutes` | 指定時間で作成を失敗にする |
+
+**例**: EC2 のユーザーデータの失敗を調べたいなら、`DO_NOTHING` で作り、残ったインスタンスの `/var/log/cfn-init.log` を確認します。
 
 ### ロールバックトリガー {#rollback-triggers}
 
@@ -330,6 +645,115 @@ Resources:
   # OrdersErrorsAlarm とフック関数の定義は省略
 ```
 
+その他のリソースは次のとおりです。
+
+| リソース | 内容 |
+|---|---|
+| `AWS::Serverless::Application` | 別の SAM アプリをネストする |
+| `AWS::Serverless::Connector` | リソース間の権限を簡単に定義する |
+| `AWS::Serverless::GraphQLApi` | AppSync の GraphQL API |
+| `AWS::Serverless::WebSocketApi` | WebSocket API |
+
+### Globals {#sam-globals}
+
+共通の設定を 1 か所に書きます。対象は `AWS::Serverless::Api`、`Function`、`HttpApi`、`SimpleTable`、`StateMachine` などで、一覧にないリソースやプロパティは書けません。
+
+```yaml
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 10
+    Environment:
+      Variables:
+        STAGE: prod
+    Layers:
+      - !Ref Common
+Resources:
+  Orders:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/orders/
+      Handler: app.handler
+      Timeout: 30
+      Environment:
+        Variables:
+          TABLE: orders
+      Layers:
+        - !Ref OrdersLayer
+```
+
+| 型 | 上書きの方法 | 上の例の結果 |
+|---|---|---|
+| 文字列、数値 | 置き換え | `Timeout` は 30 |
+| マップ | マージ | `Variables` は `STAGE` と `TABLE` の両方 |
+| リスト | 追加 | `Layers` は `Common` と `OrdersLayer` の両方 |
+
+**落とし穴**: リソース側でグローバルのプロパティを消すことはできません。一部の関数だけで使うものは `Globals` に書かないようにします。
+
+### Events {#sam-events}
+
+`AWS::Serverless::Function` の `Events` の `Type` は次のとおりです。
+
+| 種類 | 例 |
+|---|---|
+| API | `Api`、`HttpApi` |
+| ポーリング | `SQS`、`Kinesis`、`DynamoDB`、`MSK`、`MQ`、`SelfManagedKafka`、`DocumentDB` |
+| プッシュ | `S3`、`SNS`、`CloudWatchLogs`、`Cognito`、`IoTRule`、`AlexaSkill` |
+| スケジュール、ルール | `Schedule`、`ScheduleV2`、`EventBridgeRule`、`CloudWatchEvent` |
+
+```yaml
+Events:
+  Queue:
+    Type: SQS
+    Properties:
+      Queue: !GetAtt OrdersQueue.Arn
+      BatchSize: 10
+  Daily:
+    Type: ScheduleV2
+    Properties:
+      ScheduleExpression: "cron(0 15 * * ? *)"
+  Upload:
+    Type: S3
+    Properties:
+      Bucket: !Ref UploadBucket
+      Events: s3:ObjectCreated:*
+```
+
+**落とし穴**: `S3` のイベントの `Bucket` は同じテンプレートのバケットを `!Ref` で指定します。
+
+### Policies {#sam-policies}
+
+```yaml
+Policies:
+  - AWSXRayDaemonWriteAccess          # AWS 管理ポリシーの名前
+  - DynamoDBCrudPolicy:               # ポリシーテンプレート
+      TableName: !Ref OrdersTable
+  - S3ReadPolicy:
+      BucketName: !Ref ReportBucket
+  - SQSSendMessagePolicy:
+      QueueName: !GetAtt OrdersQueue.QueueName
+  - Statement:                        # インラインポリシー
+      - Effect: Allow
+        Action: ssm:GetParameter
+        Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/app/*"
+```
+
+| テンプレート | プレースホルダー |
+|---|---|
+| `DynamoDBReadPolicy`、`DynamoDBWritePolicy`、`DynamoDBCrudPolicy` | `TableName` |
+| `S3ReadPolicy`、`S3WritePolicy`、`S3CrudPolicy` | `BucketName` |
+| `SQSPollerPolicy`、`SQSSendMessagePolicy` | `QueueName` |
+| `SNSPublishMessagePolicy` | `TopicName` |
+| `KMSDecryptPolicy`、`KMSEncryptPolicy` | `KeyId` |
+| `LambdaInvokePolicy` | `FunctionName` |
+| `StepFunctionsExecutionPolicy` | `StateMachineName` |
+| `SSMParameterReadPolicy` | `ParameterName` |
+| `AWSSecretsManagerGetSecretValuePolicy` | `SecretArn` |
+| `KinesisStreamReadPolicy` | `StreamName` |
+| `EventBridgePutEventsPolicy` | `EventBusName` |
+
+プレースホルダーがないテンプレートでも、空のオブジェクト `{}` を書きます。
+
 ### プロジェクトのディレクトリ構成 {#project-structure}
 
 `sam init` が作る形を基本に、関数のコード、イベント、テストを分けます。
@@ -376,6 +800,33 @@ sam local start-api
 sam deploy --guided
 ```
 
+#### その他の SAM コマンド {#sam-cli-more}
+
+| コマンド | 用途 |
+|---|---|
+| `sam package` | コードを ZIP にして S3 に上げ、テンプレートを書き換える |
+| `sam delete` | スタックと関連の成果物を削除 |
+| `sam list` | `endpoints`、`resources`、`stack-outputs` を表示 |
+| `sam traces` | X-Ray のトレースを取得 |
+| `sam publish` | Serverless Application Repository に公開 |
+| `sam pipeline bootstrap` | パイプラインに必要なリソースを作成 |
+| `sam pipeline init` | CI/CD パイプラインの設定を生成 |
+
+| オプション | 効果 |
+|---|---|
+| `sam build --use-container` | Lambda に近いコンテナの中でビルド。ネイティブ依存のあるパッケージに使う |
+| `sam build --parallel`、`--cached` | ビルドの短縮 |
+| `sam deploy --guided`、`-g` | 対話で設定し、`samconfig.toml` に保存 |
+| `sam deploy --no-execute-changeset` | 変更セットを作るだけで適用しない |
+| `sam deploy --no-confirm-changeset` | 確認なしで適用 |
+| `sam deploy --no-fail-on-empty-changeset` | 差分なしでも成功で終わる。CI で使う |
+| `sam deploy --resolve-s3` | S3 バケットを自動で作る |
+| `sam deploy --on-failure` | `ROLLBACK`、`DELETE`、`DO_NOTHING` |
+| `sam sync --watch` | ローカルの変更を監視して同期 |
+| `sam sync --code` | コードだけを同期 |
+
+**落とし穴**: `sam sync` は開発環境向けです。CloudFormation を迂回する更新があり、本番には `sam deploy` か CI/CD を使います。
+
 ### DeploymentPreference によるカナリア {#deployment-preference}
 
 `AutoPublishAlias` と `DeploymentPreference` を組み合わせると、裏で CodeDeploy が作られ、段階的にトラフィックを移します。
@@ -404,6 +855,26 @@ sequenceDiagram
 ```
 
 戦略全体の比較は [CI/CD](cicd.md) を参照してください。
+
+`DeploymentPreference` のプロパティです。
+
+| プロパティ | 既定値、例 |
+|---|---|
+| `Type` | 必須。`Canary10Percent5Minutes`、`Linear10PercentEvery1Minute`、`AllAtOnce`、カスタム設定の名前 |
+| `Enabled` | `true` |
+| `Alarms` | 発火でロールバックするアラーム |
+| `Hooks` | `PreTraffic`、`PostTraffic` |
+| `Role` | CodeDeploy が使うロール。省略すると自動で作られる |
+| `TriggerConfigurations` | SNS の通知 |
+| `PassthroughCondition` | `Enabled` のパラメータ化に使う |
+
+| 関連のプロパティ | 効果 |
+|---|---|
+| `AutoPublishAlias` | コードの変更で新しいバージョンを作り、エイリアスを更新する |
+| `AutoPublishCodeSha256` | バージョンの発行を決めるコードのハッシュを指定 |
+| `AutoPublishAliasAllProperties` | `true` でコード以外の変更でも新しいバージョンを作る |
+
+**落とし穴**: `AutoPublishAlias` がないと、`DeploymentPreference` で移すバージョンがありません。フック関数は結果を報告するので、`codedeploy:PutLifecycleEventHookExecutionStatus` の権限が必要です。
 
 ### 別のステージへのデプロイ {#deploy-stages}
 
@@ -437,6 +908,34 @@ sam deploy --stack-name orders-staging --resolve-s3 \
 ```
 
 既存環境への更新も同じコマンドです。SAM が変更セットを作り、差分を適用します。`confirm_changeset` を有効にすると実行前に確認できます。
+
+### samconfig の構造 {#samconfig}
+
+既定の名前は `samconfig`、場所はプロジェクトのルート、形式は TOML です。
+
+```toml
+version = 0.1
+
+[default.global.parameters]
+stack_name = "orders"
+
+[default.build.parameters]
+parallel = true
+
+[default.deploy.parameters]
+resolve_s3 = true
+capabilities = "CAPABILITY_IAM"
+
+[default.sync.parameters]
+watch = true
+
+[default.local_start_api.parameters]
+warm_containers = "EAGER"
+```
+
+形式は `[環境.コマンド.parameters]` です。`sam local start-api` のような複数語のコマンドは `local_start_api` と書きます。
+
+優先順位は、コマンドライン、コマンドごとの設定、`global` の順です。`--parameter-overrides` か `parameter_overrides` はテンプレートの `Parameters` の `Default` より優先されます。別のファイルなら `--config-file`、環境なら `--config-env` です。
 
 ## テストの書き方と実行 {#testing}
 
@@ -584,6 +1083,22 @@ class OrdersStack(Stack):
         bucket.grant_read(fn)
 ```
 
+### アプリとスタック {#cdk-app-stack}
+
+| 階層 | 役割 | 例 |
+|---|---|---|
+| App | 全体の入れ物 | `app = cdk.App()` |
+| Stack | CloudFormation のスタック 1 つに対応 | `OrdersStack(app, "Orders", env=...)` |
+| Construct | リソースの部品 | `s3.Bucket(self, "Reports")` |
+
+```python
+app = cdk.App()
+OrdersStack(app, "Orders-prod", env=cdk.Environment(account="111122223333", region="ap-northeast-1"))
+app.synth()
+```
+
+**論理 ID の落とし穴**: コンストラクトの ID や親子関係を変えると論理 ID が変わります。CloudFormation はこれを別のリソースと見なし、置き換えます。データを持つリソースでは `removal_policy=RemovalPolicy.RETAIN` も確認します。
+
 ### CDK のコマンド {#cdk-cli}
 
 | コマンド | 用途 |
@@ -595,6 +1110,44 @@ class OrdersStack(Stack):
 | `cdk destroy` | スタックを削除 |
 
 `cdk deploy` が初めて失敗するときは、`bootstrap` の未実行をまず疑います。
+
+追加のコマンドとオプションです。
+
+| コマンド、オプション | 用途 |
+|---|---|
+| `cdk init app --language python` | プロジェクトの雛形 |
+| `cdk ls` | スタックの一覧 |
+| `cdk watch` | 変更を監視して自動でデプロイ |
+| `cdk deploy --all` | すべてのスタック |
+| `cdk deploy --hotswap` | 可能なら CloudFormation を迂回して更新。開発用 |
+| `cdk deploy --require-approval` | 手動の承認が必要な変更を指定 |
+| `cdk deploy --no-rollback` | 失敗してもロールバックしない |
+| `cdk deploy --parameters`、`--outputs-file` | パラメータの指定、出力の保存 |
+| `cdk diff --fail` | 差分があれば非 0 で終わる。CI で使う |
+
+### ブートストラップ {#cdk-bootstrap}
+
+```bash
+cdk bootstrap aws://111122223333/ap-northeast-1
+```
+
+アカウントとリージョンの組み合わせごとに必要です。S3 バケット(アセット)、ECR リポジトリ(イメージ)、IAM ロールを作ります。
+
+**症状**: 実行していないと、`cdk deploy` がブートストラップの不足のエラーで失敗します。別のリージョンへ増やしたときにも発生します。
+
+### コンテキスト {#cdk-context}
+
+| 指定 | 内容 |
+|---|---|
+| `cdk.json` | プロジェクトの設定と機能フラグ |
+| `cdk.context.json` | 自動で保存されるルックアップの結果 |
+| `--context key=value`、`-c` | コマンドラインから。値は常に文字列 |
+| `self.node.try_get_context("key")` | コードから読む |
+| `cdk context --reset キー`、`--clear` | キャッシュの削除 |
+
+**例**: `Vpc.from_lookup` の結果は `cdk.context.json` に保存されます。以後は再利用され、合成の結果が変わりません。
+
+**落とし穴**: `cdk.context.json` もソース管理に入れます。入れないと、別の環境での合成で値が変わることがあります。ファイルを手で編集せず、`cdk context` を使います。
 
 ### assertions によるテスト {#cdk-testing}
 
@@ -657,6 +1210,62 @@ aws sts get-caller-identity   # 今の認証情報を確認する
 
 優先順位は、コマンドラインオプション、環境変数、設定ファイルの順です。
 
+### 設定ファイルと優先順位 {#cli-config}
+
+```ini
+# ~/.aws/credentials
+[default]
+aws_access_key_id = <アクセスキー ID>
+aws_secret_access_key = <シークレットアクセスキー>
+```
+
+```ini
+# ~/.aws/config
+[profile prod]
+region = ap-northeast-1
+output = json
+role_arn = arn:aws:iam::111122223333:role/Deploy
+source_profile = default
+retry_mode = standard
+max_attempts = 3
+```
+
+| 優先順 | 場所 |
+|---|---|
+| 1 | コマンドラインのオプション(`--region`、`--output`、`--profile`) |
+| 2 | 環境変数 |
+| 3 | ロールの引き受け |
+| 4 | Web ID によるロールの引き受け |
+| 5 | IAM Identity Center |
+| 6 | `credentials` ファイル |
+| 7 | カスタムプロセス |
+| 8 | `config` ファイル |
+| 9 | コンテナの認証情報 |
+| 10 | EC2 のインスタンスプロファイル |
+
+同じプロファイルの認証情報が両方のファイルにあれば、`credentials` が優先されます。
+
+| 環境変数 | 意味 |
+|---|---|
+| `AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY` | 認証情報 |
+| `AWS_SESSION_TOKEN` | 一時認証情報のトークン |
+| `AWS_PROFILE` | プロファイル |
+| `AWS_REGION` | リージョン。`AWS_DEFAULT_REGION` より優先 |
+| `AWS_DEFAULT_OUTPUT` | 出力形式 |
+| `AWS_PAGER` | ページャー。空にすると無効 |
+| `AWS_CONFIG_FILE`、`AWS_SHARED_CREDENTIALS_FILE` | 設定ファイルの場所 |
+| `AWS_MAX_ATTEMPTS`、`AWS_RETRY_MODE` | 再試行 |
+
+**例**: `AWS_ACCESS_KEY_ID` が環境に残っていると、`credentials` の `[prod]` を入れ替えても環境変数の認証情報が使われます。`--profile prod` を指定すれば、プロファイルが優先されます。`aws sts get-caller-identity` で確かめます。
+
+**再試行**: 既定の `standard` モードでは、最大 2 回の再試行で合計 3 回の呼び出しです。
+
+| ロールの設定 | 意味 |
+|---|---|
+| `role_arn` | 引き受けるロール |
+| `source_profile` | 認証に使うプロファイル |
+| `credential_source` | `Ec2InstanceMetadata` などの認証情報の取得元。`source_profile` の代わりに使う |
+
 ### 出力形式 {#cli-output}
 
 | `--output` | 用途 |
@@ -683,6 +1292,18 @@ aws lambda list-functions \
 
 大量のデータでは、サーバー側で絞れる `--filters` を先に使うほうが効率的です。
 
+`--query` の主な書き方です。
+
+| 書き方 | 意味 |
+|---|---|
+| `Reservations[].Instances[]` | 配列を平らにする |
+| `Functions[?Runtime=='python3.12']` | 条件で絞る |
+| `Functions[].{Name:FunctionName,Mem:MemorySize}` | 項目を選び、名前を付ける |
+| `sort_by(Images, &CreationDate)[-1]` | 並べ替えて最後の 1 件 |
+| `length(Functions)` | 件数 |
+
+ページネーションのある API では、`--query` はサービス側の結果を受けた後に動きます。`--max-items` を使っても、絞り込みは取得した分に対して行われます。
+
 ### ページネーション {#cli-pagination}
 
 CLI は既定で複数の API 呼び出しを行い、全件を集めて返します。
@@ -699,6 +1320,10 @@ CLI は既定で複数の API 呼び出しを行い、全件を集めて返し�
 aws s3api list-objects-v2 --bucket my-bucket --max-items 100
 aws s3api list-objects-v2 --bucket my-bucket --max-items 100 --starting-token <NextToken>
 ```
+
+既定では S3 のページサイズは 1,000 です。大きなバケットで `--page-size 100` にすると、呼び出しが増えますが、1 回あたりの処理が軽くなり、タイムアウトを避けられます。
+
+**スケルトンの生成**: `--generate-cli-skeleton` で入力の雛形を作り、`--cli-input-json file://input.json` か `--cli-input-yaml` で実行できます。原因の調査には `--debug` を使います。
 
 ### ドライランで権限を確かめる {#cli-dry-run}
 
@@ -728,6 +1353,39 @@ aws ec2 run-instances --dry-run --image-id ami-12345678 --instance-type t3.micro
 | 長時間実行 | 約 12 時間でセッション終了 |
 | シェル | Bash、PowerShell、Z shell |
 | VPC 環境 | VPC 内で起動可能。ただし永続ストレージなし |
+
+環境の仕様と上限です。
+
+| 項目 | 値 |
+|---|---|
+| コンピュート | 1 vCPU、2 GiB の RAM |
+| 同時に開けるシェル | リージョンごとに 10 |
+| 月の利用量 | リージョンごとにクォータあり。引き上げ可能 |
+| VPC 環境の時間切れ | 20〜30 分の非アクティブ。`$HOME` が消える |
+
+**落とし穴**: 非アクティブの判定はキーボードとポインターの操作だけです。プロセスが動いていても、操作がなければ終わります。長いジョブには向きません。
+
+## 既定値と上限のまとめ {#numbers}
+
+| 項目 | 値 |
+|---|---|
+| テンプレートの本文 / S3 | 51,200 バイト / 1 MB |
+| リソース / パラメータ / 出力 / マッピング | 500 / 200 / 200 / 200 |
+| パラメータの値 | 4,096 バイト |
+| 動的参照 | テンプレートに 60 個 |
+| ロールバックトリガー | 5 個、監視 0〜180 分 |
+| `CreationPolicy` の `Count` / `Timeout` | 1 / `PT5M`(最大 12 時間) |
+| `MaxBatchSize` / `MinInstancesInService` | 1(最大 100)/ 0 |
+| `cfn-hup` の間隔 | 15 分 |
+| カスタムリソースの `ServiceTimeout` | 既定 3,600 秒、1〜3,600 |
+| Description | 1,024 バイト |
+| `Fn::And`、`Fn::Or` の条件 | 2〜10 個 |
+| CLI の再試行(`standard`) | 2 回(合計 3 回) |
+| S3 の既定のページサイズ | 1,000 |
+| CloudShell の永続ストレージ | リージョンごとに 1 GB |
+| CloudShell のデータ保持 | 120 日 |
+| CloudShell の非アクティブ / 長時間 | 20〜30 分 / 約 12 時間 |
+| CloudShell の同時シェル | 10 |
 
 ## 試験のポイント {#exam-points}
 

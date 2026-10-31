@@ -21,6 +21,63 @@ SDK は **認証情報プロバイダーチェーン** を順に探し、最初�
 
 詳細な権限設計と STS の使い方は [IAM](iam.md) を参照する。
 
+boto3 が探す順番は次の通り。先に見つかったものが使われ、そこで探索は止まる。
+
+1. `boto3.client()` や `Session` に渡した引数
+2. 環境変数（`AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`、`AWS_SESSION_TOKEN`）
+3. ロールの引き受け（`~/.aws/config` の `role_arn`）
+4. Web ID のロールの引き受け（`AWS_ROLE_ARN`、`AWS_WEB_IDENTITY_TOKEN_FILE`）
+5. IAM Identity Center
+6. 共有認証情報ファイル（`~/.aws/credentials`）
+7. コンソールの認証情報でのログイン
+8. 設定ファイル（`~/.aws/config`）
+9. コンテナの認証情報（ECS のタスクロールなど）
+10. EC2 のインスタンスメタデータ（IMDS）
+
+順番が効く例を示す。EC2 にインスタンスプロファイルを付けたのに権限エラーになるとき、環境変数や `~/.aws/credentials` に古いキーがあると、そちらが優先されている。`aws sts get-caller-identity` で実際の ID を確認する。
+
+一時的な認証情報には `AWS_SESSION_TOKEN` も必要で、これがないと認証エラーになる。チェーンのプロバイダーは、期限が切れる前に自動で更新する。別のアカウントの処理には STS の `AssumeRole` を使う。
+
+リージョンは `AWS_REGION` か設定ファイルの `region`、クライアントの `region_name` で指定する。未指定なら `NoRegionError` が出る。
+
+### クライアントの設定と優先順位 {#client-config}
+
+同じ設定を複数の場所に書いたら、次の順で優先する。
+
+1. コードのクライアント設定
+2. 環境変数
+3. 共有設定ファイル（`~/.aws/config`）
+4. SDK の既定値
+
+```ini
+# ~/.aws/config
+[default]
+region = ap-northeast-1
+retry_mode = standard
+max_attempts = 3
+defaults_mode = in-region
+```
+
+`AWS_RETRY_MODE=adaptive` を環境に設定し、設定ファイルが `standard` なら、`adaptive` になる。コードで `Config(retries={"mode": "standard"})` と書けば、環境変数より優先される。
+
+| `botocore.config.Config` の項目 | 既定 | 内容 |
+| --- | --- | --- |
+| `retries` | | `mode`、`max_attempts`、`total_max_attempts` |
+| `connect_timeout` | 60 秒 | 接続を張るまでの時間 |
+| `read_timeout` | 60 秒 | 応答を待つ時間 |
+| `max_pool_connections` | 10 | 接続プールの最大数 |
+| `tcp_keepalive` | false | TCP キープアライブ |
+| `region_name` | | リージョン |
+
+`defaults_mode` で値の組をまとめて選ぶ SDK もある。接続タイムアウトの値は次の通り。
+
+| モード | 向いている場面 | `connectTimeoutInMillis` |
+| --- | --- | --- |
+| `standard` | 多くの場合 | 3,100 |
+| `in-region` | 同じリージョンのサービスを呼ぶ | 1,100 |
+| `cross-region` | 別のリージョンのサービスを呼ぶ | 3,100 |
+| `mobile` | モバイルアプリ | 30,000 |
+
 ### クライアントとリソース {#clients}
 
 ```python
@@ -48,6 +105,71 @@ except ClientError as e:
 
 クライアントは作るのにコストがかかるので、使い回す。Lambda ならハンドラーの外で作る。エラーの種類は `Error.Code` で判定する。
 
+| | クライアント | リソース |
+| --- | --- | --- |
+| API | サービスの API と 1 対 1 | オブジェクト指向の高レベル API |
+| 新機能 | 追加される | AWS は新しい機能を追加しない方針 |
+| スレッド | 一般に安全 | 安全ではない。スレッドごとに作る |
+
+### 接続の再利用 {#connection-reuse}
+
+接続を毎回作ると、TCP と TLS のハンドシェイクの分だけ遅くなる。特に Lambda ではハンドラーの外でクライアントを作り、実行環境の再利用で接続も使い回す。
+
+```python
+import boto3
+
+# 実行環境ごとに 1 回だけ作られる
+table = boto3.resource("dynamodb").Table("orders")
+
+
+def handler(event, context):
+    return table.get_item(Key={"id": event["id"]}).get("Item")
+```
+
+ハンドラーの中で作ると、呼び出しのたびに認証情報の解決と接続の確立が走る。
+
+| SDK | 既定の動き |
+| --- | --- |
+| boto3 | `max_pool_connections` は 10。スレッドが多いならこれを増やす |
+| JavaScript v3 | 既定で TCP 接続を再利用する。`maxSockets` で接続数を設定できる |
+
+boto3 で 50 スレッドが 1 つのクライアントを使うと、プールの 10 を超えた分は接続を作り直す。`Connection pool is full` の警告が出るなら `max_pool_connections=50` にする。
+
+Lambda は使われていない接続を時間とともに切る。切れた接続を使うとエラーになるので、キープアライブを使う。DB のように接続数が限られる相手には、RDS Proxy などの接続プールも検討する。
+
+複数のプロセスで動かすときは、プロセスごとにクライアントを作る。
+
+### コードでのエラー処理 {#error-handling}
+
+boto3 のエラーは大きく 2 種類に分かれる。
+
+| 種類 | 例 | いつ起きるか |
+| --- | --- | --- |
+| サービスのエラー | `ClientError` | AWS が応答を返した。`Error.Code` を見る |
+| クライアント側のエラー | `EndpointConnectionError`、`ConnectTimeoutError`、`ReadTimeoutError` | 応答がない。`botocore.exceptions` にある |
+
+```python
+import botocore.exceptions
+
+try:
+    table_client.put_item(TableName="orders", Item=item)
+except table_client.exceptions.ConditionalCheckFailedException:
+    pass                                   # サービスごとの例外クラス
+except botocore.exceptions.ClientError as e:
+    code = e.response["Error"]["Code"]
+    status = e.response["ResponseMetadata"]["HTTPStatusCode"]
+    request_id = e.response["ResponseMetadata"]["RequestId"]
+    print(code, status, request_id)        # サポートへの問い合わせに RequestId を使う
+    raise
+except botocore.exceptions.ReadTimeoutError:
+    raise                                  # 書き込みが成功している可能性がある
+```
+
+`ClientError` が届いた時点で、SDK の再試行はすでに終わっている。ここでさらに同じ回数を再試行すると、回数が掛け算になる。
+
+!!! warning "5XX やタイムアウトの書き込みは、成功している可能性がある"
+    DynamoDB は、書き込みの 500 について、成功か失敗か分からないと説明している。`TransactWriteItems` なら再試行してよい。`PutItem`、`UpdateItem`、`DeleteItem` は、アイテムの状態を読んで確認するか、条件式を付けて再試行する。
+
 ### ページネーション {#pagination}
 
 一覧 API は結果を分割して返す。1回の呼び出しで全件が返ると思わない。**ページネーター** を使うと、`NextToken` などの扱いを任せられる。
@@ -67,6 +189,24 @@ for page in paginator.paginate(
 
 DynamoDB の `Query` と `Scan` も同じで、1回の応答は 1 MB までに区切られる。詳細は [DynamoDB](dynamodb.md) を参照する。
 
+| `PaginationConfig` | 内容 |
+| --- | --- |
+| `PageSize` | 1 ページの件数。全体の件数は変わらず、API の呼び出し回数が変わる |
+| `MaxItems` | 全体で返す最大件数。超えると止まり、続きのトークンを返す |
+| `StartingToken` | 前回のトークンから再開する |
+
+`PageSize` はサービスによって、指定より多く返したり少なく返したりする。
+
+具体例を示す。5,000 件のオブジェクトに `MaxItems=10` を指定すると、10 件で止まる。`PageSize=100` だけなら全 5,000 件を返し、API を約 50 回呼ぶ。`PageSize` を小さくすると、1 回の呼び出しのタイムアウトは避けられるが回数は増える。
+
+```python
+# ページの中身を JMESPath で絞る
+for key in paginator.paginate(Bucket="my-bucket").search("Contents[?Size > `1024`].Key"):
+    print(key)
+```
+
+**落とし穴**は、自分でループを書くときにトークンを見ないこと。`list_objects_v2` の 1 回の呼び出しだけで全件を処理すると、それ以降のオブジェクトを黙って取りこぼす。エラーも出ないので気づきにくい。
+
 ### ウェイター {#waiters}
 
 リソースが目的の状態になるまで、一定間隔でポーリングする機能。自前のループを書かずに済む。
@@ -82,6 +222,10 @@ waiter.wait(
 
 使える名前は `client.waiter_names` で確認する。
 
+`Delay` は待つ秒数、`MaxAttempts` は確認の回数。既定はウェイターごとに決まっていて、`table_exists` は 20 秒間隔で 25 回、合計 500 秒まで待つ。時間切れになると `WaiterError` が起きる。作成そのものが失敗したのではないこともあるので、状態を確認する。
+
+Lambda の中で既定のまま待つと、関数のタイムアウトのほうが先に切れる。長い待ちは [Step Functions](step-functions.md) の待機に移す。
+
 ### 部分的な失敗 {#partial-failures}
 
 バッチ API は、呼び出しが成功しても一部のアイテムが失敗していることがある。応答を必ず確認する。
@@ -93,6 +237,20 @@ waiter.wait(
 | SQS `SendMessageBatch` | `Failed` |
 | Kinesis `PutRecords` | `FailedRecordCount` |
 | EventBridge `PutEvents` | `FailedEntryCount` |
+| Firehose `PutRecordBatch` | `FailedPutCount` |
+
+これらは例外にならないので、SDK の再試行も `try` も働かない。失敗分だけを取り出し、バックオフを入れて再送する。
+
+```python
+items = {"orders": requests}
+while items:
+    res = dynamodb.batch_write_item(RequestItems=items)
+    items = res.get("UnprocessedItems") or None
+    if items:
+        time.sleep(random.uniform(0, 1))  # 実際は回数の上限とバックオフを付ける
+```
+
+boto3 の `Table.batch_writer()` は、バッファと未処理アイテムの再送を自動で行う。
 
 ## リトライ {#retries}
 
@@ -103,8 +261,15 @@ waiter.wait(
 | 429、`ThrottlingException`、`ProvisionedThroughputExceededException` | する（バックオフ） |
 | 500、502、503、504 | する |
 | 接続エラー、タイムアウト | する（冪等なら） |
-| 400、401、403、404 | しない |
+| `AccessDeniedException`、`ValidationException`、`ResourceNotFoundException` | しない |
 | `ConditionalCheckFailedException` | しない（ロジックで扱う） |
+
+HTTP ステータスだけで判定しない。SDK はまずエラーコードを見る。
+
+- DynamoDB の `ProvisionedThroughputExceededException` は HTTP **400** で返るが、スロットリングなので再試行する。
+- HTTP 400 の `RequestTimeout` は一時的なエラーとして再試行する。
+- 同じ HTTP 400 でも `ValidationException` は再試行しない。
+- 5XX でもスロットリングのコードならスロットリングとして扱う。
 
 ### 指数バックオフとジッター {#backoff-jitter}
 
@@ -163,6 +328,75 @@ SDK は自動で再試行する。自前で実装する前に、まず設定を�
 !!! note "2026 年の新しい再試行動作"
     SDK の新しい再試行動作は、現在 `AWS_NEW_RETRIES_2026=true` でオプトインする形で提供されている。バックオフの時間、リトライ枠の消費、サービスごとの既定値が変わる。たとえば DynamoDB の既定は 4 回になる。
 
+#### 回数の指定を比べる
+
+| 指定の場所 | `3` の意味 | 実際の呼び出し |
+| --- | --- | --- |
+| `AWS_MAX_ATTEMPTS=3` | 総数 | 最初の 1 回 + 再試行 2 回 = 3 回 |
+| `~/.aws/config` の `max_attempts = 3` | 総数 | 3 回 |
+| `Config(retries={"total_max_attempts": 3})` | 総数 | 3 回 |
+| `Config(retries={"max_attempts": 3})` | 再試行の回数 | 最初の 1 回 + 再試行 3 回 = 4 回 |
+
+| 実行環境とモード | 既定の総数 |
+| --- | --- |
+| boto3（`legacy` が既定） | 5 回 |
+| boto3 の `standard` | 3 回 |
+| AWS CLI v2（`standard` が既定） | 3 回 |
+| AWS CLI v1（`legacy` が既定） | 5 回。DynamoDB は 10 回 |
+
+1 にすると再試行なしになる。
+
+!!! warning "「SDK の既定は standard」は SDK によって異なる"
+    AWS の SDK 共通の説明では `standard` が既定だが、boto3 の現在の既定は `legacy` と明記されている。コードで `mode` を明示すれば、この違いに左右されない。
+
+#### 新しい動作の待ち時間
+
+`AWS_NEW_RETRIES_2026=true` で有効になる計算は次の通り。
+
+```text
+待ち時間 = random(0, 1) × min(20 秒, 基準 × 2^再試行番号)
+再試行番号は最初の再試行を 0 とする
+```
+
+| エラーの種類 | 基準の遅延 |
+| --- | --- |
+| 一時的なエラー（503、接続の失敗など） | 50 ms |
+| スロットリング | 1,000 ms |
+| DynamoDB と DynamoDB Streams の一時的なエラー | 25 ms（既定の総数は 4 回） |
+
+```text
+503 が続く場合: 1 回目の再試行の前に 0〜50 ms、2 回目の前に 0〜100 ms
+429 が続く場合: 1 回目の再試行の前に 0〜1,000 ms、2 回目の前に 0〜2,000 ms
+```
+
+#### リトライ枠（トークンバケット）
+
+`standard` と `adaptive` には再試行の予算があり、障害が広がると SDK は再試行をやめてすぐエラーを返す。
+
+| 項目 | 値（新しい動作） |
+| --- | --- |
+| 予算の容量 | 500 トークン |
+| 一時的なエラーの再試行 | 14 トークン消費 |
+| スロットリングの再試行 | 5 トークン消費 |
+| 再試行の成功 | 消費した分を戻す |
+| 最初の 1 回で成功 | 1 トークン戻す |
+
+一時的なエラーが続けば、500 ÷ 14 で約 35 回の再試行で枯渇する。すると「回数が残っているのに再試行されない」という動きになるが、これは障害時に負荷を増やさないための正常な動作である。
+
+サービスが `x-amz-retry-after` ヘッダーを返したら、SDK はその値を参考に待つ（計算した待ち時間から +5,000 ms の範囲）。
+
+SQS の `ReceiveMessage` のようなロングポーリングの操作は、枠が枯渇しても待ってからエラーを返す。そうしないと、ループで呼ぶコードが高速で再試行してしまう。
+
+#### 再試行の掛け算
+
+複数の層で再試行すると回数が増える。
+
+```text
+SDK: 3 回 × アプリの再試行: 3 回 × Step Functions の Retry: 3 回 = 最大 27 回
+```
+
+再試行は 1 つの層に寄せる。通常は SDK に任せ、アプリでの再試行を重ねない。
+
 ## タイムアウト {#timeouts}
 
 タイムアウトがないと、遅い相手につられて自分のリソースが枯渇する。接続と読み取りの両方を設定する。
@@ -176,6 +410,24 @@ SDK は自動で再試行する。自前で実装する前に、まず設定を�
 - **内側のタイムアウトを外側より短くする**。例: API Gateway の 29 秒 > Lambda のタイムアウト > SDK のタイムアウト。こうしないと、内側の処理が続いているのに外側がエラーを返してしまう。
 - Lambda では `context.get_remaining_time_in_millis()` で残り時間を確認する。
 
+#### 予算の計算 {#timeout-budget}
+
+タイムアウトと再試行は掛け算で効く。
+
+```text
+既定のまま: 接続 60 秒 + 読み取り 60 秒、総数 3 回
+最悪で (60 + 60) × 3 = 360 秒 + バックオフ
+→ Lambda のタイムアウトが 10 秒なら、SDK のエラー処理に届く前に関数が止まる
+
+見直し: 接続 1 秒、読み取り 2 秒、総数 3 回
+最悪で (1 + 2) × 3 = 9 秒 + バックオフ
+→ Lambda の 10 秒に収まり、残りの時間でエラーを返せる
+```
+
+症状は Lambda の `Task timed out`。呼び先が遅いときでもコードの `except` に入らず、フォールバックもログも動かない。
+
+逆に短すぎると、成功するはずの呼び出しまで失敗して再試行が増える。読み取りタイムアウトは、その API の遅い場合の応答時間より長くする。SQS のロングポーリングなら 20 秒より長くする。
+
 ## 冪等性 {#idempotency}
 
 同じ操作を何度実行しても結果が変わらない性質。リトライ、少なくとも1回の配信（SQS、SNS、EventBridge、Lambda の非同期とイベントソースマッピング）、Firehose があるので、耐障害性の前提になる。
@@ -187,6 +439,29 @@ SDK は自動で再試行する。自前で実装する前に、まず設定を�
 | 実行名 | Step Functions の Standard の `name` |
 | 重複排除 ID | SQS FIFO の `MessageDeduplicationId` |
 | 既存の仕組み | Powertools for AWS Lambda の冪等性ユーティリティ |
+
+各サービスのトークンには、それぞれ有効な範囲がある。
+
+| API | パラメーター | 有効な範囲 | 同じトークンで内容が違うと |
+| --- | --- | --- | --- |
+| DynamoDB `TransactWriteItems` | `ClientRequestToken` | 完了から 10 分 | `IdempotentParameterMismatch` |
+| EC2 `RunInstances` など | `ClientToken` | 64 文字までの ASCII。リージョンをまたがない | `IdempotentParameterMismatch` |
+| Step Functions `StartExecution` | `name` | Standard のみ。閉じた実行の名前は 90 日後に再利用できる | `ExecutionAlreadyExists` |
+| SQS FIFO | `MessageDeduplicationId` | 5 分 | 受け付けるが配信しない |
+| EventBridge Scheduler `CreateSchedule` | `ClientToken` | 省略するとランダムに生成される | |
+
+AWS の SDK は `TransactWriteItems` のトークンを自動で付ける。SDK の再試行には効くが、アプリケーションが呼び直すときは別のトークンになる。業務の単位で重複を防ぐなら、注文 ID から作った値を自分で渡す。
+
+```python
+dynamodb.transact_write_items(
+    TransactItems=items,
+    ClientRequestToken=f"order-{order_id}-pay",   # 再試行でも同じ値
+)
+```
+
+`uuid4()` を再試行のたびに生成すると、毎回別のトークンになって冪等にならない。トークンは **業務の操作ごとに 1 つ** 作り、再試行では使い回す。
+
+Step Functions の `StartExecution` は、実行中の同じ名前、同じ入力なら成功して同じ応答を返す。実行が閉じているか、入力が違うと `ExecutionAlreadyExists` になる。Express ワークフローは冪等ではない。
 
 ```python
 from botocore.exceptions import ClientError
@@ -434,6 +709,36 @@ item = {k: deserializer.deserialize(v) for k, v in record["dynamodb"]["NewImage"
 | JSON で float を読み込む | `json.loads` の結果を直接渡すと float が残る | `json.loads(s, parse_float=Decimal)` |
 | 日付の型がない | ISO 8601 の文字列か、エポック秒の数値 | TTL はエポック秒の数値 |
 
+#### Decimal の扱い {#decimal}
+
+```python
+from decimal import Decimal
+
+Decimal(0.1)        # Decimal('0.1000000000000000055511151231257827...')  float の誤差を引き継ぐ
+Decimal(str(0.1))   # Decimal('0.1')
+Decimal("0.1")      # Decimal('0.1')
+```
+
+`Decimal(0.1)` は float の誤差ごと 38 桁を超え、保存時にエラーになる。文字列から作る。
+
+`Table.put_item` の数値は `int` か `Decimal` で渡す。読むとすべて `Decimal` で返るので、`amount + 1.5` のように float と計算すると `TypeError` になる。`Decimal("1.5")` と計算する。
+
+Python の型と DynamoDB の型は次のように対応する。
+
+| Python | DynamoDB |
+| --- | --- |
+| `None` | Null（`NULL`） |
+| `bool` | Boolean（`BOOL`） |
+| `int`、`Decimal` | Number（`N`） |
+| `str` | String（`S`） |
+| `bytes`、`Binary` | Binary（`B`） |
+| 文字列の `set` | String Set（`SS`） |
+| 数値の `set` | Number Set（`NS`） |
+| `list` | List（`L`） |
+| `dict` | Map（`M`） |
+
+空文字はキー以外の属性なら保存できる。空の Set は保存できない。
+
 データ設計は [DynamoDB](dynamodb.md) を参照する。
 
 ## 単体テスト {#unit-testing}
@@ -530,10 +835,45 @@ def test_save_order():
 
 Lambda のテストイベントは [Lambda](lambda.md)、外部依存のモック API は [API Gateway](api-gateway.md)、テストのテンプレート管理は [IaC](iac.md) を参照する。
 
+## 既定値と上限のまとめ {#numbers}
+
+| 項目 | 値 |
+| --- | --- |
+| boto3 の既定の再試行モード | `legacy` |
+| `legacy` の総数（boto3） | 5 回 |
+| `standard` の総数 | 3 回 |
+| 共通の設定 `AWS_MAX_ATTEMPTS`、`max_attempts` | 総数。1 で再試行なし |
+| boto3 の `Config` の `max_attempts` | 再試行の回数。総数ではない |
+| 新しい動作の基準の遅延 | 一時的 50 ms、スロットリング 1,000 ms |
+| 新しい動作の DynamoDB | 基準 25 ms、総数 4 回 |
+| 新しい動作のバックオフの上限 | 20 秒 |
+| 新しい動作のリトライ枠 | 500 トークン。一時的 14、スロットリング 5 |
+| boto3 の `connect_timeout`、`read_timeout` | それぞれ 60 秒 |
+| `max_pool_connections` | 10 |
+| `defaults_mode` の接続タイムアウト | `standard` 3,100 ms、`in-region` 1,100 ms、`mobile` 30,000 ms |
+| `table_exists` ウェイター | 20 秒間隔で 25 回 |
+| DynamoDB の `ClientRequestToken` | 完了から 10 分有効 |
+| EC2 の `ClientToken` | 64 文字までの ASCII |
+| Step Functions の実行名の再利用 | 閉じてから 90 日後 |
+| DynamoDB の数値 | 38 桁まで |
+
 ## 試験のポイント {#exam-points}
 
 | こう問われたら | 答え |
 | --- | --- |
+| `Config` の `max_attempts=3` の呼び出し回数 | 最大 4 回（再試行の回数なので） |
+| `AWS_MAX_ATTEMPTS=3` の呼び出し回数 | 最大 3 回（総数なので） |
+| 環境変数と設定ファイルが違う | コード > 環境変数 > 設定ファイル |
+| 同じテーブルの大量書き込みでスロットリングが続く | `adaptive` モードか、キューで流量を調整 |
+| Lambda の `Task timed out` で例外処理が動かない | SDK のタイムアウトを関数より短くする |
+| `Connection pool is full` の警告 | `max_pool_connections` を増やす |
+| Lambda の 2 回目以降の呼び出しを速くする | クライアントをハンドラーの外で作る |
+| EC2 の権限が反映されない | チェーンの上位の環境変数やファイルを確認 |
+| DynamoDB の 400 は再試行すべきか | コードで判定。スロットリングなら再試行 |
+| `Decimal(0.1)` で保存が失敗 | `Decimal(str(value))` |
+| `IdempotentParameterMismatch` | 同じトークンで内容が違う |
+| ウェイターが時間内に終わらない | `WaiterError`。`Delay` と `MaxAttempts` を見直す |
+| 全件を取る | `PageSize` ではなくページネーター全体を回す |
 | スロットリング（429）への対応 | 指数バックオフとジッター |
 | 多数のクライアントが同時に再試行する | ジッターを追加 |
 | 再試行で重複が起きても問題ないように | 処理を冪等にする |
@@ -567,6 +907,14 @@ Lambda のテストイベントは [Lambda](lambda.md)、外部依存のモッ�
 
 ## 参考 {#references}
 
+- [Boto3 credentials](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/credentials.html)
+- [Boto3 error handling](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/error-handling.html)
+- [Boto3 resources](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/resources.html)
+- [AWS CLI retries](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-retries.html)
+- [EC2 API idempotency](https://docs.aws.amazon.com/ec2/latest/devguide/ec2-api-idempotency.html)
+- [Step Functions StartExecution](https://docs.aws.amazon.com/step-functions/latest/apireference/API_StartExecution.html)
+- [Lambda best practices](https://docs.aws.amazon.com/lambda/latest/dg/best-practices.html)
+- [Reusing connections in Node.js](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/node-reusing-connections.html)
 - [Retry behavior（AWS SDKs and Tools）](https://docs.aws.amazon.com/sdkref/latest/guide/feature-retry-behavior.html)
 - [Standardized credential providers](https://docs.aws.amazon.com/sdkref/latest/guide/standardized-credentials.html)
 - [Smart configuration defaults](https://docs.aws.amazon.com/sdkref/latest/guide/feature-smart-config-defaults.html)

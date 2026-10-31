@@ -40,6 +40,28 @@ CMD ["gunicorn", "--bind", "0.0.0.0:8080", "app:app"]
 - シークレットをイメージに入れません。実行時に注入します。
 - `.dockerignore` で不要なファイルを除きます。
 
+### 命令の詳細 {#dockerfile-instructions}
+
+| 命令 | 注意点 | 例 |
+| --- | --- | --- |
+| `FROM` | マルチステージでは `AS` で名前を付ける | `FROM golang:1.22 AS build` |
+| `COPY` | ファイルのコピーだけ。`--from` で前のステージから取れる | `COPY --from=build /app /app` |
+| `ADD` | `COPY` に加え、URL の取得とアーカイブの展開ができる | 必要なときだけ使う |
+| `RUN` | ビルド時に 1 回実行し、結果がレイヤーになる | `RUN dnf install -y curl` |
+| `ENV` | ビルド中と実行時の両方で使える環境変数 | `ENV LOG_LEVEL=info` |
+| `ARG` | ビルド時だけの変数。実行時には残らない | `ARG VERSION=1.0` |
+| `USER` | 以降の命令と実行時のユーザー | `USER 1000` |
+| `EXPOSE` | ドキュメントとしての宣言。ポートを公開しない | `EXPOSE 8080` |
+| `HEALTHCHECK` | Docker のヘルスチェック。ECS はタスク定義の `healthCheck` を使う | |
+| `ENTRYPOINT` | 実行ファイルを固定する | `ENTRYPOINT ["python", "app.py"]` |
+| `CMD` | 既定の引数やコマンド。`docker run` の引数で置き換わる | `CMD ["--port", "8080"]` |
+
+`CMD` と `ENTRYPOINT` のどちらかは必要です。上の例を組み合わせると `python app.py --port 8080` が動きます。`docker run my-app --port 9090` なら `CMD` だけが置き換わります。
+
+ECS のタスク定義では、`entryPoint` が `ENTRYPOINT` を、`command` が `CMD` を上書きします。Kubernetes では `command` が `ENTRYPOINT` を、`args` が `CMD` を上書きします。名前が違うので注意します。
+
+**落とし穴**: `RUN pip install` の前に `COPY . .` を書くと、ソースを 1 行変えるだけで依存関係を入れ直します。シークレットを `ENV` や `ARG` に入れるとイメージの履歴に残ります。
+
 ## ECR {#ecr}
 
 ### 認証とプッシュ、プル {#ecr-auth}
@@ -62,6 +84,10 @@ docker push 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/my-app:1.4.2
 - プルには、`ecr:BatchGetImage`、`ecr:GetDownloadUrlForLayer` が必要です。
 - ログインのエラーが出たら、AWS CLI の更新と権限を確認します。Docker 認証情報ヘルパーも使えますが、MFA には対応していません。
 
+トークンの権限は、取得した IAM プリンシパルと同じです。そのプリンシパルがアクセスできる ECR レジストリなら使えます。
+
+**症状**: 12 時間を超えたバッチでプッシュすると、`no basic auth credentials` や認証エラーになります。プッシュの直前に取り直します。別アカウントのレジストリなら、`docker login` の URI をそのレジストリにします。
+
 ### タグと不変タグ {#image-tags}
 
 | 指定方法 | 例 | 特徴 |
@@ -80,6 +106,13 @@ docker push 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/my-app:1.4.2
 | `MUTABLE_WITH_EXCLUSION` | 可変とするが、指定のフィルターに一致するタグだけ上書き不可 |
 
 本番の環境では不変タグを使うことで、同じタグの中身が変わる事故を防げます。プルスルーキャッシュを使うリポジトリは、更新のために可変にしておきます。
+
+```bash
+aws ecr put-image-tag-mutability --repository-name my-app \
+  --image-tag-mutability IMMUTABLE
+```
+
+設定はすべてのタグに効きます。`latest` を毎回プッシュする CI が不変タグのリポジトリで失敗するのはこのためです。コミットのタグを使うか、`latest` だけ除外フィルターに入れます。
 
 ### 環境とイメージタグ {#environments-image-tags}
 
@@ -132,6 +165,30 @@ ECS はデプロイ時にタグをダイジェストに解決するので、サ�
 - `countType` は主に `imageCountMoreThan`(個数)と `sinceImagePushed`(経過日数)です。
 - 条件を満たしてから 24 時間以内に実行されます。
 
+`selection` の項目は次のとおりです。
+
+| キー | 値 | 注意 |
+| --- | --- | --- |
+| `rulePriority` | 整数 | 一意にする。小さいほど先 |
+| `tagStatus` | `tagged`、`untagged`、`any` | `tagged` なら `tagPatternList` か `tagPrefixList` が必須 |
+| `tagPatternList` | `prod*` のようなパターン | `*` が使える。推奨される指定方法 |
+| `tagPrefixList` | `prod` のような接頭辞 | `tagPatternList` と同時に指定しない |
+| `countType` | `imageCountMoreThan`、`sinceImagePushed`、`sinceImagePulled`、`sinceImageTransitioned` | |
+| `countUnit` | `days` | 日数の `countType` だけで指定する。他で書くとエラー |
+| `countNumber` | 正の整数 | 個数か日数 |
+| `action.type` | `expire`、`transition` | `transition` はアーカイブへ移す |
+
+評価の規則も問われます。
+
+- すべてのルールを同時に評価し、優先度の順に適用します。
+- 1 つのイメージを期限切れにするルールは 0 個か 1 個です。
+- 高い優先度のルールのタグ条件に合うイメージは、低い優先度のルールでは期限切れになりません。
+- 古いものから順に期限切れになります。
+
+**計算例**: `prod*` のタグが 15 個あり、`imageCountMoreThan: 10` なら、古い 5 個が 24 時間以内に期限切れになります。
+
+**落とし穴**: `tagStatus: tagged` だけで `tagPatternList` を書かないとエラーになります。`any` のルールは他のルールより低い優先度にします。ポリシーの長さは 30,720 文字までです。
+
 ### イメージスキャン {#ecr-scanning}
 
 | 種類 | 対象 | タイミング | 仕組み |
@@ -140,6 +197,33 @@ ECS はデプロイ時にタグをダイジェストに解決するので、サ�
 | 拡張 | OS とプログラミング言語のパッケージ | プッシュ時と継続的 | Amazon Inspector と連携。結果は EventBridge に送られる |
 
 結果は `DescribeImageScanFindings` で取得します。スキャンの設定はプライベートレジストリのレベルで行うのが推奨です。
+
+基本スキャンは、スキャンオンプッシュのフィルターに合わないリポジトリでは手動です。同じイメージは 24 時間に 1 回までです。拡張スキャンでは、フィルターで継続スキャンかスキャンオンプッシュを選びます。料金は Inspector に発生します。
+
+### レプリケーション {#ecr-replication}
+
+レプリケーションはリポジトリではなく、プライベートレジストリの設定です。リージョン間とアカウント間に対応します。
+
+```bash
+aws ecr put-replication-configuration --replication-configuration '{
+  "rules": [{
+    "destinations": [{"region": "us-west-2", "registryId": "111122223333"}],
+    "repositoryFilters": [{"filter": "prod", "filterType": "PREFIX_MATCH"}]
+  }]
+}'
+```
+
+| 項目 | 内容 |
+| --- | --- |
+| 対象 | 設定後にプッシュ、または復元したイメージのみ。既存のものは複製しない |
+| 上限 | 宛先は全ルールで 25 個まで、ルールは 25 個まで、1 ルールのフィルターは 100 個まで |
+| アカウント間の権限 | **宛先側**のレジストリ許可ポリシーのみ。送信元のリポジトリポリシーは不要 |
+| 複製されないもの | リポジトリポリシー、ライフサイクルポリシー。設定は既定で複製されない(リポジトリ作成テンプレートで指定) |
+| 連鎖 | 1 回のプッシュで 1 回だけ。`us-west-2` から `us-east-1`、`us-east-1` から `us-east-2` の設定でも、`us-east-2` には届かない |
+
+**例**: 宛先に `ecr:CreateRepository` を許可しないと、同じ名前のリポジトリを事前に作る必要があります。
+
+**落とし穴**: 宛先で不変タグが有効で同じタグが既にあると、イメージは複製されますがタグは付きません。タグなしになることがあります。
 
 ## ECS {#ecs}
 
@@ -189,6 +273,96 @@ ECS はデプロイ時にタグをダイジェストに解決するので、サ�
 }
 ```
 
+### コンテナ定義のパラメータ {#container-definition}
+
+| パラメータ | 既定値、範囲 | 意味と例 |
+| --- | --- | --- |
+| `cpu`(コンテナ) | 任意 | 共有の割り当て。1 vCPU は 1024 |
+| `memory`(コンテナ) | 任意、MiB | **ハードリミット**。超えるとコンテナが強制終了される |
+| `memoryReservation` | 任意、MiB | **ソフトリミット**。予約量で、競合がなければ超えてよい |
+| `portMappings` | 任意 | `containerPort`、`hostPort`、`protocol` など |
+| `environment` | 任意 | 平文の環境変数 |
+| `environmentFiles` | 任意 | S3 の `.env` ファイルから読む |
+| `secrets` | 任意 | Secrets Manager か Parameter Store の値 |
+| `essential` | `true` | 落ちるとタスクの全コンテナが止まる |
+| `dependsOn` | 任意 | 起動順の依存関係 |
+| `startTimeout` | 任意、秒 | 依存を待つのをやめるまでの時間 |
+| `stopTimeout` | 既定 30、最大 120 秒 | 終了の猶予。`SIGTERM` の後、これを過ぎると `SIGKILL` |
+| `readonlyRootFilesystem` | `false` | ルートファイルシステムを読み取り専用に |
+| `user` | 任意 | 実行ユーザー |
+| `command`、`entryPoint` | 任意 | Dockerfile の `CMD`、`ENTRYPOINT` を上書き |
+| `logConfiguration` | 任意 | ログドライバーの設定 |
+| `healthCheck` | 任意 | 下記を参照 |
+
+#### memory と memoryReservation {#memory-settings}
+
+両方を指定するなら `memory` は `memoryReservation` より大きくします。タスクレベルのメモリがないなら、コンテナレベルで少なくともどちらかを指定します。
+
+**例**: 普段 128 MiB で、ときどき 256 MiB まで使うアプリです。`memoryReservation: 128`、`memory: 300` にすると、インスタンスの空きから予約されるのは 128 MiB で、300 MiB を超えると強制終了されます。タスクの停止理由には `OutOfMemoryError` が出ます。
+
+Docker 20.10 以降は最低 6 MiB を予約するので、これ未満は指定しません。
+
+#### portMappings とネットワークモード {#network-mode}
+
+| `networkMode` | ポートの指定 | 特徴 |
+| --- | --- | --- |
+| `awsvpc` | `containerPort` だけ。`hostPort` は無視 | タスクごとに ENI を持ち、セキュリティグループを付けられる。Fargate は必須 |
+| `bridge` | `hostPort` を空にすると動的ポート | 同じホストで同じアプリを複数動かせる。ALB は動的ポートを登録できる |
+| `host` | `hostPort` は未指定か `containerPort` と同じ | ホストのポートを直接使う。1 ホストに 1 タスク |
+| `none` | 外部接続なし | |
+
+**症状**: `host` モードで 2 つ目のタスクが配置されないのは、ポートの競合です。`bridge` なら `hostPort` を空にします。
+
+#### healthCheck {#ecs-healthcheck}
+
+| 項目 | 既定値 | 範囲 |
+| --- | --- | --- |
+| `interval` | 30 秒 | 5〜300 |
+| `timeout` | 5 秒 | 2〜60 |
+| `retries` | 3 | 1〜10 |
+| `startPeriod` | オフ | 0〜300 秒 |
+
+`command` は `CMD` か `CMD-SHELL` で始めます。終了コード 0 が成功です。
+
+**計算例**: `interval: 30`、`retries: 3` なら、失敗から異常の判定までおよそ 90 秒です。起動に 2 分かかるアプリは `startPeriod: 120` にします。`startPeriod` の間の失敗は回数に数えません。
+
+**落とし穴**: イメージに `curl` がないと、`CMD-SHELL` の `curl -f` は常に失敗します。アプリが正常でもタスクが置き換えられます。
+
+#### dependsOn {#depends-on}
+
+| `condition` | 意味 |
+| --- | --- |
+| `START` | 依存先が起動した |
+| `COMPLETE` | 依存先が終了した。必須コンテナには設定できない |
+| `SUCCESS` | 依存先が終了コード 0 で終わった。必須コンテナには設定できない |
+| `HEALTHY` | ヘルスチェックに通った。依存先に `healthCheck` が必要 |
+
+```json
+"dependsOn": [{"containerName": "migrate", "condition": "SUCCESS"}]
+```
+
+**例**: 初期化の `migrate` コンテナは `essential: false` にして、アプリを `SUCCESS` で待たせます。`essential: true` のままだと、`migrate` が正常に終わってもタスク全体が止まります。
+
+#### logConfiguration {#log-configuration}
+
+`awslogs` なら `awslogs-group`、`awslogs-region`、`awslogs-stream-prefix` を指定します。Fargate では `awslogs-stream-prefix` が必要です。ロググループを自動で作るには、`awslogs-create-group: "true"` と、実行ロールの `logs:CreateLogGroup` が要ります。実行ロールに `logs:CreateLogStream`、`logs:PutLogEvents` がないと、ログが出ないかタスクが起動しません。
+
+### タスクレベルのパラメータ {#task-level-parameters}
+
+| パラメータ | 説明 |
+| --- | --- |
+| `family` | タスク定義の名前。登録ごとにリビジョンが増える |
+| `cpu`、`memory` | タスク全体の割り当て。Fargate は必須 |
+| `networkMode` | Fargate は `awsvpc` |
+| `requiresCompatibilities` | `FARGATE`、`EC2` など。登録時に検証される |
+| `taskRoleArn` | アプリが使うロール |
+| `executionRoleArn` | エージェントが使うロール |
+| `ephemeralStorage` | Fargate の一時ストレージ。既定は 20 GiB、`sizeInGiB` で最大 200 GiB |
+| `runtimePlatform` | `cpuArchitecture`(`X86_64`、`ARM64`)と OS |
+| `volumes` | データボリューム |
+
+**例**: 40 GB の動画を一時的に処理するタスクは、`"ephemeralStorage": {"sizeInGiB": 60}` にします。既定の 20 GiB のままだと、書き込みで `No space left on device` になります。
+
 ### タスクロールと実行ロール {#task-role-vs-execution-role}
 
 試験で最もよく問われる違いです。
@@ -226,6 +400,16 @@ ECS はデプロイ時にタグをダイジェストに解決するので、サ�
 | 2048 (2 vCPU) | 4〜16 GB(1 GB 単位) |
 | 4096 (4 vCPU) | 8〜30 GB(1 GB 単位) |
 
+上位のサイズもあります。ここまでの組み合わせ以外は登録時にエラーになります。
+
+| CPU | メモリ |
+| --- | --- |
+| 8192 (8 vCPU) | 16〜60 GB(4 GB 単位) |
+| 16384 (16 vCPU) | 32〜120 GB(8 GB 単位) |
+| 32768 (32 vCPU) | 60 GB、120 GB、244 GB |
+
+**例**: 1 vCPU で 16 GB は登録できません。16 GB が必要なら 2048 以上にします。`"cpu": "256"` と `"memory": "4096"` も無効です。
+
 ### 環境変数とシークレットの注入 {#env-and-secrets}
 
 | 方法 | 指定 | 値の扱い |
@@ -254,6 +438,98 @@ arn:aws:secretsmanager:region:account:secret:name-AbCdEf:json-key:version-stage:
 | 線形、カナリア | `deploymentController: ECS` と戦略の指定 | トラフィックを段階的に移す |
 | CodeDeploy | `deploymentController: CODE_DEPLOY` | CodeDeploy が制御する従来のブルー/グリーン |
 | 外部 | `deploymentController: EXTERNAL` | サードパーティのコントローラー |
+
+### サービスの設定 {#service-settings}
+
+| 設定 | 既定値 | 説明 |
+| --- | --- | --- |
+| `desiredCount` | `REPLICA` で必須 | 維持するタスク数。変えても新しいデプロイは始まらない |
+| `schedulingStrategy` | `REPLICA` | `DAEMON` は各インスタンスに 1 つ |
+| `launchType` | 未指定なら戦略を使う | `capacityProviderStrategy` と同時に指定できない |
+| `capacityProviderStrategy` | クラスターの既定 | 下記を参照 |
+| `healthCheckGracePeriodSeconds` | 0 | ELB、VPC Lattice、コンテナのヘルスチェックを起動後に無視する時間 |
+| `minimumHealthyPercent` | `REPLICA` は 100 | ローリング更新の下限 |
+| `maximumPercent` | `REPLICA` は 200 | ローリング更新の上限 |
+| `placementStrategy`、`placementConstraints` | EC2 のみ | 配置の制御 |
+| `enableExecuteCommand` | `false` | ECS Exec でコンテナに入る |
+
+**例**: 起動に 90 秒かかるのに `healthCheckGracePeriodSeconds` が 0 だと、ALB のヘルスチェックに失敗して置き換えられ続けます。120 にします。
+
+### キャパシティプロバイダー {#capacity-providers}
+
+| 項目 | 内容 |
+| --- | --- |
+| `FARGATE` | 通常の Fargate |
+| `FARGATE_SPOT` | 割安。2 分前の警告で中断されることがある |
+| `base` | 最低限そのプロバイダーで動かすタスク数。戦略の中で 1 つだけに設定できる |
+| `weight` | 残りのタスクの配分。API と CLI の既定は 0、コンソールは 1 |
+
+```json
+"capacityProviderStrategy": [
+  {"capacityProvider": "FARGATE", "base": 2, "weight": 1},
+  {"capacityProvider": "FARGATE_SPOT", "weight": 3}
+]
+```
+
+**計算例**: `desiredCount` が 10 なら、先に `FARGATE` に 2 つ、残り 8 つを 1:3 に分けます。`FARGATE` は合計 4 つ、`FARGATE_SPOT` は 6 つです。
+
+**落とし穴**: 複数を指定して全部の `weight` が 0 だとエラーです。Fargate Spot の中断では EventBridge のイベントと `SIGTERM` が届きます。処理しないと `stopTimeout`(既定 30 秒、最大 120 秒)の後で `SIGKILL` されます。
+
+### タスクの配置 {#task-placement}
+
+配置の戦略と制約は **EC2 だけ** です。Fargate では使えず、AZ に分散するよう最善が尽くされます。サービスの既定は AZ への `spread` です。
+
+| 戦略 | 動作 | 目的 |
+| --- | --- | --- |
+| `binpack` | CPU かメモリの空きが最も少なくなるように詰める | インスタンス数を減らす |
+| `spread` | 指定の属性で均等に分ける | 可用性 |
+| `random` | 無作為 | 簡単なテスト |
+
+| 制約 | 動作 |
+| --- | --- |
+| `distinctInstance` | 各タスクを別のインスタンスへ |
+| `memberOf` | クラスタークエリ言語の式に合うインスタンスへ |
+
+```json
+"placementStrategy": [
+  {"type": "spread", "field": "attribute:ecs.availability-zone"},
+  {"type": "binpack", "field": "memory"}
+],
+"placementConstraints": [
+  {"type": "memberOf", "expression": "attribute:ecs.instance-type =~ g4dn.*"}
+]
+```
+
+AZ に分散した後で、各 AZ の中でメモリを詰めます。
+
+**症状**: 制約に合うインスタンスがないと、タスクは配置されず、サービスイベントに `unable to place a task` が出ます。
+
+### サービスの Auto Scaling {#service-auto-scaling}
+
+ECS のサービスは Application Auto Scaling でタスク数を増減します。
+
+```bash
+aws application-autoscaling register-scalable-target \
+  --service-namespace ecs \
+  --resource-id service/prod/web \
+  --scalable-dimension ecs:service:DesiredCount \
+  --min-capacity 2 --max-capacity 20
+
+aws application-autoscaling put-scaling-policy \
+  --service-namespace ecs --resource-id service/prod/web \
+  --scalable-dimension ecs:service:DesiredCount \
+  --policy-name cpu60 --policy-type TargetTrackingScaling \
+  --target-tracking-scaling-policy-configuration '{
+    "TargetValue": 60.0,
+    "PredefinedMetricSpecification": {"PredefinedMetricType": "ECSServiceAverageCPUUtilization"},
+    "ScaleOutCooldown": 60,
+    "ScaleInCooldown": 300
+  }'
+```
+
+- 種類は、ターゲット追跡、ステップ、スケジュールです。
+- スケールインは慎重に進み、クールダウンが終わるまで止まります。ただし、スケールアウトのアラームはクールダウン中のスケールインに割り込めます。
+- `ALBRequestCountPerTarget` はブルー/グリーンのデプロイでは使えません。
 
 #### ローリング更新 {#rolling-update}
 
@@ -298,6 +574,10 @@ flowchart TD
 - 一時的にリソースが約 2 倍になります。
 - ロードバランサー、Service Connect、VPC Lattice を使うサービスでは ECS がトラフィックを切り替えます。
 - CodeDeploy の場合は 2 つのターゲットグループが必要です。`CodeDeployDefault.ECSCanary10Percent5Minutes` などの設定を使います。詳しくは [CI/CD](cicd.md) を参照してください。
+
+### 古いドキュメントとの違い {#deployment-changes}
+
+以前は「ブルー/グリーンには CodeDeploy が必要」でした。現在は ECS の組み込み機能で、ブルー/グリーン、線形、カナリアが使えます。サービスの `deploymentConfiguration.strategy` に `ROLLING`、`BLUE_GREEN`、`LINEAR`、`CANARY` を指定し、`bakeTimeInMinutes` でベイク時間を決めます。
 
 ## EKS {#eks}
 
@@ -370,6 +650,29 @@ spec:
 
 `maxSurge` は増やせる数、`maxUnavailable` は止めてよい数です。ECS の `maximumPercent`、`minimumHealthyPercent` に相当します。
 
+#### Deployment のフィールド {#deployment-fields}
+
+| フィールド | 既定値 | 意味 |
+| --- | --- | --- |
+| `replicas` | 1 | Pod の数 |
+| `strategy.type` | `RollingUpdate` | `Recreate` は全 Pod を消してから作る |
+| `maxSurge` | 25% | 増やせる数。割合は**切り上げ** |
+| `maxUnavailable` | 25% | 止めてよい数。割合は**切り捨て** |
+
+`maxSurge` と `maxUnavailable` を両方 0 にはできません。
+
+**計算例**: `replicas: 10`、既定の 25% なら、`maxSurge` は 3、`maxUnavailable` は 2 です。更新中の Pod は最大 13 個で、最低 8 個は利用可能です。
+
+#### resources {#k8s-resources}
+
+| 項目 | 意味 | 超えると |
+| --- | --- | --- |
+| `requests.cpu`、`requests.memory` | スケジューリングに使う予約量 | 空きのあるノードがないと `Pending` |
+| `limits.cpu` | CPU の上限 | 抑制される |
+| `limits.memory` | メモリの上限 | `OOMKilled` で再起動 |
+
+`250m` は 0.25 vCPU、`512Mi` は 512 MiB です。
+
 ### ヘルスチェックとプローブ {#probes}
 
 | プローブ | 実行時期 | 失敗時の動作 | トラフィックへの影響 |
@@ -395,6 +698,20 @@ ECS での対応関係は次のとおりです。Kubernetes のようにレデ�
 | コンテナ | タスク定義の `healthCheck` | タスクが異常になり置き換えられる |
 | ロードバランサー | ターゲットグループのヘルスチェック | トラフィックを止め、ECS がタスクを置き換える |
 | 起動中の猶予 | サービスの `healthCheckGracePeriodSeconds`、`startPeriod` | 猶予中は失敗を数えない |
+
+#### プローブのタイミング {#probe-timing}
+
+| フィールド | 既定値 | 意味 |
+| --- | --- | --- |
+| `initialDelaySeconds` | 0 | 最初の確認までの待ち時間 |
+| `periodSeconds` | 10 | 確認の間隔(最小 1) |
+| `timeoutSeconds` | 1 | 応答の待ち時間 |
+| `successThreshold` | 1 | 失敗の後で成功と判定する回数。ライブネスとスタートアップは 1 のみ |
+| `failureThreshold` | 3 | 失敗と判定する回数 |
+
+**計算例**: 最長 5 分で起動するアプリなら、`startupProbe` を `failureThreshold: 30`、`periodSeconds: 10` にします。30 × 10 = 300 秒の間は失敗を許します。この間はライブネスが止まります。
+
+**落とし穴**: `timeoutSeconds` の既定は 1 秒です。応答に 2 秒かかるエンドポイントでは失敗と判定され、再起動を繰り返します。
 
 ### Pod に IAM 権限を与える {#pod-identity}
 
@@ -426,6 +743,8 @@ metadata:
 
 どちらも Pod ごとに最小権限を実現します。ノードのロールを Pod に使わせないようにします。IMDS へのアクセスを制限しないと、Pod からノードのロールが取得できてしまいます。
 
+**IRSA の信頼ポリシーの落とし穴**: `sub` の条件にある名前空間と ServiceAccount 名が Pod のものと違うと、`AccessDenied`(`sts:AssumeRoleWithWebIdentity`)になります。Pod Identity の信頼ポリシーでは、プリンシパルを `pods.eks.amazonaws.com`、アクションを `sts:AssumeRole` と `sts:TagSession` にします。Pod Identity は Linux の EC2 ノードの Pod で使えます。Fargate と Windows の Pod は対象外です。
+
 ## AWS Copilot について {#copilot}
 
 !!! warning "AWS Copilot CLI はサポートが終了しています"
@@ -442,6 +761,28 @@ Copilot は ECS 向けの CLI です。アプリの中に `test`、`prod` など
 | `copilot svc deploy --env test` | 環境へのサービスのデプロイ |
 
 新しい構成には使わず、タスク定義のリビジョンと不変のイメージタグで環境を分ける方法か、[IaC](iac.md) を使います。
+
+## 既定値と上限のまとめ {#numbers}
+
+| 項目 | 値 |
+| --- | --- |
+| ECR 認証トークン | 12 時間 |
+| ライフサイクルの実行 | 条件を満たしてから 24 時間以内 |
+| ライフサイクルポリシーの長さ | 30,720 文字 |
+| 基本スキャン | 同じイメージは 24 時間に 1 回 |
+| レプリケーション | 宛先 25、ルール 25、1 ルールのフィルター 100 |
+| リポジトリのイメージ数 | 100,000(引き上げ可能) |
+| レイヤーの最大サイズ | 52,000 MiB |
+| Fargate の一時ストレージ | 既定 20 GiB、最大 200 GiB |
+| `healthCheck` | 間隔 30 秒、タイムアウト 5 秒、再試行 3、`startPeriod` 最大 300 秒 |
+| `stopTimeout` | 既定 30 秒、最大 120 秒 |
+| `essential` | 既定 `true` |
+| `minimumHealthyPercent` / `maximumPercent` | `REPLICA` は 100 / 200 |
+| `healthCheckGracePeriodSeconds` | 既定 0 |
+| Fargate Spot の警告 | 2 分前 |
+| サーキットブレーカーのしきい値 | 希望数の 50%、最小 3、最大 200 |
+| `maxSurge` / `maxUnavailable` | 既定 25% |
+| プローブ | 間隔 10 秒、タイムアウト 1 秒、失敗 3 回 |
 
 ## 試験のポイント {#exam-points}
 

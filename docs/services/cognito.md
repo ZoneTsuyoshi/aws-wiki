@@ -307,6 +307,335 @@ def lambda_handler(event, context):
 !!! note "Amazon Verified Permissions"
     業務ルールをアプリから切り離して管理したい場合は、Cedar というポリシー言語を使う Amazon Verified Permissions があります。DVA-C03 の対象サービス一覧には載っていないので、存在を知っておく程度で十分です。
 
+## ユーザープールの設定 {#user-pool-settings}
+
+作成後に変えられないものがあるので、作る前に決めます。
+
+### 機能プラン {#feature-plans}
+
+プランはユーザープールごとに選び、アプリクライアントごとには分けられません。新しいプールの既定は Essentials です。
+
+| プラン | 主な機能 |
+| --- | --- |
+| Lite | 基本のサインイン、クラシックのホスト UI |
+| Essentials | Lite に加えて、マネージドログインのビジュアルエディタ、メール MFA、パスワードレス、パスキー、アクセストークンのカスタマイズ、パスワード再利用の禁止 |
+| Plus | Essentials に加えて、脅威保護（漏えい認証情報の検出、アダプティブ認証）、ユーザーアクティビティのログとエクスポート |
+
+以前の「高度なセキュリティ機能」は、今は Essentials と Plus に分かれています。古い教材で高度なセキュリティ機能とされているものは、プランで読み替えます。
+
+### サインイン属性 {#sign-in-attributes}
+
+サインインに使う属性は 2 つの方式から選びます。**作成後は変更できません。**
+
+| 要件 | エイリアス属性 | ユーザー名属性 |
+| --- | --- | --- |
+| 複数の属性でサインイン | 可（ユーザー名、`preferred_username`、メール、電話） | 不可 |
+| サインインに使う前にメールや電話の確認が必要 | 必要 | 不要 |
+| 同じメールや電話を別のユーザーに設定できる | 可 | 不可 |
+
+メールアドレスでだけサインインさせたいなら、ユーザー名属性で `email` を選びます。
+
+必須属性も作成後に変更できません。必須にした属性はサインアップで必要になり、値がないと登録に失敗します。
+
+### 標準属性とカスタム属性 {#attribute-settings}
+
+| 項目 | 内容 |
+| --- | --- |
+| 標準属性 | OIDC の仕様に基づく `email`, `phone_number`, `name` など。`sub` 以外は既定で任意。値は既定で最大 2,048 文字 |
+| `sub` | ユーザーごとの固定の一意 ID。特定の UUID 形式ではないので、形式を検証しない |
+| `email_verified`, `phone_number_verified` | 確認済みかどうか |
+| カスタム属性 | 最大 50 個。文字列、数値、真偽値、日時を定義できる |
+
+カスタム属性は値を文字列として保存、送信します。必須にはできません。削除、改名、型の変更もできません。
+
+`custom:tier` を数値で定義しても、ID トークンでは `"3"` という文字列です。コードで数値と比較すると失敗します。
+
+### パスワードポリシー {#password-policy}
+
+| 設定 | 範囲、既定 |
+| --- | --- |
+| `MinimumLength` | 6〜99。値がいくつでも、利用者は 256 文字までのパスワードを使える |
+| `RequireUppercase`, `RequireLowercase`, `RequireNumbers`, `RequireSymbols` | 各文字種の必須 |
+| `TemporaryPasswordValidityDays` | 0〜365。既定 7 日。0 は既定値の扱い |
+| `PasswordHistorySize` | 0〜24。Essentials 以上で利用可 |
+
+`AdminCreateUser` で作った利用者が 7 日以内にサインインしないと、一時パスワードは使えなくなります。管理者が `AdminCreateUser` の `MessageAction=RESEND` で送り直すか、`AdminSetUserPassword` を使います。
+
+### 確認コードの有効期間 {#confirmation-codes}
+
+| コード | 有効期間 |
+| --- | --- |
+| サインアップ確認のコードまたはリンク | 24 時間 |
+| パスワードリセットのコード | 1 時間 |
+
+自分でサインアップした利用者は、確認するまでサインインできません。Pre sign-up トリガーの `autoConfirmUser` で自動確認にできます。
+
+### MFA の設定 {#mfa-settings}
+
+`Required` にして、MFA の要素を設定できない利用者は、サインインできなくなります。
+
+- MFA を有効にして SMS やメールを選ぶと、確認していない属性にも送れる。完了後に確認済みになる。
+- MFA を `Required` にして複数の要素を有効にすると、新規の利用者に選ばせる。
+- パスキーは `FactorConfiguration` を `MULTI_FACTOR_WITH_USER_VERIFICATION` にすれば、ユーザー検証付きで MFA を満たせる。
+- メール MFA を優先する利用者は、パスワードリセットのコードをメールで受け取れない。`AccountRecoverySetting` に別の経路を用意する。
+
+### メールと SMS の送信 {#messaging-settings}
+
+| 経路 | 内容 |
+| --- | --- |
+| 既定のメール | Cognito 内蔵。1 日の送信数に上限あり。差出人は `no-reply@verificationemail.com` か、SES で確認した自分のアドレス |
+| SES のメール | 自分の SES を使う。メール MFA には必須（Essentials 以上） |
+| SMS | Amazon SNS 経由、または AWS End User Messaging SMS の直接利用。同時に使えるのはどちらか一方。新しいプールには直接利用を推奨 |
+
+SMS は最初はサンドボックスで、確認済みの番号にしか送れません。本番前に本番アクセスを申請します。
+
+### アプリクライアント {#app-client-settings}
+
+1 つのプールに、アプリごとのクライアントを作ります。
+
+| 設定 | 既定、範囲 | 変更の効果 |
+| --- | --- | --- |
+| `GenerateSecret` | 既定はなし | 作成後に有無を変えられない |
+| `ExplicitAuthFlows` | 未指定なら `ALLOW_REFRESH_TOKEN_AUTH`, `ALLOW_USER_SRP_AUTH`, `ALLOW_CUSTOM_AUTH` | 許可する認証フロー |
+| `IdTokenValidity`, `AccessTokenValidity` | 既定 1 時間。5 分〜1 日 | `TokenValidityUnits` で単位を指定 |
+| `RefreshTokenValidity` | 既定 30 日。60 分〜10 年 | 0 にすると 30 日になる |
+| `AuthSessionValidity` | 3〜15 分 | チャレンジに応答するまでの時間 |
+| `EnableTokenRevocation` | 既定で有効 | `RevokeToken` を使えるか |
+| `PreventUserExistenceErrors` | API の既定は `LEGACY` | `ENABLED` でユーザーの存在を隠す |
+| `ReadAttributes`, `WriteAttributes` | 未指定なら標準属性 | クライアントが読み書きできる属性 |
+| `CallbackURLs`, `LogoutURLs` | クライアントごとに最大 100 | 許可するリダイレクト先 |
+| `DefaultRedirectURI` | `CallbackURLs` の中から | IdP が 1 つのとき `redirect_uri` の代わりになる |
+| `RefreshTokenRotation` | 既定は無効 | 更新のたびにリフレッシュトークンも発行 |
+
+**認証フロー**の選び方です。
+
+| フロー | 動作 | 向いている場面 |
+| --- | --- | --- |
+| `ALLOW_USER_SRP_AUTH` | SRP でパスワードを送らない | 通常のクライアント |
+| `ALLOW_USER_PASSWORD_AUTH` | パスワードを平文のまま TLS で送る | User migration トリガー |
+| `ALLOW_ADMIN_USER_PASSWORD_AUTH` | 管理者 API でパスワードを送る | サーバー側のアプリ |
+| `ALLOW_CUSTOM_AUTH` | Lambda トリガーのカスタム認証 | 独自のチャレンジ |
+| `ALLOW_USER_AUTH` | 選択式サインイン。パスワード、SRP、パスワードレス、パスキー | Essentials 以上 |
+| `ALLOW_REFRESH_TOKEN_AUTH` | リフレッシュトークンでの更新 | ほぼ常に |
+
+**クライアントシークレット**は、公開クライアント（ブラウザ、モバイル）には付けません。付けると、すべての API リクエストに `SECRET_HASH` が必要になり、ブラウザに秘密を置くことになります。
+
+機密クライアントは同時に 2 つのシークレットを持てるので、停止せずにローテーションできます。
+
+**トークンの更新**では、リフレッシュトークンのローテーションを有効にすると、`REFRESH_TOKEN_AUTH` フローと両立しません。`GetTokensFromRefreshToken` を使います。
+
+更新後のリフレッシュトークンの有効期限は延びません。30 日に設定して毎日更新しても、最初のサインインから 30 日で切れ、再認証が必要です。
+
+**アクセストークンの有効期間と失効**: 有効期間を 1 日にすると、権限を変えても最長 1 日は古いクレームのトークンが使えます。短いほど再発行の回数が増えます。
+
+### OAuth の設定 {#oauth-settings}
+
+| 設定 | 内容 |
+| --- | --- |
+| `AllowedOAuthFlows` | `code`, `implicit`, `client_credentials` |
+| `AllowedOAuthFlowsUserPoolClient` | OAuth を使うには `true`。API で未指定なら無効 |
+| `AllowedOAuthScopes` | `openid`, `email`, `phone`, `profile`, `aws.cognito.signin.user.admin`, カスタムスコープ。クライアントごとに最大 50 個 |
+| `SupportedIdentityProviders` | `COGNITO` や連携先の IdP |
+
+- `client_credentials` は、許可するフローの中で単独でなければならない。
+- `redirect_uri` は `CallbackURLs` に登録したものと一致する必要がある。絶対 URI で、フラグメントは含められない。
+
+M2M のアクセストークンは `/oauth2/token` の他に、`GetClientToken` API でも取得できます。この場合はドメイン不要で、クライアントのフローは `ALLOW_CLIENT_TOKEN_AUTH` だけにします。
+
+### ドメイン {#domain-settings}
+
+| 種類 | 形式 | 証明書 |
+| --- | --- | --- |
+| プレフィックスドメイン | `<prefix>.auth.<region>.amazoncognito.com` | 不要。プレフィックスに `aws`, `amazon`, `cognito` は使えない |
+| カスタムドメイン | `auth.example.com` | ACM の証明書を `us-east-1` に用意する |
+
+カスタムドメインの親ドメインには、有効な DNS の A レコードが必要です。Cognito は CloudFront ディストリビューションを作るので、プールが東京にあっても証明書は `us-east-1` です。
+
+`jwks.json` と `openid-configuration` は、自分のドメインではなく `cognito-idp.<region>.amazonaws.com/<userPoolId>/` にあります。
+
+### リソースサーバーとカスタムスコープ {#resource-servers}
+
+リソースサーバーは、保護する API を表す識別子とスコープの定義です。
+
+```bash
+aws cognito-idp create-resource-server \
+  --user-pool-id ap-northeast-1_EXAMPLE \
+  --identifier orders-api --name Orders \
+  --scopes ScopeName=read,ScopeDescription=read ScopeName=write,ScopeDescription=write
+```
+
+トークンの `scope` は `orders-api/read` になります。API Gateway のオーソライザーには、この完全な名前を設定します。
+
+プールあたりのリソースサーバーは既定で 100 個で（最大 300）、スコープはサーバーあたり 100 個までです。
+
+### グループ {#group-settings}
+
+| 項目 | 内容 |
+| --- | --- |
+| `Precedence` | 0 以上の整数で、0 が最優先。既定は null で、優先度が最も低い |
+| `RoleArn` | グループに割り当てる IAM ロール |
+| 上限 | プールあたり 10,000、ユーザーあたり 100 |
+
+`admin`（Precedence 1、管理ロール）と `staff`（Precedence 10、閲覧ロール）の両方に属すなら、`cognito:preferred_role` は管理ロールになります。
+
+同じ `Precedence` で異なるロールだと、`cognito:preferred_role` は設定されず、`cognito:roles` だけになります。ID プール側の `AmbiguousRoleResolution` に従います。
+
+### 脅威保護 {#threat-protection}
+
+Plus プランの機能です。**監査のみ**で始めて 2 週間以上ログを見てから、**全機能**にするのが AWS の推奨です。
+
+| 機能 | 動作 |
+| --- | --- |
+| 漏えい認証情報の検出 | サインイン、サインアップ、パスワード変更の際に確認。サインインをブロックまたは許可 |
+| アダプティブ認証 | セッションにリスク（High, Medium, Low, No Risk）を付けて、レベルごとに応答を決める |
+| IP の例外 | `Always block` と `Always allow`（全機能モード） |
+| ログのエクスポート | ユーザーアクティビティのログを外部に送る |
+
+| 応答 | 動作 |
+| --- | --- |
+| 許可 | そのまま通す |
+| Optional MFA | 第 2 要素を設定した人だけチャレンジ。未設定でも通る |
+| Require MFA | 第 2 要素を設定した人にチャレンジ。未設定ならブロック |
+| Block | ブロック |
+
+API でサインインするアプリは、`UserContextData` や `ContextData` で利用者の IP とデバイスの情報を渡します。公開クライアントで IP を含めるには、アプリクライアントの `EnablePropagateAdditionalUserContextData` を有効にします。
+
+## Lambda トリガーの詳細 {#trigger-details}
+
+共通の動作です。
+
+- カスタム送信者以外は同期呼び出し。5 秒で固定で、変更できない。
+- 再試行する場合があるが、`500`〜`599` の Invoke エラーは再試行しない。
+- 応答に受け取ったイベントを返さない、またはエラーを返すと、その処理は失敗する。
+- コンソール以外で設定すると、関数のリソースベースポリシーが作られない。関数のリソースベースポリシーで、自分のユーザープールからの呼び出しを許可しないと失敗する。
+- トリガーに関数のバージョンは直接指定できない。エイリアスを指定する。
+
+| トリガー | 呼ばれるとき | 応答でできること | 注意 |
+| --- | --- | --- | --- |
+| Pre sign-up | サインアップの前。`triggerSource` は `PreSignUp_SignUp`, `PreSignUp_AdminCreateUser`, `PreSignUp_ExternalProvider` | `autoConfirmUser`, `autoVerifyEmail`, `autoVerifyPhone`。エラーで拒否 | `AdminCreateUser` では 3 つの応答は無視される |
+| Post confirmation | 確認の後（`ConfirmSignUp`、管理者の確認、パスワードリセットの確認） | 処理の追加 | 初回ウェルカム処理は `triggerSource` で分ける |
+| Pre authentication | サインインの試行時 | エラーで拒否 | 存在しないユーザーでは呼ばれない（`PreventUserExistenceErrors` が `ENABLED` なら呼ばれる）。セッションの更新では呼ばれない |
+| Post authentication | 認証の後 | ログなど | イベントを返さないと認証が完了しないことがある |
+| Define auth challenge | カスタム認証の最初と各ステップ後 | `challengeName`, `issueTokens`, `failAuthentication` | `ALLOW_CUSTOM_AUTH` が必要 |
+| Create auth challenge | `CUSTOM_CHALLENGE` のとき | `publicChallengeParameters`, `privateChallengeParameters` | 正解は private 側に置く |
+| Verify auth challenge response | 回答を受けたとき | `answerCorrect` | |
+| Pre token generation | トークン発行の前 | クレームとスコープの変更 | `sub` は変更不可 |
+| User migration | 存在しないユーザーのサインイン時、パスワード忘れのとき | `finalUserStatus`, `messageAction` など | パスワード付きサインインのみ。パスワードレスでは呼ばれない |
+| Custom message | メッセージの送信前 | `smsMessage`, `emailSubject`, `emailMessage` | `codeParameter` を本文に含める |
+| Custom sender | メッセージの送信時 | 自前の送信経路 | コードは KMS で暗号化されて届く。関数で復号する |
+| Inbound federation | 連携ユーザーのサインイン時 | `userAttributesToMap` | 省略した属性は消える。空の `{}` なら変更なし |
+
+**User migration** の例です。既存の DB で確認できたら属性を返し、`finalUserStatus` を `CONFIRMED`、`messageAction` を `SUPPRESS` にすると、利用者に何も意識させず移行できます。`SRP` はパスワードを Cognito に渡さないので、移行中のクライアントは `USER_PASSWORD_AUTH` を使います。
+
+**Pre token generation** の主な応答です。
+
+| パラメータ | 内容 | 版 |
+| --- | --- | --- |
+| `claimsToAddOrOverride`, `claimsToSuppress` | クレームの追加、変更、削除 | すべて |
+| `groupOverrideDetails` | `groupsToOverride`, `iamRolesToOverride`, `preferredRole` | すべて |
+| `scopesToAdd`, `scopesToSuppress` | アクセストークンのスコープ | `V2_0`, `V3_0` |
+
+既定で送られるのは `V1_0` です。`V2_0` にするには、コンソールで版を選ぶか、`LambdaVersion` を指定します。`V1_0` のままアクセストークンを変えようとしても、反映されません。
+
+## ID プールの設定 {#identity-pool-settings}
+
+### 認証の設定 {#identity-pool-auth}
+
+| 設定 | 動作 |
+| --- | --- |
+| ゲストアクセス | 有効にすると未認証の ID を発行し、未認証ロールの認証情報を返す。無効なら未認証の ID は発行されない |
+| 既定の認証済みロール、未認証ロール | ルールやトークンで決まらないときのロール |
+| 基本フロー | `AllowClassicFlow`。有効にすると `GetOpenIdToken` と `AssumeRoleWithWebIdentity` を使える |
+
+### 拡張フローと基本フロー {#enhanced-basic-flow}
+
+| 観点 | 拡張フロー | 基本（クラシック）フロー |
+| --- | --- | --- |
+| API の順序 | `GetId`, `GetCredentialsForIdentity` | `GetId`, `GetOpenIdToken`, `AssumeRoleWithWebIdentity` |
+| ロールの決定 | ID プールの設定 | アプリが `RoleArn` を指定 |
+| ロールマッピング | 使える | 使えない |
+
+ロールマッピングがあるプールで基本フローを呼ぶと、`Basic (classic) flow is not supported with RoleMappings, please use enhanced flow.` というエラーになります。
+
+### ロールマッピング {#role-mapping}
+
+| 設定 | 内容 |
+| --- | --- |
+| `Type` | `Token`（トークンから選択）または `Rules`（ルール） |
+| `AmbiguousRoleResolution` | `AuthenticatedRole` または `Deny` |
+| ルールの条件 | `Claim`, `MatchType`（`Equals`, `NotEqual`, `StartsWith`, `Contains`）, `Value`, `RoleARN` |
+| ルールの数 | プロバイダーごとに 25 個。引き上げ不可 |
+
+**トークンから選択**するときの順序です。
+
+1. `GetCredentialsForIdentity` の `CustomRoleArn` があり、`cognito:roles` に含まれていればそれを使う。含まれていなければ拒否する。
+2. `cognito:preferred_role` があれば使う。
+3. どちらもなければ、`AmbiguousRoleResolution` に従う。
+
+カスタム属性をルールで使うときは、`custom:` を付けます。マッピングに使うロールを登録する人には `iam:PassRole` が必要です。
+
+### 開発者認証 {#developer-authenticated}
+
+自前の認証基盤でログインした利用者に、ID プールの認証情報を発行します。
+
+1. ID プールに開発者プロバイダー名を設定する。後から変更も削除もできない。
+2. バックエンドが AWS の認証情報で `GetOpenIdTokenForDeveloperIdentity` を呼ぶ。`TokenDuration` は既定 15 分、最大 86,400 秒。
+3. 返ったトークンで、クライアントが `GetCredentialsForIdentity` を呼ぶ。`Logins` のキーはトークンの `iss` と完全に一致させる。
+
+一致しないと、`NotAuthorizedException: Invalid login token. Issuer doesn't match providerName` になります。
+
+## API Gateway のオーソライザーの設定 {#authorizer-settings}
+
+### REST API（COGNITO_USER_POOLS） {#rest-authorizer-settings}
+
+| 設定 | 内容 |
+| --- | --- |
+| `providerARNs` | ユーザープールの ARN。1 つのオーソライザーに最大 1,000 個 |
+| `identitySource` | トークンのヘッダー。`method.request.header.Authorization` |
+| `identityValidationExpression` | トークンの `aud` を検証する正規表現。アクセストークンには `aud` がないので拒否される |
+| メソッドの `authorizationScopes` | 設定するとアクセストークンを要求し、スコープを 1 つでも含めば通す |
+
+- スコープ未設定で ID トークンの代わりにアクセストークンを送ると、拒否される。
+- スコープが一致しなければ `401 Unauthorized`。
+- コンソールのオーソライザーのテストには ID トークンを使う。アクセストークンでは試せない。
+
+### HTTP API（JWT オーソライザー） {#http-authorizer-settings}
+
+| 設定 | 値 |
+| --- | --- |
+| `identitySource` | `$request.header.Authorization` |
+| `issuerUrl` | `https://cognito-idp.<region>.amazonaws.com/<userPoolId>` |
+| `audience` | アプリクライアント ID |
+| ルートの `authorizationScopes` | 少なくとも 1 つを含むこと |
+
+API Gateway は `kid`, `iss`, `aud` または `client_id`, `exp`, `nbf`, `iat` を確認します。公開鍵はベストエフォートで最大 2 時間キャッシュします。使える署名は RSA 系だけです。
+
+ID トークンとアクセストークンは、JWT の構造だけでは区別できません。ID トークンの利用が必須でなければ、スコープの設定を推奨します。
+
+## 既定値と上限のまとめ {#numbers}
+
+| 項目 | 値 |
+| --- | --- |
+| ID トークン、アクセストークン | 既定 1 時間。5 分〜1 日 |
+| リフレッシュトークン | 既定 30 日。60 分〜10 年 |
+| 認証セッション（`AuthSessionValidity`） | 3〜15 分 |
+| 一時パスワード | 既定 7 日。最大 365 日 |
+| パスワードの最小長 | 6〜99 |
+| パスワード履歴 | 0〜24 |
+| サインアップ確認のコード | 24 時間 |
+| パスワードリセットのコード | 1 時間 |
+| Lambda トリガーの応答 | 5 秒（変更不可） |
+| カスタム属性 | 50 個。値は 2,048 文字まで |
+| アプリクライアント | プールあたり 1,000（最大 10,000） |
+| 同時に持てるクライアントシークレット | 2 つ |
+| コールバック URL | クライアントあたり 100 |
+| スコープ | リソースサーバーあたり 100、クライアントあたり 50 |
+| リソースサーバー | プールあたり 100（最大 300） |
+| グループ | プールあたり 10,000、ユーザーあたり 100 |
+| ID プールのルール | プロバイダーあたり 25 |
+| REST API オーソライザーのプール数 | 1,000 |
+| 開発者トークンの `TokenDuration` | 既定 15 分。最大 86,400 秒 |
+
 ## 試験のポイント {#exam-points}
 
 | こう問われたら | 答え |
@@ -327,6 +656,13 @@ def lambda_handler(event, context):
 | グループごとに AWS の権限を変える | グループに IAM ロールを割り当て、ID プールで「トークンから選択」 |
 | ユーザーが自分の DynamoDB 項目だけ操作 | `dynamodb:LeadingKeys` と `${cognito-identity.amazonaws.com:sub}` |
 | カスタム属性を削除したい | できない |
+| メールでのサインインを作成後に追加したい | できない。プールを作り直す |
+| リフレッシュトークンの既定の有効期間 | 30 日 |
+| Lambda トリガーの応答の期限 | 5 秒（変更不可） |
+| 同じ Precedence で異なるロールのグループ | `cognito:preferred_role` が設定されない |
+| ロールマッピングがある ID プールで基本フロー | エラー。拡張フローを使う |
+| アダプティブ認証を試してから有効にする | 監査のみモードで 2 週間以上 |
+| カスタムドメインの証明書の置き場所 | `us-east-1` |
 
 ## 関連ページ {#related}
 

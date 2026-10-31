@@ -570,6 +570,404 @@ def tenant_session(tenant_id: str) -> boto3.Session:
 - ログとメトリクスにテナント ID を付けて追跡できるようにする。
 - 1 テナントがリソースを使い切らないよう、使用量プランなどで制限する。
 
+## Secrets Manager の設定の詳細 {#secrets-manager-settings}
+
+### ローテーションのスケジュール {#rotation-schedule}
+
+`RotateSecret` の `RotationRules` で設定します。
+
+| 項目 | 値 |
+| --- | --- |
+| `ScheduleExpression` | `rate()` または `cron()`。時刻は UTC |
+| `AutomaticallyAfterDays` | 1〜1,000 日。`ScheduleExpression` とは同時に指定できない |
+| `rate()` | 最短 4 時間、最長 999 日 |
+| `Duration` | ローテーションウィンドウの長さ。最短 1 時間。次のウィンドウや UTC の翌日にまたがれない |
+| 既定のウィンドウ | 時間単位なら 1 時間、日単位なら当日の終わりまで |
+| `RotateImmediately` | 既定 `true`。`false` なら次のウィンドウまで待ち、`testSecret` で設定を試す |
+
+```bash
+aws secretsmanager rotate-secret --secret-id prod/orders/db \
+  --rotation-lambda-arn arn:aws:lambda:ap-northeast-1:111122223333:function:rotate \
+  --rotation-rules '{"ScheduleExpression":"cron(0 16 ? * SAT *)","Duration":"2h"}'
+```
+
+この例は毎週土曜 16:00 UTC（日本時間の日曜 1:00）から 2 時間以内に実行します。cron に JST の時刻を書くと、9 時間ずれます。
+
+ウィンドウ内のいつかに実行されるので、正確な時刻に動くわけではありません。
+
+### Lambda ローテーションの動き {#lambda-rotation-steps}
+
+Secrets Manager が同じ関数を 4 回呼びます。イベントには `Step`、`SecretId`、`ClientRequestToken`（新しいバージョンの ID）が入ります。
+
+| ステップ | すること | ラベル |
+| --- | --- | --- |
+| `createSecret` | `GetRandomPassword` などで新しい値を作り、保存する | 新バージョンに `AWSPENDING` |
+| `setSecret` | データベースなどの認証情報を変更する | 変化なし |
+| `testSecret` | `AWSPENDING` の値で接続を確認する | 変化なし |
+| `finishSecret` | `AWSCURRENT` を新バージョンに移す | 旧バージョンに `AWSPREVIOUS` |
+
+| 設定 | 注意 |
+| --- | --- |
+| 関数のリソースベースポリシー | `secretsmanager.amazonaws.com` からの呼び出しを許可する |
+| 実行ロール | `GetSecretValue`, `PutSecretValue`, `UpdateSecretVersionStage`, `DescribeSecret`、カスタマー管理キーなら `kms:Decrypt`, `kms:GenerateDataKey` |
+| ネットワーク | データベースと Secrets Manager の両方に届く。VPC 内なら VPC エンドポイントか NAT |
+| 同時実行 | 予約した同時実行を 10 未満にすると、スロットリングする場合がある |
+| べき等性 | 再試行されるので、各ステップは同じトークンで何度呼ばれても壊れないようにする |
+
+`testSecret` が失敗すると、`AWSCURRENT` は動きません。アプリは前の値のままですが、シングルユーザーで `setSecret` まで進んでいるとデータベースのパスワードだけが変わっていて、接続エラーになります。
+
+`AWSPENDING` が残っていると、次のローテーションが失敗します。CloudWatch Logs の関数のログを確認します。
+
+### バージョンの扱い {#version-stages}
+
+| 項目 | 内容 |
+| --- | --- |
+| バージョンの上限 | 100。超えるとラベルなしの古いものから削除。24 時間以内に作ったものは残す |
+| ラベルの上限 | シークレット全体で 20 |
+| ラベルなしのバージョン | 非推奨の扱い |
+| 取得の指定 | `VersionStage` か `VersionId`。未指定なら `AWSCURRENT` |
+
+短い間隔で値を更新し続けると、24 時間以内のバージョンが増え、上限で `LimitExceededException` になりえます。
+
+**ロールバック**: `AWSCURRENT` を前のバージョンに移します。
+
+```bash
+aws secretsmanager update-secret-version-stage --secret-id prod/orders/db \
+  --version-stage AWSCURRENT \
+  --move-to-version-id <AWSPREVIOUS の ID> \
+  --remove-from-version-id <今の AWSCURRENT の ID>
+```
+
+### 削除と復旧 {#recovery-window}
+
+| 設定 | 値 |
+| --- | --- |
+| `RecoveryWindowInDays` | 7〜30 日。既定 30 日 |
+| `ForceDeleteWithoutRecovery` | 復旧期間なしで削除。実際の削除は非同期で、少し遅れることがある。`RecoveryWindowInDays` と同時に指定できない |
+| 復旧 | `RestoreSecret` で `DeletionDate` を消す |
+| 削除待ちの料金 | かからない |
+
+削除待ちの間は `GetSecretValue` に失敗します（`InvalidRequestException`）。同じ名前のシークレットも作れません。すぐに同じ名前を使いたいテストでは `ForceDeleteWithoutRecovery` を使い、作成が失敗したら間隔を空けて再試行します。
+
+本番で使っていそうなら、CloudWatch アラームで削除待ちのシークレットへのアクセスを検知します。
+
+### 他リージョンへの複製 {#secret-replication}
+
+| 項目 | 内容 |
+| --- | --- |
+| 作成 | `ReplicateSecretToRegion` または `CreateSecret` の `AddReplicaRegions` |
+| 同期 | プライマリの値と暗号化された内容が同期。ローテーションはプライマリのみで実行すれば反映 |
+| レプリカの暗号化 | リージョンごとに KMS キーを指定する |
+| 独立 | `StopReplicationToReplica` でスタンドアロンに昇格 |
+| 削除 | プライマリを先に消せない。`RemoveRegionsFromReplication` でレプリカを消してからプライマリを消す |
+| 料金 | レプリカも課金対象 |
+
+データベースの認証情報を複製しても、値は元のデータベースのエンドポイントのままです。レプリカで使うなら、リージョンのデータベース用に値を調整します。
+
+### リソースポリシー {#secret-resource-policy}
+
+`PutResourcePolicy` で付与します。既存のポリシーは置き換えられます。上限は 20,480 文字です。
+
+```bash
+aws secretsmanager put-resource-policy --secret-id prod/orders/db \
+  --resource-policy file://policy.json --block-public-policy
+```
+
+`--block-public-policy` を付けると、公開するポリシーを拒否します。
+
+### 暗号化と料金 {#secret-encryption-cost}
+
+エンベロープ暗号化を使い、バージョンごとにデータキーを作ります。
+
+- AWS 管理キー `aws/secretsmanager` は無料。ただしクロスアカウントに使えない。
+- カスタマー管理キーは KMS の料金がかかる。読む主体に `kms:Decrypt` が必要。
+- `UpdateSecret` でキーを変更すると、`AWSCURRENT`, `AWSPENDING`, `AWSPREVIOUS` は新しいキーで再暗号化される。
+
+シークレットごとの月額と、API 呼び出しの料金があります。Parameter Store より高いので、資格情報のローテーションが要らない値には Parameter Store も検討します。
+
+### GetRandomPassword {#get-random-password}
+
+`PasswordLength` は既定 32、1〜4,096 です。`ExcludeCharacters` で、データベースが受け付けない文字を除けます。
+
+### キャッシュの選び方 {#caching-choice}
+
+| 方法 | TTL | 向いている場面 |
+| --- | --- | --- |
+| Python などのキャッシュライブラリ | 既定 1 時間 | EC2, ECS などの長時間動くプロセス |
+| Parameters and Secrets Lambda Extension | 既定 300 秒。0〜300 秒 | Lambda |
+| Powertools for AWS Lambda | 既定 5 秒 | Lambda のコード内 |
+
+拡張の追加の設定です。
+
+| 環境変数 | 既定 | 内容 |
+| --- | --- | --- |
+| `SECRETS_MANAGER_TTL` | 300 | 0 でキャッシュなし。`PARAMETERS_SECRETS_EXTENSION_CACHE_SIZE` が 0 なら無視 |
+| `SECRETS_MANAGER_TIMEOUT_MILLIS` | 0（無制限） | リクエストのタイムアウト |
+| `SSM_PARAMETER_STORE_TIMEOUT_MILLIS` | 0（無制限） | 同上 |
+
+`secretId` は URL エンコードします。`X-Aws-Parameters-Secrets-Token` がないと拒否されます。ローテーションで古い値が使えなくなったら、`versionStage=AWSCURRENT` を指定するか、TTL を短くします。
+
+### CloudFormation の動的参照 {#dynamic-references}
+
+```yaml
+Resources:
+  Database:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      MasterUsername: '{{resolve:secretsmanager:prod/orders/db:SecretString:username}}'
+      MasterUserPassword: '{{resolve:secretsmanager:prod/orders/db:SecretString:password}}'
+  Queue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: '{{resolve:ssm:/prod/orders/queue-name:3}}'
+```
+
+| 種類 | 形式 |
+| --- | --- |
+| Parameter Store の平文 | `{{resolve:ssm:名前:バージョン}}`。`Parameters` セクションではバージョン必須 |
+| `SecureString` | `{{resolve:ssm-secure:名前:バージョン}}`。対応するプロパティのみ |
+| Secrets Manager | `{{resolve:secretsmanager:ID:SecretString:JSONキー:ステージ:バージョンID}}` |
+
+| 注意点 | 内容 |
+| --- | --- |
+| 数 | テンプレートあたり 60 個 |
+| 使えない場所 | 機密値のカスタムリソース、`AWS::CloudFormation::Init`、EC2 の `UserData` |
+| 値の更新 | シークレットを更新しても自動で反映されない。そのプロパティを持つリソースの更新時のみ取得する |
+| ドリフト | 検出の対象外 |
+| 共有パラメータ | 別アカウントから共有されたパラメータは参照できない |
+| ロールバック | `ssm-secure` の指定のバージョンがなくなると、ロールバックが失敗する |
+
+## Parameter Store の設定の詳細 {#parameter-store-settings}
+
+### PutParameter の設定 {#put-parameter-settings}
+
+```bash
+aws ssm put-parameter --name /prod/orders/timeout --type String \
+  --value 30 --allowed-pattern '^\d+$' --tier Intelligent-Tiering --overwrite
+```
+
+| パラメータ | 内容 |
+| --- | --- |
+| `Name` | 大文字と小文字を区別。階層なら先頭に `/`。階層は 15 まで |
+| `Type` | `String`, `StringList`（カンマ区切り）, `SecureString` |
+| `Overwrite` | 既定 `false`。既存の名前を `false` で更新すると `ParameterAlreadyExists` |
+| `AllowedPattern` | 値を検証する正規表現 |
+| `KeyId` | `SecureString` の KMS キー。省略で既定のキー |
+| `Tier` | `Standard`, `Advanced`, `Intelligent-Tiering` |
+| `Policies` | パラメータポリシーの JSON |
+| `DataType` | `text`, `aws:ec2:image` など |
+
+### ティアの選択 {#tier-selection}
+
+**既定のティアは個別のティアとは別の設定**で、アカウントとリージョンごとに持ちます。変えても、既存のパラメータには影響しません。
+
+Intelligent-Tiering は、次のどれかに当たれば Advanced に、それ以外なら Standard にします。
+
+- 値が 4 KB より大きい
+- パラメータポリシーを使う
+- そのアカウントとリージョンに、すでに 10,000 個のパラメータがある
+
+5 KB の値を `Standard` で書き込むと失敗します。一度 Advanced になると Standard には戻せません。戻したいなら削除して作り直します。
+
+### パラメータポリシー {#parameter-policies}
+
+Advanced のみ使えます。1 つのパラメータに複数を設定できます。
+
+```json
+[
+  {"Type": "Expiration", "Version": "1.0",
+   "Attributes": {"Timestamp": "2026-12-31T15:00:00.000Z"}},
+  {"Type": "ExpirationNotification", "Version": "1.0",
+   "Attributes": {"Before": "15", "Unit": "Days"}},
+  {"Type": "NoChangeNotification", "Version": "1.0",
+   "Attributes": {"After": "20", "Unit": "Days"}}
+]
+```
+
+| 種類 | 動作 |
+| --- | --- |
+| `Expiration` | 指定の日時にパラメータを削除する |
+| `ExpirationNotification` | 期限の前に EventBridge にイベントを送る。単位は日または時間 |
+| `NoChangeNotification` | 指定の期間変更がなければ EventBridge にイベントを送る |
+
+ポリシーは非同期の定期スキャンで実行されます。指定の時刻ちょうどとは限りません。
+
+### 階層と取得 {#parameter-retrieval}
+
+| API | 動作 | 上限 |
+| --- | --- | --- |
+| `GetParameter` | 1 つ取得 | |
+| `GetParameters` | 複数を名前で取得 | 1 回 10 個。存在しない名前は `InvalidParameters` に入る |
+| `GetParametersByPath` | パス配下を取得 | `MaxResults` は 1〜10。`NextToken` でページング |
+
+`GetParametersByPath` は `Recursive` が既定で `false` です。`/prod/orders` だけ指定すると、`/prod/orders/db/host` は返りません。応答が空のページでも `NextToken` があれば続きがあるので、ページネーターを使います。
+
+IAM ではパスを `Resource` で絞ります。`SecureString` を読むなら、`kms:Decrypt` も必要です。
+
+`GetParametersByPath` では、`/a` へのアクセスを持つ主体は、`/a/b` を IAM で明示的に拒否していても、`Recursive=true` で取得できます。配下を隠したいなら、上の階層の権限を渡さないように設計します。
+
+### バージョンとラベル {#parameter-versions}
+
+| 項目 | 内容 |
+| --- | --- |
+| 履歴 | 100 バージョン。超えると最も古いものを削除 |
+| 例外 | 最古のバージョンにラベルがあると削除されず、`PutParameter` が失敗する（`ParameterMaxVersionLimitExceeded`） |
+| ラベルの数 | 1 バージョンに 10 個 |
+| ラベルの一意性 | 同じラベルを別のバージョンに付けられない。移動はできる |
+| 作成時のラベル | 指定できない。後から `LabelParameterVersion` で付ける |
+| 参照 | `name:3`（バージョン）、`name:prod`（ラベル） |
+
+存在しないバージョンやラベルを指定すると失敗します。最新の値には戻りません。
+
+### スループット {#parameter-throughput}
+
+| API | 既定 | 高スループット |
+| --- | --- | --- |
+| `GetParameter`, `GetParameters`, `GetParametersByPath` | 合計 40 TPS | 10,000 / 1,000 / 100 TPS |
+| `DeleteParameter`, `DeleteParameters` | 3 TPS | 5 TPS |
+| `PutParameter`, `DescribeParameters`, `GetParameterHistory`, `LabelParameterVersion`, `UnlabelParameterVersion` | 3 TPS | 10 TPS |
+
+アカウントとリージョン単位で共有します。Lambda が 100 個同時に起動し、それぞれ 1 回 `GetParameter` を呼ぶと、40 TPS を超えて `ThrottlingException` になります。
+
+パラメータごとの設定ではなく、`update-service-setting` でアカウント全体に有効にします。高スループットは API 呼び出しごとに課金されるので、まずキャッシュを検討します。
+
+### パブリックパラメータ {#public-parameters}
+
+AWS が公開する値です。最新の AMI ID をハードコードせずに取得できます。
+
+```bash
+aws ssm get-parameters-by-path \
+  --path /aws/service/ami-amazon-linux-latest --query 'Parameters[].Name'
+```
+
+CloudFormation のパラメータ型 `AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>` と組み合わせると、デプロイ時に最新の AMI を解決できます。
+
+### 共有パラメータ {#shared-parameters}
+
+AWS RAM で共有します。Advanced のみです。共有された側は ARN で読みます。`SecureString` はカスタマー管理キーを別に共有します。既定の AWS 管理キーのものは共有できません。
+
+## AppConfig の設定の詳細 {#appconfig-settings}
+
+### 構成要素の階層 {#appconfig-hierarchy}
+
+1 つのアプリケーションの下に、環境と設定プロファイルを作ります。デプロイは「環境、プロファイルのバージョン、戦略」を指定します。
+
+環境には、一度に 1 つの設定しかデプロイできません。別の環境には同時にデプロイできます。
+
+### デプロイ戦略の項目 {#strategy-fields}
+
+| API の項目 | 範囲 | 内容 |
+| --- | --- | --- |
+| `DeploymentDurationInMinutes` | 0〜1,440 | 配布にかける時間 |
+| `FinalBakeTimeInMinutes` | 0〜1,440 | 100% 配布後に監視する時間 |
+| `GrowthFactor` | 1.0〜100.0 | 各ステップの割合 |
+| `GrowthType` | `LINEAR`, `EXPONENTIAL` | 増え方 |
+| `ReplicateTo` | `NONE`, `SSM_DOCUMENT` | 戦略の保存先 |
+
+`EXPONENTIAL` は `G*(2^N)` です。`GrowthFactor` が 2 なら、2%、4%、8% と増えます。
+
+`LINEAR` で `GrowthFactor=20`、`DeploymentDurationInMinutes=30` なら、6 分ごとに 20% ずつ増えます。
+
+| 事前定義の戦略 | 配布 | 監視（ベイク） |
+| --- | --- | --- |
+| `AppConfig.Linear20PercentEvery6Minutes` | 6 分ごとに 20%、30 分 | 30 分 |
+| `AppConfig.Canary10Percent20Minutes` | 成長率 10% で指数的に 20 分 | 10 分 |
+| `AppConfig.AllAtOnce` | 即時 | 10 分 |
+| `AppConfig.Linear50PercentEvery30Seconds` | 30 秒ごとに 50%、1 分 | 1 分 |
+
+### バリデーターの動き {#validator-details}
+
+| 項目 | 内容 |
+| --- | --- |
+| 数 | プロファイルあたり 2 つまで |
+| Lambda | イベントに base64 の内容と URI が入る。例外を投げると検証失敗（`X-Amz-Function-Error`） |
+| JSON Schema | フリーフォーム向け。機能フラグは自動で検証される |
+
+Lambda バリデーターを使うときは、AppConfig からの呼び出しを許可します。検証に失敗するとデプロイは開始されません。
+
+### アラームとロールバック {#alarm-rollback}
+
+環境の `Monitors` に、`AlarmArn` と `AlarmRoleArn` を設定します。ロールには `cloudwatch:DescribeAlarms` が必要です。
+
+```bash
+aws appconfig create-environment --application-id abc123 --name Production \
+  --monitors AlarmArn=arn:aws:cloudwatch:ap-northeast-1:111122223333:alarm:errors,AlarmRoleArn=arn:aws:iam::111122223333:role/AppConfigMonitor
+```
+
+| 状況 | 動作 |
+| --- | --- |
+| デプロイ中、ベイク中にアラームが `ALARM` | 自動ロールバック |
+| アラームのアクションが無効 | 自動ロールバックしない |
+| 進行中に止める | `StopDeployment` |
+| 完了後に前のバージョンに戻す | `StopDeployment` の `AllowRevert` |
+
+`FinalBakeTimeInMinutes` が 0 だと、完了後に発生したアラームではロールバックしません。
+
+### 取得とポーリング {#polling-settings}
+
+| 項目 | 値 |
+| --- | --- |
+| `RequiredMinimumPollIntervalInSeconds` | 15〜86,400 |
+| トークン | 1 回限り。最大 24 時間有効。期限切れは `BadRequestException` |
+| `GetConfiguration`（旧 API） | 非推奨。暗号化された設定に未対応 |
+| 空の応答 | クライアントがすでに最新を持っているという意味 |
+
+`StartConfigurationSession` は、アプリケーション、環境、プロファイル、クライアントごとに 1 回だけ呼びます。ループの中で毎回呼ぶと無駄が増えます。
+
+応答の `NextPollIntervalInSeconds` の間隔を守り、`NextPollConfigurationToken` を次の呼び出しに使います。
+
+`Configuration` が空だからといって設定が消えたわけではありません。前回の値を保持する必要があります。これを忘れると、2 回目の呼び出しで設定が空になるバグになります。
+
+### AppConfig Agent {#appconfig-agent-settings}
+
+AWS が推奨する取得方法で、EC2、ECS、EKS、Lambda で使えます。
+
+```text
+GET http://localhost:2772/applications/orders/environments/prod/configurations/flags
+```
+
+| 環境変数（Lambda 拡張） | 既定 | 内容 |
+| --- | --- | --- |
+| `AWS_APPCONFIG_EXTENSION_HTTP_PORT` | 2772 | ローカルのポート |
+| `AWS_APPCONFIG_EXTENSION_POLL_INTERVAL_SECONDS` | 45 | ポーリングの間隔 |
+| `AWS_APPCONFIG_EXTENSION_POLL_TIMEOUT_MILLIS` | 3000 ミリ秒 | 取得の待ち時間。超えるとキャッシュの値を返す |
+| `AWS_APPCONFIG_EXTENSION_PREFETCH_LIST` | なし | 起動時に取得する設定。コールドスタートを短くする |
+| `AWS_APPCONFIG_EXTENSION_ROLE_ARN` | なし | 取得に引き受けるロール |
+
+最初の呼び出しはキャッシュがないので遅くなります。ポーリング間隔を短くすると変更の反映が早くなりますが、その分の API 料金が増えます。
+
+## 既定値と上限のまとめ {#numbers}
+
+| 項目 | 値 |
+| --- | --- |
+| シークレットの値 | 65,536 バイト |
+| シークレットのバージョン | 100 |
+| シークレットのラベル | 20 |
+| リソースポリシー | 20,480 文字 |
+| 復旧期間 | 既定 30 日。7〜30 日 |
+| ローテーションの最短間隔 | 4 時間 |
+| ローテーションウィンドウ | 最短 1 時間 |
+| `AutomaticallyAfterDays` | 1〜1,000 |
+| `GetSecretValue` | 秒間 10,000 |
+| `BatchGetSecretValue` | 秒間 100 |
+| `GetRandomPassword` の長さ | 既定 32。1〜4,096 |
+| CloudFormation の動的参照 | テンプレートあたり 60 |
+| パラメータ数 | Standard 10,000。Advanced 100,000 |
+| パラメータの値 | Standard 4 KB。Advanced 8 KB |
+| パラメータの階層 | 15 |
+| パラメータの履歴 | 100 バージョン |
+| ラベル | バージョンあたり 10 |
+| `GetParameters` | 1 回 10 個 |
+| `GetParametersByPath` の `MaxResults` | 1〜10 |
+| 取得のスループット | 既定 40 TPS。高スループットは最大 10,000 TPS |
+| Lambda 拡張の TTL | 既定 300 秒。0〜300 |
+| Lambda 拡張のポート | Secrets Manager と Parameter Store は 2773。AppConfig は 2772 |
+| AppConfig の時間の項目 | 0〜1,440 分 |
+| AppConfig のバリデーター | 2 つ |
+| AppConfig の最小ポーリング間隔 | 15〜86,400 秒 |
+| AppConfig Agent のポーリング | 既定 45 秒 |
+| AppConfig のトークン | 最大 24 時間 |
+
 ## 試験のポイント {#exam-points}
 
 | こう問われたら | 答え |
@@ -593,6 +991,12 @@ def tenant_session(tenant_id: str) -> boto3.Session:
 | ポリシー設定前のログもマスクされるか | されない |
 | 共有テーブルでテナントを分離 | `dynamodb:LeadingKeys` とセッションタグ |
 | 別アカウントからシークレットを読む | リソースポリシー、IAM、カスタマー管理キーのキーポリシー |
+| 削除の復旧期間 | 既定 30 日。7〜30 日 |
+| シークレットの値を更新しても CloudFormation に反映されない | そのプロパティのリソースを更新するまで取得しない |
+| `GetParametersByPath` で孫の階層が取れない | `Recursive=true` |
+| 4 KB を超えるときだけ Advanced にする | Intelligent-Tiering |
+| AppConfig の 2 回目の応答が空 | 変更なし。前回の値を使う |
+| AppConfig Agent の既定のポート | 2772 |
 
 ## 関連ページ {#related}
 

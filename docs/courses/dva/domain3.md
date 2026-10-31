@@ -143,6 +143,8 @@ CodeDeploy はアラームと連動して自動で戻せます。CloudFormation 
 
 ## 確認問題 {#self-check}
 
+まず基本を確認する問題です。本番形式の問題は[問題集](exercises/index.md)にあります（[CI/CD](exercises/cicd.md)、[IaC と CLI](exercises/iac.md)、[コンテナ](exercises/containers.md) など）。
+
 ??? question "問1: Lambda の新バージョンに、まず 10% のトラフィックだけを流します。何を使いますか？"
     エイリアスの加重と CodeDeploy のカナリア設定です。SAM なら `DeploymentPreference` で指定できます。
 

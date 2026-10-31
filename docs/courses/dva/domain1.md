@@ -143,6 +143,8 @@ DynamoDB には DAX、RDS などには ElastiCache、静的コンテンツや AP
 
 ## 確認問題 {#self-check}
 
+まず基本を確認する問題です。本番形式の問題は[問題集](exercises/index.md)にあります（[Lambda](exercises/lambda.md)、[メッセージング](exercises/messaging.md)、[DynamoDB](exercises/dynamodb.md) など）。
+
 ??? question "問1: API Gateway から同期で呼ぶ Lambda の処理に数分かかり、API がタイムアウトします。どう直しますか？"
     リクエストを受けたら SQS に入れてすぐ応答を返し、別の Lambda で非同期に処理します。処理の結果は、状態を確認する API などで返します。
 

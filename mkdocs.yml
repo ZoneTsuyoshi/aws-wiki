@@ -55,6 +55,30 @@ nav:
           - 分野3 テストとデプロイ: courses/dva/domain3.md
           - 分野4 トラブルシューティング: courses/dva/domain4.md
           - スキル対応表: courses/dva/coverage.md
+          - 問題集:
+              - courses/dva/exercises/index.md
+              - Lambda: courses/dva/exercises/lambda.md
+              - API Gateway: courses/dva/exercises/api-gateway.md
+              - メッセージング: courses/dva/exercises/messaging.md
+              - Step Functions: courses/dva/exercises/step-functions.md
+              - ストリーミングと分析: courses/dva/exercises/streaming.md
+              - SDK と耐障害性: courses/dva/exercises/sdk-resilience.md
+              - DynamoDB: courses/dva/exercises/dynamodb.md
+              - データベースとキャッシュ: courses/dva/exercises/databases.md
+              - S3: courses/dva/exercises/s3.md
+              - ストレージ: courses/dva/exercises/storage.md
+              - IAM と STS: courses/dva/exercises/iam.md
+              - Cognito: courses/dva/exercises/cognito.md
+              - KMS と暗号化: courses/dva/exercises/kms.md
+              - シークレットと設定: courses/dva/exercises/secrets.md
+              - 証明書と WAF: courses/dva/exercises/certificates.md
+              - AI サービス: courses/dva/exercises/ai.md
+              - EC2 と Elastic Beanstalk: courses/dva/exercises/ec2-beanstalk.md
+              - コンテナ: courses/dva/exercises/containers.md
+              - CI/CD: courses/dva/exercises/cicd.md
+              - IaC と CLI: courses/dva/exercises/iac.md
+              - オブザーバビリティ: courses/dva/exercises/observability.md
+              - ネットワークと配信: courses/dva/exercises/networking.md
   - サービス:
       - services/index.md
       - アプリケーション開発:

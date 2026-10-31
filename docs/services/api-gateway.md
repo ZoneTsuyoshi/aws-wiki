@@ -30,8 +30,25 @@ REST API と HTTP API の主な違いは次の通り。
 | 自動デプロイ | なし | あり |
 | ALB への統合 | あり | あり |
 | Cloud Map への統合 | なし | あり |
+| カスタムゲートウェイレスポンス | あり | なし |
+| コンソールのテスト呼び出し | あり | なし |
+| レスポンスストリーミング | あり | なし |
+| Firehose へのアクセスログ | あり | なし |
 
 HTTP API で Cognito を使うときは JWT オーソライザーを設定する。迷ったら、必要な機能が HTTP API にあるか確認し、なければ REST API を選ぶ。
+
+### 種類ごとの設定の違い {#settings-by-type}
+
+| 設定 | REST API | HTTP API | WebSocket API |
+| --- | --- | --- | --- |
+| 統合タイムアウト | 50 ms〜29 秒（既定 29 秒）。リージョンとプライベートは引き上げ可 | 最大 30 秒 | 50 ms〜29 秒 |
+| ペイロード | 10 MB | 10 MB | フレーム 32 KB、メッセージ 128 KB |
+| スロットリングの単位 | ステージ、メソッド、使用量プラン | ステージ、ルート | ステージ、ルート |
+| 認可の設定先 | メソッドごと | ルートごと | `$connect` のみ |
+| ログ | 実行ログとアクセスログ | アクセスログ | 実行ログとアクセスログ |
+| メトリクスの 4XX 名 | `4XXError` | `4xx` | `ClientError` など別の名前 |
+
+ステージ変数の数と長さの上限は、REST API と HTTP API で同じ（ステージあたり 100、キー 64 文字、値 512 文字）。
 
 ### WebSocket API {#websocket}
 
@@ -46,6 +63,13 @@ HTTP API で Cognito を使うときは JWT オーソライザーを設定する
 
 バックエンドからは `@connections` API で接続先に送信する。接続時間の上限は 2 時間、アイドルタイムアウトは 10 分。フレームは 32 KB まで、メッセージは 128 KB まで。
 
+- **認可:** `$connect` ルートにだけ設定できる。接続時に一度だけ判定し、失敗すると 401 か 403 で接続は確立しない。
+- **`$connect` の統合:** 省略できる。接続 ID を DynamoDB に保存する用途でよく使う。統合が終わるまで接続は確立しない。
+- **ルート応答:** Lambda プロキシ統合の戻り値はクライアントに自動では返らない。返すならルートレスポンスを定義するか、`@connections` を使う。
+- **バイナリ:** 非対応で、受け取ると 1003 で閉じる。
+- **切断の例:** 10 分通信がないか 2 時間経つと、1001 で閉じる。チャットアプリなら、クライアントから定期的に ping メッセージを送り、切れたら再接続する。
+- **新規接続:** アカウントのリージョンごとに毎秒 500（引き上げ可）。
+
 ## 統合タイプ {#integration-types}
 
 `Integration` リソースの `type` で指定する。
@@ -59,6 +83,52 @@ HTTP API で Cognito を使うときは JWT オーソライザーを設定する
 | `MOCK` | なし | API Gateway 自身が応答する |
 
 AWS は、Lambda にはプロキシ統合を勧めている。設定が単純で、バックエンドの変更に追随しやすい。
+
+### 統合の共通設定 {#integration-settings}
+
+| 設定 | 内容 | 既定と範囲 |
+| --- | --- | --- |
+| `timeoutInMillis` | 統合のタイムアウト | 既定 29,000、50〜29,000 ms。リージョンとプライベートは引き上げ可 |
+| `credentials` | API Gateway が引き受ける IAM ロールの ARN | AWS サービス統合で使う |
+| `connectionType` | `INTERNET`、`VPC_LINK` | 既定 `INTERNET` |
+| `contentHandling` | `CONVERT_TO_BINARY`、`CONVERT_TO_TEXT` | 未設定なら変換しない |
+| `passthroughBehavior` | テンプレートがないときの動き | [下記](#passthrough) |
+| `cacheKeyParameters` | キャッシュキーのパラメーター | [下記](#cache-keys) |
+| `cacheNamespace` | キャッシュをまとめる単位 | 既定はリソース ID |
+| `responseTransferMode` | `BUFFERED`、`STREAM` | 既定 `BUFFERED` |
+
+!!! note "29 秒の上限は変わった"
+    古い教材では「統合タイムアウトは 29 秒が上限」とあるが、リージョン API とプライベート API では 29 秒を超えて引き上げられる。その代わり、アカウントのスロットリングの枠が減ることがある。エッジ最適化 API は 29 秒のままで、HTTP API は 30 秒が上限。
+
+**例:** 40 秒かかる処理を REST API のリージョン API で同期のまま返すなら、クォータの引き上げを申請して `timeoutInMillis` を 45,000 にする。エッジ最適化では引き上げられないので、[SQS](messaging.md) や [Step Functions](step-functions.md) で非同期にする。
+
+### Lambda の非同期呼び出し {#lambda-async}
+
+Lambda 非プロキシ統合は、統合リクエストのヘッダーに `X-Amz-Invocation-Type: 'Event'` を設定すると、関数を非同期で呼ぶ。API は関数の完了を待たない。
+
+**例:** 2 分かかるレポート作成を、ヘッダーを固定値 `'Event'` にして受け付ける。クライアントごとに選ばせるなら、`method.request.header.InvocationType` をマッピングする。
+
+### プライベート統合 {#private-integration}
+
+VPC リンクで VPC 内のリソースへつなぐ。
+
+| | REST API | HTTP API |
+| --- | --- | --- |
+| Network Load Balancer | あり | あり |
+| Application Load Balancer | あり（VPC リンク V2） | あり |
+| Cloud Map | なし | あり |
+
+- HTTP API のプライベート統合では、すべて同じアカウントで所有する。
+- 既定の通信は HTTP。HTTPS にするなら `tlsConfig` を指定する。
+- HTTP API はパスにステージ名を含めて送る。外したいならパラメーターマッピングで上書きする。
+
+### レスポンスストリーミング {#response-streaming}
+
+`responseTransferMode` を `STREAM` にすると、完成を待たずに応答を返し始める。REST API の `HTTP_PROXY` と `AWS_PROXY` で使える。
+
+- 10 MB を超える応答や、29 秒を超える処理を、クォータの引き上げなしで返せる。
+- 最初のバイトまでの時間を短くできる。チャットの応答などに向く。
+- バイナリメディアタイプの設定は要らない。
 
 ### プロキシ統合 {#proxy-integration}
 
@@ -84,7 +154,20 @@ def handler(event, context):
 !!! warning "body は文字列"
     `body` に辞書を入れるとよくある 502 の原因になる。`json.dumps()` で文字列にする。
 
-HTTP API はペイロード形式のバージョン（1.0 と 2.0）を選べる。2.0 は構造が単純になっている。
+HTTP API はペイロード形式のバージョン（1.0 と 2.0）を選べる。CLI、CloudFormation、SDK で作るときは `payloadFormatVersion` が必須になる。
+
+| | 1.0 | 2.0 |
+| --- | --- | --- |
+| 同名のヘッダーやクエリ | `multiValueHeaders`、`multiValueQueryStringParameters` | カンマで連結して `headers` などに入る |
+| Cookie | ヘッダーの中 | `cookies` フィールド |
+| パス | `path` | `rawPath` |
+| `statusCode` なしの応答 | 不可 | 有効な JSON なら推定する |
+
+2.0 で関数が `{"message": "ok"}` を返すと、API Gateway は `statusCode` を 200、`content-type` を `application/json`、本文をこの JSON として扱う。
+
+**罠:** カスタムドメインの API マッピングを含むパスが必要なら 1.0 の `path` を使う。`rawPath` にはマッピングの値が入らない。
+
+REST API の `/{proxy+}` は貪欲パスパラメーターで、配下のパスをすべて 1 つの統合で受ける。リソース数の節約にもなる。メソッドに `ANY` を指定すれば、全メソッドを受けられる。
 
 ### 非プロキシ統合の流れ {#non-proxy-flow}
 
@@ -95,6 +178,17 @@ flowchart TD
     C --> D[統合レスポンス: ステータスと本文を変換]
     D --> E[メソッドレスポンス: 返す形式を宣言]
 ```
+
+| 段階 | 主な設定 |
+| --- | --- |
+| メソッドリクエスト | 認可の種類、オーソライザー、`apiKeyRequired`、必須パラメーター、`requestModels`、バリデーター |
+| 統合リクエスト | 統合タイプ、URI、`credentials`、マッピング、`passthroughBehavior`、タイムアウト |
+| 統合レスポンス | `selectionPattern`（正規表現で選ぶ）、ステータス、ヘッダーと本文のマッピング |
+| メソッドレスポンス | 返すステータスコード、ヘッダー、モデル |
+
+- **例:** Lambda カスタム統合で `.*NotFound.*` を `selectionPattern` にした 404 の統合レスポンスを作ると、エラーメッセージがこのパターンに一致するときに 404 を返す。
+- **罠:** `selectionPattern` を空にしたものは既定の応答で、他に一致しない応答をすべて受ける。
+- **罠:** メソッドレスポンスで宣言していないステータスやヘッダーは、統合レスポンスからマッピングできない。プロキシ統合ではこの段階を設定しない。
 
 ## リクエストとレスポンスの変換 {#transformations}
 
@@ -124,6 +218,17 @@ AWS は、できるならパラメーターマッピングを勧めている。�
 
 テンプレートの上限は 300 KB、`#foreach` の繰り返しは 1,000 回まで。
 
+テンプレートで使う主な変数は次の通り。
+
+| 変数 | 内容 |
+| --- | --- |
+| `$input.json('$')`、`$input.path('$.name')` | 本文の取得 |
+| `$input.params('id')` | パス、クエリ、ヘッダーのパラメーター |
+| `$context.requestId`、`$context.identity.sourceIp` | リクエストの情報 |
+| `$context.authorizer.principalId` | オーソライザーの結果 |
+| `$stageVariables.env` | ステージ変数 |
+| `$util.escapeJavaScript()`、`$util.base64Encode()` | 変換の補助 |
+
 ### テンプレートがないときの動き {#passthrough}
 
 `passthroughBehavior` で決める。
@@ -133,6 +238,18 @@ AWS は、できるならパラメーターマッピングを勧めている。�
 | `WHEN_NO_MATCH` | 一致するテンプレートがなければ、そのまま通す |
 | `WHEN_NO_TEMPLATES` | テンプレートが一つもなければ通す。定義があるのに一致しなければ 415 を返す |
 | `NEVER` | 変換せずには通さない。一致しなければ 415 を返す |
+
+**具体例:** `application/json` のテンプレートだけを定義したメソッドに、`application/xml` を送った場合は次のようになる。
+
+| 設定 | 結果 |
+| --- | --- |
+| `WHEN_NO_MATCH` | 変換せずにそのままバックエンドへ送る |
+| `WHEN_NO_TEMPLATES` | 415 |
+| `NEVER` | 415 |
+
+`Content-Type` がないリクエストは `application/json` として扱う。AWS は `WHEN_NO_TEMPLATES` を勧めている。
+
+**罠:** `WHEN_NO_MATCH` は、想定外の形式をそのままバックエンドに渡してしまう。
 
 ### ステータスコードの上書き {#status-override}
 
@@ -168,11 +285,30 @@ x-amazon-apigateway-request-validator: all
 
 エラー応答は `BAD_REQUEST_BODY` と `BAD_REQUEST_PARAMETERS` のゲートウェイレスポンスで変更できる。検証と、前述のパススルーは別の話で、一致するモデルがない場合の扱いは後者に従う。
 
+**モデル** は JSON Schema で書き、`Content-Type` ごとに `requestModels` に指定する。API あたりの合計は 400 KB まで。バリデーターは次の3種類を作る。
+
+| バリデーター | 検査するもの |
+| --- | --- |
+| 本文のみ | モデル |
+| パラメーターのみ | 必須のパス、クエリ、ヘッダー |
+| 両方 | 上の両方 |
+
+- **例:** `limit` を必須のクエリパラメーターにしても、`?limit=abc` は通る。パラメーターの検証は存在と空でないことしか見ない。数値かどうかはバックエンドで確認する。
+- **罠:** モデルを指定しただけでは検証されない。メソッドにバリデーターも指定する。
+
 ## モック統合 {#mock-integration}
 
 バックエンドなしで API Gateway が応答する。外部 API や別チームの API が未完成でも開発やテストを進められる。料金もバックエンド分がかからない。
 
 統合リクエストのテンプレートで返すステータスを決め、統合レスポンスのテンプレートで本文を決める。
+
+`type` を `MOCK` にして、次の順で設定する。
+
+1. 統合リクエストのテンプレート（`application/json`）で `{"statusCode": 200}` を返す。
+2. 統合レスポンスで、そのステータスに対する本文を定義する。
+3. メソッドレスポンスに同じステータスを宣言する。
+
+**罠:** 統合リクエストのテンプレートがないか、`statusCode` を返さないと、期待した統合レスポンスが選ばれない。
 
 ```json
 { "statusCode": 200 }
@@ -199,6 +335,34 @@ https://{api-id}.execute-api.{region}.amazonaws.com/{stage}
 - HTTP API は自動デプロイを有効にできる。`$default` ステージならベース URL で呼べる。
 - ステージごとに、スロットリング、キャッシュ、ログ、ステージ変数を設定できる。
 - REST API のステージ数の上限は既定で API あたり 10。
+- デプロイは API のスナップショットで、ステージの設定以外の変更（メソッド、統合、オーソライザー、リソースポリシーなど）に再デプロイが必要になる。ステージの設定はデプロイなしで反映される。
+- ステージの向き先を過去のデプロイに変えれば、ロールバックできる。
+- ステージ名は英数字、ハイフン、アンダースコアで 128 文字まで。
+
+### ステージの設定 {#stage-settings}
+
+| 設定 | API の項目 | 内容 |
+| --- | --- | --- |
+| キャッシュの有効化 | `cacheClusterEnabled`、`cacheClusterSize` | 容量 0.5〜237 GB |
+| レートとバースト | `throttlingRateLimit`、`throttlingBurstLimit` | ステージとメソッドの制限 |
+| WAF | ウェブ ACL の関連付け | REST API のみ |
+| クライアント証明書 | `clientCertificateId` | バックエンドが API Gateway を認証するため |
+| 実行ログ | `loggingLevel`（`OFF`、`ERROR`、`INFO`）、`dataTraceEnabled` | ログの詳細 |
+| 詳細メトリクス | `metricsEnabled` | メソッドごとのメトリクス（有料） |
+| X-Ray | `tracingEnabled` | トレース |
+| アクセスログ | `accessLogSettings` | 送信先と形式 |
+| ステージ変数 | `variables` | キーと値 |
+| カナリア | `canarySettings` | 下記 |
+
+ステージの設定は `methodSettings` でメソッドごとに上書きできる。
+
+```bash
+# GET /orders だけキャッシュの TTL を 60 秒にする
+aws apigateway update-stage --rest-api-id a1b2c3 --stage-name prod --patch-operations \
+  op=replace,path=/~1orders/GET/caching/ttlInSeconds,value=60
+```
+
+**罠:** パスの `/` は `~1` と書く。ステージの既定を変えても、上書き済みのメソッドには反映されない。
 
 ### テスト用エンドポイントとテストイベント {#test-endpoints}
 
@@ -246,6 +410,9 @@ https://${stageVariables.url}/orders
     ステージ変数で関数名を指定すると、API Gateway から関数を呼ぶ権限を手動で追加する必要がある。`aws lambda add-permission` で、ステージごとの関数やエイリアスに許可を与える。権限が足りないと呼び出しに失敗する。
 
 機密情報はステージ変数に入れない。
+AWS は、機密情報を統合に渡すなら Lambda オーソライザーの出力を使うよう案内している。
+
+**罠:** ステージ変数で変えられるのは接続先の名前や URL で、`HTTP_PROXY` を Lambda に変えるような統合タイプの切り替えはできない。
 
 ## カナリアリリース {#canary}
 
@@ -258,6 +425,12 @@ https://${stageVariables.url}/orders
 | `useStageCache` | ステージのキャッシュを使うか |
 
 カナリアのログは本番のロググループに加えて、`API-Gateway-Execution-Logs/{rest-api-id}/{stage-name}/Canary` にも出力される。問題なければカナリアを昇格して本番にし、問題があれば無効にする。
+アクセスログのロググループには `/Canary` が付く。
+
+- **例:** `percentTraffic: 5` にし、`stageVariableOverrides` で `alias` を `canary` にすると、5% だけ新しい Lambda エイリアスを呼ぶ。問題なければ昇格する。
+- **キャッシュ:** 本番とカナリアが別のデプロイなら、同じステージのキャッシュでも応答は別々に保存される。
+- **罠:** カナリアが有効な間は、ステージを別のデプロイに切り替えられない。無効にして設定を外してから行う。
+- **罠:** 割合は小さくランダムに振り分けるので、同じユーザーが常にカナリアに当たるわけではない。
 
 ## エンドポイントタイプ {#endpoint-types}
 
@@ -268,6 +441,12 @@ https://${stageVariables.url}/orders
 | プライベート | インターフェイス VPC エンドポイント経由でのみアクセス | VPC 内部向けの API |
 
 プライベート API のアクセス制御にはリソースポリシーを使う。
+
+- **作成時の変更:** 既定はエッジ最適化。`endpointConfiguration` で変える。
+- **ヘッダー:** エッジ最適化は HTTP ヘッダー名を先頭大文字に変え、Cookie を名前順に並べる。リージョンとプライベートはそのまま渡す。
+- **独自の CDN:** 世界中の利用者向けでも、CloudFront を自分で設定したいならリージョン API を選ぶ。エッジ最適化だと AWS が管理するディストリビューションになる。
+- **プライベート DNS:** VPC エンドポイントでプライベート DNS を有効にすると、`Host` ヘッダーなしで呼べるが、その VPC からパブリック API の既定のエンドポイントには届かなくなる。
+- **リソースポリシー:** `aws:SourceVpc` か `aws:SourceVpce` で VPC やエンドポイントを制限する。
 
 ## カスタムドメイン {#custom-domains}
 
@@ -313,6 +492,15 @@ https://${stageVariables.url}/orders
 
 AWS は `REQUEST` を勧めている。複数の情報源で判定でき、キャッシュキーも細かく分けられるため。
 
+| 設定 | `TOKEN` | `REQUEST` |
+| --- | --- | --- |
+| `identitySource` | ヘッダー 1 つ（例: `method.request.header.Authorization`） | ヘッダー、クエリ、ステージ変数、`$context` の複数 |
+| `identityValidationExpression` | 正規表現で事前に検証。一致しなければ関数を呼ばない | 使えない |
+| `authorizerResultTtlInSeconds` | 既定 300、0〜3,600 | 同じ |
+| キャッシュキー | トークンのヘッダー | すべてのアイデンティティソース |
+
+**例:** テナント別に判定するなら、`REQUEST` のアイデンティティソースを `method.request.header.Authorization,method.request.querystring.tenant` にする。テナントが違うと別のキャッシュになる。
+
 ```python
 def handler(event, context):
     # 実際はトークンを検証する
@@ -336,6 +524,29 @@ def handler(event, context):
 - ポリシーをキャッシュできる。TTL は既定 300 秒、最大 3,600 秒、0 で無効。
 - キャッシュを有効にすると、そのポリシーが API の他のメソッドにも使われる。上の例の `event["methodArn"]` だけを許可すると、別のメソッドで拒否される場合がある。全メソッドに使えるポリシーを返すか、キャッシュキーを分ける。
 - `REQUEST` でキャッシュを有効にすると、アイデンティティソースが欠けたリクエストは関数を呼ばずに 401 で拒否される。
+- `Deny` を返すと 403（`ACCESS_DENIED`）、未認証なら 401（`UNAUTHORIZED`）、関数の失敗や不正な応答は 500（`AUTHORIZER_FAILURE`、`AUTHORIZER_CONFIGURATION_ERROR`）になる。
+- `context` の値はマッピングで `$context.authorizer.キー名` として読める。
+- 応答に `usageIdentifierKey` を入れると、API キーとして使える（後述のキーソース `AUTHORIZER`）。
+- キャッシュキーの部分を変えて再デプロイすると、キャッシュしたポリシーは捨てられる。
+
+### HTTP API のオーソライザー {#http-api-authorizers}
+
+**Lambda オーソライザー:** ペイロード形式 1.0 と 2.0 を選ぶ。2.0 で **シンプルレスポンス** を有効にすると、`{"isAuthorized": true}` のように真偽値だけを返せる。アイデンティティソースは `$request.header.Authorization` のように書き、`authorizerResultTtlInSeconds` でキャッシュする。関数の応答待ちは 10 秒まで。
+
+**JWT オーソライザー:** `Issuer` と `Audience` を指定する。API Gateway が JWKS で署名を検証し、`exp`、`aud` などを確認する。ルートにスコープを指定すると、トークンがそのうち少なくとも 1 つを持つ必要がある。検証済みのクレームは `event.requestContext.authorizer.jwt.claims` で読める。
+
+**例:** Cognito なら、`Issuer` を `https://cognito-idp.ap-northeast-1.amazonaws.com/<ユーザープールID>` にする。
+
+**罠:** アクセストークンと ID トークンは標準では区別できない。ID トークンを受け入れないなら、ルートにスコープを必須にする。
+
+### Cognito オーソライザーの設定 {#cognito-authorizer-settings}
+
+| 設定 | 内容 |
+| --- | --- |
+| `type` | `COGNITO_USER_POOLS` |
+| `providerARNs` | ユーザープールの ARN |
+| `identitySource` | 通常は `method.request.header.Authorization` |
+| `authorizationScopes` | メソッド側で設定。あるとアクセストークンのスコープを検証する |
 
 ### IAM 認証 {#iam-auth}
 
@@ -356,6 +567,34 @@ def handler(event, context):
 
 クロスアカウントでは、呼び出し元の IAM ポリシーに加えて、API のリソースポリシーでも許可する。署名の詳細は [IAM](iam.md) を参照する。
 
+### リソースポリシー {#resource-policy}
+
+API に付ける JSON のポリシー。アカウント、送信元 IP、VPC、VPC エンドポイントで制限できる。REST API の機能で、上限は 8,192 文字。
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "execute-api:Invoke",
+      "Resource": "execute-api:/*",
+      "Condition": { "NotIpAddress": { "aws:SourceIp": "203.0.113.0/24" } }
+    },
+    {
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "execute-api:Invoke",
+      "Resource": "execute-api:/*"
+    }
+  ]
+}
+```
+
+- **罠:** ポリシーの変更も再デプロイしないと反映されない。
+- **認証の組み合わせ:** 同じアカウントの IAM 認証では、IAM ポリシーかリソースポリシーのどちらかで許可すればよい。別のアカウントでは両方で許可する。
+
 ## 使用量プランとスロットリング {#usage-plans-throttling}
 
 ### 使用量プランと API キー {#usage-plans}
@@ -367,6 +606,29 @@ def handler(event, context):
 3. 使用量プランにステージとスロットリング、クォータを設定する。
 4. プランに API キーを関連付ける。
 5. クライアントは `X-API-Key` ヘッダーで送る。
+
+使用量プランの設定は次の通り。
+
+| 設定 | 内容 |
+| --- | --- |
+| `throttle.rateLimit`、`burstLimit` | キーごとのレートとバースト |
+| `quota.limit`、`period` | 期間のリクエスト数。`period` は `DAY`、`WEEK`、`MONTH` |
+| `quota.offset` | 最初の期間の開始時に差し引く数 |
+| `apiStages` | 対象のステージ。メソッドごとの制限は 20 個まで |
+
+API キーの値は 20〜128 文字の英数字で、名前は 1,024 文字まで。キーは複数のプランに入れられるが、ステージごとに 1 つのプランだけに関連付ける。
+
+**API キーのソース**（`apiKeySource`）は2種類ある。
+
+| 値 | 動き |
+| --- | --- |
+| `HEADER` | クライアントが `X-API-Key` ヘッダーで送る |
+| `AUTHORIZER` | Lambda オーソライザーが `usageIdentifierKey` で返す |
+
+- **例:** 無料プランを月 1,000 回、レート 5、バースト 10 にする。1,001 回目は 429（`QUOTA_EXCEEDED`）。
+- **罠:** キーが無効なら 403（`INVALID_API_KEY`）で、429 ではない。
+- **罠:** 同じプランの複数の API は、1 つのキーですべて呼べる。API を分けて公開したいならプランも分ける。
+- **罠:** メソッドの `apiKeyRequired` を `true` にしないと、キーは検証されない。設定後は再デプロイする。
 
 !!! warning "API キーは認証ではない"
     API キーをアクセス制御の手段に使ってはいけない。認証には IAM、Cognito、Lambda オーソライザーを使う。スロットリングとクォータも目標値で、厳密な上限は保証されない。
@@ -387,6 +649,14 @@ def handler(event, context):
 
 この値は HTTP API、REST API、WebSocket API で共有する。429 を受けたクライアントは [バックオフして再試行](sdk-resilience.md) する。
 
+アカウントのレートは申請で引き上げられるが、バーストは AWS が決め、申請では変えられない。
+
+**トークンバケットの例:** レート 100、バースト 200 のメソッドでは、バケットに最大 200 のトークンが溜まり、毎秒 100 ずつ補充される。静かな状態から一度に 200 件は通るが、その後は毎秒 100 件を超えた分が 429 になる。
+
+- ステージとメソッドの値はアカウントの値を超えられない。超える値は設定しても意味がない。
+- HTTP API は使用量プランがなく、`DefaultRouteSettings` と `RouteSettings` でステージとルートごとに設定する。
+- どの制限も目標値なので、課金の上限には使えない。リクエストの制御には AWS WAF を、費用の監視には AWS Budgets を使う。
+
 ## キャッシュ {#caching}
 
 REST API のステージで有効にする。バックエンドの呼び出しを減らし、応答を速くする。
@@ -396,11 +666,19 @@ REST API のステージで有効にする。バックエンドの呼び出し�
 | TTL | 既定 300 秒、最大 3,600 秒、0 で無効 |
 | 既定で有効なメソッド | `GET` のみ。他はメソッドの設定で上書きする |
 | キャッシュ可能な応答 | 1,048,576 バイトまで |
-| 容量 | ステージごとに選ぶ。変更すると既存のキャッシュは消える |
-| 暗号化 | メソッドごとに設定できる |
+| 容量 | ステージごとに 0.5、1.6、6.1、13.5、28.4、58.2、118、237 GB から選ぶ。作成と削除に約 4 分かかる。変更すると既存のキャッシュは消える |
+| 暗号化 | `cacheDataEncrypted`。メソッドごとに設定できる。暗号化でサイズが増えることがある |
 | 料金 | 容量と時間による。無料枠の対象外 |
 
 確認は `CacheHitCount` と `CacheMissCount` メトリクスで行う。
+
+有効化は2段階になる。**Provision API cache** でキャッシュを作り、**Default method-level caching** かメソッドの上書きで対象を選ぶ。キャッシュを作っただけでは使われない。
+
+- **例:** 商品一覧 `GET /items` を TTL 600 秒にすると、10 分に 1 回だけバックエンドが呼ばれる。価格が頻繁に変わる `GET /items/{id}/price` はメソッドの上書きで TTL を 0 にする。
+- **罠:** `POST` の検索 API は既定ではキャッシュされない。必要ならメソッドの設定で有効にする。
+- **罠:** 1,048,576 バイトを超える応答はキャッシュされない。
+- **罠:** キャッシュはベストエフォート。確認は `X-Cache` ヘッダーではなく、メトリクスや応答のタイムスタンプで行う。
+- 容量の確認には 10 分間の負荷テストが勧められている。
 
 ### キャッシュキー（ヘッダー別のキャッシュ） {#cache-keys}
 
@@ -429,7 +707,30 @@ RequestParameters:
 
 クライアントは `Cache-Control: max-age=0` ヘッダーでキャッシュを無視できる。
 
-**Require authorization** を有効にして `execute-api:InvalidateCache` を許可したクライアントだけに限定する。そうしないと、誰でもキャッシュを無効化でき、レイテンシーが悪化する。ステージのキャッシュをコンソールや API で全消去することもできる。
+**Require authorization** を有効にして `execute-api:InvalidateCache` を許可したクライアントだけに限定する。そうしないと、誰でもキャッシュを無効化でき、レイテンシーが悪化する。クロスアカウントの無効化はできない。
+
+権限のないクライアントが送ったときの動きは `unauthorizedCacheControlHeaderStrategy` で選ぶ。
+
+| 値 | 動き |
+| --- | --- |
+| `FAIL_WITH_403` | 403 を返す |
+| `SUCCEED_WITH_RESPONSE_HEADER` | ヘッダーを無視して処理し、応答に警告ヘッダーを付ける |
+| `SUCCEED_WITHOUT_RESPONSE_HEADER` | ヘッダーを無視して処理し、警告は付けない |
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "execute-api:InvalidateCache",
+      "Resource": "arn:aws:execute-api:ap-northeast-1:111122223333:a1b2c3/prod/GET/items"
+    }
+  ]
+}
+```
+
+全エントリを消すなら、`flush-stage-cache` かコンソールでステージのキャッシュをフラッシュする。直後はバックエンドへのリクエストが増える。
 
 ## CORS {#cors}
 
@@ -441,6 +742,14 @@ RequestParameters:
 | プロキシ（REST） | `OPTIONS` に加え、**関数のレスポンス** に CORS ヘッダーを含める |
 | HTTP API | API の CORS 設定を使う。API Gateway がプリフライトに自動で答え、バックエンドの CORS ヘッダーは無視する |
 
+HTTP API の設定項目は `allowOrigins`、`allowMethods`、`allowHeaders`、`exposeHeaders`、`allowCredentials`、`maxAge` の6つ。
+
+- **例:** `allowOrigins` を `https://app.example.com` にする。`https://*` のようなワイルドカードも使える。
+- **罠:** HTTP API で CORS を設定すると、バックエンドが返す CORS ヘッダーは無視される。Lambda 側を直しても変わらない。
+- **罠:** HTTP API の `$default` ルートにオーソライザーを付けると、プリフライトの `OPTIONS` も認可の対象になる。認可なしの `OPTIONS /{proxy+}` ルートを追加する。
+- **罠:** REST API でバイナリメディアタイプを `*/*` にしていると、`OPTIONS` の `contentHandling` を `CONVERT_TO_TEXT` にする必要がある。
+- 単純なリクエスト（`GET`、`HEAD`、`POST` でカスタムヘッダーなし）にプリフライトは来ないが、応答の `Access-Control-Allow-Origin` は必要。
+
 ```text
 Access-Control-Allow-Origin: https://app.example.com
 Access-Control-Allow-Methods: GET,POST,OPTIONS
@@ -449,6 +758,63 @@ Access-Control-Allow-Headers: Content-Type,Authorization,X-Api-Key
 
 !!! tip "エラー応答にも CORS ヘッダーを"
     4XX や 5XX のゲートウェイレスポンスに CORS ヘッダーがないと、ブラウザでは本当のエラーが見えず CORS エラーに見える。`DEFAULT_4XX` と `DEFAULT_5XX` にヘッダーを追加する。
+
+## バイナリメディア {#binary-media}
+
+REST API は既定で本文を UTF-8 の JSON として扱う。画像などを扱うには `binaryMediaTypes`（例: `image/png`、`application/octet-stream`）を設定する。
+
+| 統合 | 必要な設定 |
+| --- | --- |
+| Lambda プロキシ | `binaryMediaTypes` を設定し、関数は Base64 の本文と `isBase64Encoded: true` を返す |
+| 非プロキシ | `binaryMediaTypes` と、統合と統合レスポンスの `contentHandling` |
+| プロキシのストリーミング | 設定は不要 |
+
+`contentHandling` の意味は次の通り。
+
+| 値 | 動き |
+| --- | --- |
+| `CONVERT_TO_BINARY` | Base64 文字列をバイナリに戻す |
+| `CONVERT_TO_TEXT` | バイナリを Base64 文字列にする |
+| 未設定 | 変換しない。バイナリをそのまま通すなら、`Content-Type` の一致とパススルーの有効化も必要 |
+
+**例:** ブラウザの `<img>` は `Accept: image/webp,image/*,*/*;q=0.8` を送る。API Gateway は最初の `Accept` だけを見るので、JPEG を返すのに `image/jpeg` だけを登録しても Base64 のままになる。`image/webp` を登録するか、順序を制御できないなら `*/*` にする。
+
+## ログとメトリクス {#logging-metrics}
+
+| | 実行ログ | アクセスログ |
+| --- | --- | --- |
+| 内容 | 処理の流れ、エラー、トレース | 誰がどう呼んだか |
+| 形式 | API Gateway が決める | `$context` 変数で自分で決める（3 KB まで） |
+| ロググループ | `API-Gateway-Execution-Logs/{rest-api-id}/{stage-name}` | 自分で作成 |
+| HTTP API | なし | あり |
+| Firehose への送信 | なし | REST API のみ。ストリーム名は `amazon-apigateway-` で始める |
+
+REST API の CloudWatch Logs を使うには、次の準備が必要になる。
+
+1. `apigateway.amazonaws.com` を信頼し、`AmazonAPIGatewayPushToCloudWatchLogs` を付けた IAM ロールを作る。
+2. アカウント設定の `cloudWatchRoleArn` に指定する。**リージョンごと** に行う。
+3. ステージで `loggingLevel` を `ERROR` か `INFO` にする。
+
+```text
+$context.requestId $context.identity.sourceIp $context.httpMethod $context.path $context.status $context.responseLatency
+```
+
+- **罠:** ロール未設定だと、ステージでログを有効にしても書かれない。
+- **罠:** `dataTraceEnabled` は本文までログに残す。機密情報が残るので、本番では使わない。
+
+メトリクスの名前空間は `AWS/ApiGateway`。
+
+| メトリクス | 意味 |
+| --- | --- |
+| `Count` | リクエスト数（`SampleCount` で見る） |
+| `4XXError`、`5XXError` | エラー数。`Average` で見るとエラー率になる |
+| `Latency` | 受信から応答までの全体 |
+| `IntegrationLatency` | バックエンドとのやり取りの時間 |
+| `CacheHitCount`、`CacheMissCount` | キャッシュの効果 |
+
+**例:** `Latency` が 2,000 ms で `IntegrationLatency` が 100 ms なら、バックエンドではなく API Gateway 側の処理が遅い。オーソライザーの実行時間などを調べる。
+
+メソッド単位のメトリクスは **詳細メトリクス**（`metricsEnabled`）を有効にしたときだけ送られ、料金がかかる。
 
 ## エラーコード {#errors}
 
@@ -460,12 +826,13 @@ Access-Control-Allow-Headers: Content-Type,Authorization,X-Api-Key
 | 403 | `MISSING_AUTHENTICATION_TOKEN` | 認証情報がない。存在しないパスやメソッドを呼んだ場合も | URL とステージ、メソッドを確認 |
 | 403 | `INVALID_API_KEY` | API キーが無効 | キーと使用量プランを確認 |
 | 403 | `WAF_FILTERED` | WAF がブロック | WAF のルールを確認 |
+| 403 | `EXPIRED_TOKEN`、`INVALID_SIGNATURE` | 認証情報の期限切れ、署名の誤り | クライアントの認証情報と SigV4 を確認 |
 | 404 | `RESOURCE_NOT_FOUND` | リソースがない | パスを確認 |
 | 413 | `REQUEST_TOO_LARGE` | ペイロードが 10 MB を超えた | S3 の署名付き URL に切り替え |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | テンプレートに一致しない | `Content-Type` とパススルーを確認 |
 | 429 | `THROTTLED` | スロットリング | バックオフして再試行、制限の見直し |
 | 429 | `QUOTA_EXCEEDED` | 使用量プランのクォータ超過 | プランの見直し |
-| 500 | `API_CONFIGURATION_ERROR`、`AUTHORIZER_FAILURE` | 設定の誤り、オーソライザーの失敗、Lambda API が呼び出しを拒否 | 設定、権限を確認 |
+| 500 | `API_CONFIGURATION_ERROR`、`AUTHORIZER_FAILURE`、`AUTHORIZER_CONFIGURATION_ERROR` | 設定の誤り、オーソライザーの失敗、Lambda API が呼び出しを拒否 | 設定、権限を確認 |
 | 502 | なし（統合の応答） | 関数のエラー、応答の形式が不正 | ログを確認、`statusCode` と文字列の `body` を返す |
 | 504 | `INTEGRATION_TIMEOUT`、`INTEGRATION_FAILURE` | 統合のタイムアウト | 処理の短縮、非同期化 |
 
@@ -487,6 +854,34 @@ flowchart TD
 REST API のリソース数は API あたり 300（引き上げ可）、ステージ変数はステージあたり 100、値は 512 文字まで。
 
 長い処理は、API では受付だけして [SQS](messaging.md) や [Step Functions](step-functions.md) に渡し、状態は別の API で確認する形にする。
+
+## 既定値と上限のまとめ {#numbers}
+
+| 項目 | 値 |
+| --- | --- |
+| 統合タイムアウト（REST） | 50 ms〜29 秒、既定 29 秒。リージョンとプライベートは引き上げ可 |
+| 統合タイムアウト（HTTP） | 最大 30 秒 |
+| 統合タイムアウト（WebSocket） | 50 ms〜29 秒 |
+| ペイロード（REST、HTTP） | 10 MB |
+| WebSocket | フレーム 32 KB、メッセージ 128 KB、接続 2 時間、アイドル 10 分 |
+| アカウントのスロットリング | 10,000 RPS、バースト 5,000（一部のリージョンは 2,500 と 1,250） |
+| キャッシュの TTL | 既定 300 秒、0〜3,600 秒 |
+| キャッシュ容量 | 0.5〜237 GB |
+| キャッシュ可能な応答 | 1,048,576 バイト |
+| オーソライザーの TTL | 既定 300 秒、0〜3,600 秒 |
+| 認可の結果サイズ（WebSocket） | 8 KB |
+| API キーの値 | 20〜128 文字 |
+| 使用量プランの期間 | `DAY`、`WEEK`、`MONTH` |
+| メソッドごとの制限（プラン内） | 20 個 |
+| マッピングテンプレート | 300 KB、`#foreach` 1,000 回 |
+| モデル | API あたり 400 KB |
+| リソースポリシー | 8,192 文字 |
+| アクセスログの形式 | 3 KB |
+| ステージ数 | API あたり 10 |
+| ステージ変数 | 100 個、キー 64 文字、値 512 文字 |
+| リソース数（REST） | 300 |
+| ルート数（HTTP、WebSocket） | 300 |
+| オーソライザー数 | API あたり 10 |
 
 ## 試験のポイント {#exam-points}
 
@@ -516,6 +911,16 @@ REST API のリソース数は API あたり 300（引き上げ可）、ステ�
 | 429 が返る | スロットリング。バックオフと制限の見直し |
 | サーバーからクライアントへ送りたい | WebSocket API と `@connections` |
 | 安くて単純な Lambda の API | HTTP API |
+| 40 秒かかる同期 API（リージョン） | 統合タイムアウトの引き上げを申請、または非同期にする |
+| テンプレートがない `Content-Type` で 415 | `passthroughBehavior` を確認 |
+| ブラウザに画像が Base64 で届く | `binaryMediaTypes` と最初の `Accept` を確認 |
+| ログが CloudWatch に出ない | `cloudWatchRoleArn` をリージョンごとに設定 |
+| 本文までログに残したくない | `dataTraceEnabled` を無効に |
+| `POST` がキャッシュされない | メソッドの設定で上書き |
+| 権限のない無効化を弾く | `FAIL_WITH_403` |
+| オーソライザーのキャッシュで別メソッドが 403 | ポリシーを全メソッドに、または TTL を 0 に |
+| クライアントが API キーを送れない | キーソース `AUTHORIZER` と `usageIdentifierKey` |
+| WebSocket がアイドルで切れる | 10 分以内にメッセージを送る |
 
 ## 関連ページ {#related}
 
@@ -556,3 +961,14 @@ REST API のリソース数は API あたり 300（引き上げ可）、ステ�
 - [Handling Lambda errors](https://docs.aws.amazon.com/lambda/latest/dg/services-apigateway-errors.html)
 - [REST API quotas](https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-execution-service-limits-table.html)
 - [Amazon API Gateway quotas](https://docs.aws.amazon.com/apigateway/latest/developerguide/limits.html)
+- [HTTP API quotas](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-quotas.html)
+- [WebSocket API quotas](https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-execution-service-websocket-limits-table.html)
+- [Binary media types](https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-payload-encodings.html)
+- [CloudWatch logging](https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-logging.html)
+- [Dimensions and metrics](https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-metrics-and-dimensions.html)
+- [Resource policies](https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-resource-policies.html)
+- [API key source](https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-api-key-source.html)
+- [HTTP API Lambda authorizers](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-lambda-authorizer.html)
+- [JWT authorizers](https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-jwt-authorizer.html)
+- [Response streaming](https://docs.aws.amazon.com/apigateway/latest/developerguide/response-transfer-mode.html)
+- [Asynchronous Lambda invocation](https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-lambda-integration-async.html)

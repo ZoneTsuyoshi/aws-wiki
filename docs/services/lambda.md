@@ -15,10 +15,10 @@ Lambda はリクエストごとに **実行環境** を割り当てる。1つの
 
 | フェーズ | 内容 |
 | --- | --- |
-| Init | 環境を作り、拡張機能とランタイムを起動し、ハンドラー外のコードを実行する。10 秒以内に終わらないと、最初の呼び出し時に再試行される |
+| Init | 環境を作り、拡張機能とランタイムを起動し、ハンドラー外のコードを実行する。10 秒以内に終わらないと、最初の呼び出し時に、関数のタイムアウトを上限として再試行される。Provisioned Concurrency と SnapStart には 10 秒の制限がない |
 | Restore | SnapStart のときだけ。スナップショットから復元する |
 | Invoke | ハンドラーを実行する |
-| Shutdown | しばらく呼び出しがないと環境を破棄する |
+| Shutdown | しばらく呼び出しがないと環境を破棄する。使える時間は拡張機能なしで 0 ms、内部拡張機能ありで 500 ms、外部拡張機能ありで 2,000 ms |
 
 新しい実行環境で Init が走るときの遅延を **コールドスタート** と呼ぶ。Invoke が終わった環境は次のリクエストに再利用される場合があるが、再利用は保証されない。永続化したい状態は DynamoDB などの外部に置く。
 
@@ -62,13 +62,61 @@ def handler(event, context):
 | タイムアウト | 既定 3 秒、最大 900 秒（15 分） | 超えると実行が打ち切られる |
 | `/tmp` | 512〜10,240 MB | 実行環境が再利用されれば中身も残る |
 | 環境変数 | 全変数の合計で 4 KB | 下の「環境変数」を参照 |
+| リソースベースポリシー | 20 KB | 下の「リソースベースポリシー」を参照 |
 | レイヤー | 1関数に最大 5 個 | .zip の関数でのみ使える |
 | アーキテクチャ | `x86_64` または `arm64` | `arm64` は Graviton |
 | ペイロード | 同期 6 MB、非同期 1 MB | ストリーミング応答は最大 200 MB |
 
+### メモリ {#memory}
+
+`MemorySize` で設定する。既定は最小値の 128 MB で、128〜10,240 MB を 1 MB 単位で選ぶ。増やすと CPU とネットワークの能力も比例して増える。1,769 MB で 1 vCPU 相当になる。
+
+- **例:** 128 MB で 8 秒かかる画像変換を 1,024 MB にすると、CPU が増えて短時間で終わる。実行時間が縮めば、料金が下がる場合もある。
+- **罠:** CPU だけを増やす設定はない。CPU 不足の遅さも、メモリを増やして解消する。
+
+```bash
+aws lambda update-function-configuration --function-name my-function --memory-size 1024
+```
+
+### タイムアウト {#timeout}
+
+`Timeout` で設定する。既定は 3 秒で、1 秒単位で最大 900 秒（15 分）にできる。超えると実行は打ち切られ、`Task timed out` がログに残る。
+
+- **例:** 平均 2 秒、最大 10 秒かかる関数を既定の 3 秒のまま動かすと、遅いときだけ失敗する。テストは小さいデータだけでなく、想定の上限に近いデータでも行う。
+- **罠:** 呼び出し元の待ち時間は別に決まる。REST API の統合タイムアウトが 29 秒なら、関数のタイムアウトを 60 秒にしても、クライアントには 29 秒で 504 が返る。
+- **罠:** SQS から呼ぶ場合は、キューの可視性タイムアウトも合わせて変える。関数のタイムアウトのほうが長いと、マッピングの作成や更新がエラーになる。
+
+### エフェメラルストレージ {#ephemeral-storage}
+
+`EphemeralStorage.Size` で設定する `/tmp` の容量。既定は 512 MB で、512〜10,240 MB を 1 MB 単位で選ぶ。実行環境ごとに分かれ、AWS 管理のキーで保存時に暗号化される。
+
+- **例:** S3 から 2 GB の動画を取得して変換する関数は、`Size` を 4,096 にする。ファイルをメモリに載せずに済む。
+- **罠:** SnapStart は 512 MB を超える `/tmp` と併用できない。また、別の実行環境とはデータを共有できない。
+
+### アーキテクチャ {#architecture}
+
+`Architectures` で `x86_64`（既定）か `arm64`（Graviton）を選ぶ。`arm64` は計算の多い処理で価格性能が良くなることがある。
+
+移行では次のものをすべて `arm64` 対応にする。
+
+| 対象 | 必要な対応 |
+| --- | --- |
+| アップロード済みのコード | 対象アーキテクチャ向けのコードを上げ直す |
+| 依存ライブラリ | 各ライブラリの `arm64` 版を使う。ネイティブ拡張は再ビルドする |
+| レイヤー | 互換性を確認し、合わなければ対応版に差し替える |
+| 拡張機能 | 互換性を確認する |
+| コンテナイメージ | `arm64` 向けのイメージを作り直す |
+
+**罠:** 設定だけ変えても、`x86_64` 向けにビルドしたネイティブライブラリは動かない。
+
 ### ランタイムとハンドラー {#runtime}
 
 ランタイムは `python3.13` のような言語実行環境を指す。AWS の管理ランタイムのほか、独自の実行環境を載せる OS 専用ランタイムもある。ランタイムには廃止予定日があるので、更新を計画しておく。
+
+`Handler` は [ハンドラー](#handler) の場所を示す。Python の `lambda_function.py` の `lambda_handler` 関数なら `lambda_function.lambda_handler` にする。
+
+- **例:** ファイルを `app.py` に変えたのに設定が `lambda_function.lambda_handler` のままだと、ハンドラーが見つからず実行に失敗する。
+- **罠:** ランタイムの廃止後も、作成と更新は一定期間できる。その後は作成、続いて更新がブロックされるので、期日は公式の一覧で確認する。
 
 ### レイヤー {#layers}
 
@@ -79,6 +127,11 @@ def handler(event, context):
 - 複数の関数で同じ依存関係を共有でき、デプロイパッケージを小さくできる。
 - 展開後のサイズは関数本体と合わせて 250 MB まで。
 - コンテナイメージの関数では使えない。依存関係はイメージに含める。
+- 追加するときはバージョン番号付きの ARN を指定する（`...:layer:my-layer:1`）。新しいバージョンを発行しても、関数は自動では切り替わらない。
+- 追加した順に `/opt` へマージされる。順序はコンソールの **Merge earlier**、**Merge later** で変えられる。
+- 関数のアーキテクチャに合うレイヤーを使う。
+
+**例:** 3 つの関数で共通の `requests` を、`python/requests/` を入れたレイヤーにまとめる。各関数のパッケージから `requests` を外せる。
 
 ### 拡張機能 {#extensions}
 
@@ -91,6 +144,10 @@ def handler(event, context):
 
 外部拡張機能は Init 時間やメモリを消費し、関数の性能に影響することがある。Telemetry API を使うと、ログなどを拡張機能で受け取れる。
 
+- 拡張機能のサイズは展開後 250 MB の上限に含まれる。
+- すべての拡張機能の初期化が終わるまで、関数は呼び出されない。遅い拡張機能はコールドスタートを長くする。
+- イベントソースマッピングは、拡張機能の終了を待たずに次のバッチを送る。想定より `ConcurrentExecutions` が高ければ、スロットリングの原因になっていないか確認する。
+
 ### 環境変数 {#environment-variables}
 
 環境ごとに変わる値（テーブル名、接続先、ログレベルなど）をコードから分離する。
@@ -102,7 +159,9 @@ table_name = os.environ["TABLE_NAME"]
 region = os.environ["AWS_REGION"]  # Lambda が予約している変数の一つ
 ```
 
-`AWS_REGION` や `AWS_LAMBDA_FUNCTION_NAME` のように、Lambda が予約している変数は上書きできないものがある。
+`AWS_REGION` や `AWS_LAMBDA_FUNCTION_NAME` のような予約済みのキーは設定できない。一方で `PATH` や `LD_LIBRARY_PATH` は予約されておらず、関数の設定で拡張できる。
+
+キーは英字で始まる 2 文字以上で、使える文字は英数字とアンダースコアだけ。合計 4 KB を超える設定は入らないので、大きな設定は [Parameter Store や AppConfig](secrets.md) に置き、環境変数には名前だけを入れる。
 
 バージョンを発行すると環境変数も固定される。同じコードで値だけ環境ごとに変えたいときは、環境ごとにバージョンを発行するか、別の関数に分ける。[設定管理の選択肢](secrets.md) も参照する。
 
@@ -132,6 +191,100 @@ plain = kms.decrypt(
 
 カスタマーマネージドキーを使う場合、環境変数を閲覧・管理するユーザーやロールにも `kms:Decrypt` などの権限が必要になる。KMS の詳細は [KMS](kms.md) を参照する。
 
+### 実行ロール {#execution-role}
+
+関数が他のサービスを呼ぶときの権限を決める IAM ロール。信頼ポリシーで `lambda.amazonaws.com` を信頼する。コードで `sts:AssumeRole` を呼ぶ必要はなく、Lambda が自動で引き受ける。
+
+| マネージドポリシー | 用途 |
+| --- | --- |
+| `AWSLambdaBasicExecutionRole` | CloudWatch Logs への書き込み |
+| `AWSLambdaVPCAccessExecutionRole` | VPC 接続のネットワークインターフェイス管理 |
+| `AWSLambdaSQSQueueExecutionRole` | SQS のポーリング |
+| `AWSLambdaKinesisExecutionRole` | Kinesis の読み取り |
+| `AWSXRayDaemonWriteAccess` | X-Ray へのトレース送信 |
+
+- **例:** DynamoDB に書く関数には、対象テーブルの `dynamodb:PutItem` だけを追加する。
+- **罠:** ログの権限を外すと、関数は動いてもログが出なくなる。暗号化された SQS キューを読むには `kms:Decrypt` も要る。
+
+### リソースベースポリシー {#resource-policy}
+
+他のアカウントや AWS サービスに、関数の呼び出しを許可するポリシー。上限は 20 KB。[呼び出し権限の向き](#invocation-permissions) のとおり、プッシュ型の呼び出し元に使う。
+
+```bash
+# S3 バケットのイベントで関数を呼べるようにする
+aws lambda add-permission --function-name my-function:prod \
+  --statement-id s3-invoke --action lambda:InvokeFunction \
+  --principal s3.amazonaws.com --source-arn arn:aws:s3:::my-bucket
+```
+
+- **罠:** エイリアスやバージョンを呼ばせるなら、修飾名を指定して許可する。権限の範囲は、ポリシーを関数全体に付けたか、特定のバージョンに付けたかで変わる。
+
+### ログ設定 {#logging-config}
+
+`LoggingConfig` で次の項目を設定する。
+
+| 項目 | 値 | 既定 |
+| --- | --- | --- |
+| `LogFormat` | `Text`、`JSON` | `Text` |
+| `ApplicationLogLevel` | `TRACE`、`DEBUG`、`INFO`、`WARN`、`ERROR`、`FATAL` | JSON にしたとき `INFO` |
+| `SystemLogLevel` | `DEBUG`、`INFO`、`WARN` | JSON にしたとき `INFO` |
+| `LogGroup` | ロググループ名 | `/aws/lambda/<関数名>` |
+
+- **例:** 本番は `ApplicationLogLevel` を `WARN` にすると、`INFO` と `DEBUG` のログは送られない。コードを変えずに量を減らせる。
+- **罠:** ログレベルのフィルターは JSON 形式でのみ使える。`Text` のままレベルだけ変えても効かない。
+- **罠:** Python で `Text` のときの既定のログレベルは `WARN` なので、`logger.info()` は出ない。JSON に変えると既定は `INFO` になる。
+- 形式の変更は新しいログにだけ適用される。CloudWatch Logs のほか、S3 や Firehose にも送れる。
+
+### トレーシング {#tracing}
+
+`TracingConfig.Mode` で `Active` か `PassThrough`（既定）を選ぶ。
+
+| モード | 動き |
+| --- | --- |
+| `Active` | サンプリングされたリクエストのトレースを Lambda が X-Ray に送る |
+| `PassThrough` | トレースヘッダーを下流に渡すだけで、トレースは送らない |
+
+- サンプリングは毎秒 1 リクエストと、それ以外の 5%。関数側では変更できない。
+- コンソール以外で有効にするなら、実行ロールに `AWSXRayDaemonWriteAccess` を付ける。
+- 発行済みのバージョンではモードを変えられない。
+
+!!! note "動きが変わった点"
+    以前は、API Gateway などの上流がトレースヘッダーを付けると、Lambda も自動でトレースを送っていた。現在の `PassThrough` は、ヘッダーがサンプリングを指示していても送らない。トレースが欲しい関数は `Active` にする。
+
+### コード署名 {#code-signing}
+
+AWS Signer で署名したコードだけをデプロイさせる設定。コード署名設定を関数に関連付ける。検証はデプロイ時に行うので、実行時の性能には影響しない。
+
+`UntrustedArtifactOnDeployment` で、検証に失敗したときの動きを選ぶ。
+
+| 値 | 動き |
+| --- | --- |
+| `Warn`（既定） | デプロイを許可し、`SignatureValidationErrors` メトリクスと CloudTrail に記録する |
+| `Enforce` | 警告したうえでデプロイをブロックする |
+
+- **例:** 本番アカウントでは `Enforce` にする。まず `Warn` で様子を見てから切り替えると、未署名のパイプラインを安全に洗い出せる。
+- **罠:** 既に動いている未署名のコードは止まらない。次のデプロイから検証される。
+- **罠:** 関数が使うレイヤーも、許可されたプロファイルでの署名が必要になる。
+
+### 関数 URL {#function-urls}
+
+関数専用の HTTPS エンドポイント。エイリアスか `$LATEST` にだけ付けられ、番号付きのバージョンには付けられない。パブリックインターネットからのみアクセスでき、PrivateLink には対応しない。
+
+| 設定 | 値 | メモ |
+| --- | --- | --- |
+| `AuthType` | `AWS_IAM`、`NONE` | 必須。`AWS_IAM` は SigV4 署名が要る |
+| `Cors` | `AllowOrigins`、`AllowMethods`、`AllowHeaders`、`ExposeHeaders`、`AllowCredentials`、`MaxAge` | 関数側のヘッダーと重複させない |
+| `InvokeMode` | `BUFFERED`（既定）、`RESPONSE_STREAM` | `BUFFERED` の上限は 6 MB |
+
+!!! warning "権限が2つ必要になった"
+    2025 年 10 月以降に作る関数 URL には、`lambda:InvokeFunctionUrl` と `lambda:InvokeFunction` の両方が必要。`AuthType` が `NONE` でも、リソースベースポリシーで許可がないと **403** になる。コンソールと SAM は自動で付けるが、CLI、CloudFormation、API では自分で追加する。
+
+- **条件キー:** `lambda:InvokedViaFunctionUrl` を付けると、URL 経由以外の呼び出しを防げる。
+- **クロスアカウント（`AWS_IAM`）:** 呼び出し側の IAM ポリシーと関数のリソースベースポリシーの両方で許可する。
+- **スロットリング:** 予約済み同時実行で制限する。RPS の上限はその 10 倍で、超えると 429。予約を 0 にすれば全リクエストが 429 になり、緊急停止できる。
+- **CORS の罠:** URL の CORS 設定と関数の応答の両方にヘッダーがあると、プリフライト以外で重複し、`Access-Control-Allow-Origin` が複数値だというブラウザのエラーになる。
+- **削除の罠:** 削除すると URL は復元できず、作り直すと別のアドレスになる。`NONE` のポリシーは自動では消えない。
+
 ## VPC 内のリソースへのアクセス {#vpc-access}
 
 [![VPC に接続した Lambda](../assets/diagrams/lambda-vpc.png)](../assets/diagrams/lambda-vpc.png)
@@ -143,6 +296,20 @@ plain = kms.decrypt(
 3. 接続先のセキュリティグループで、関数のセキュリティグループからの通信を許可する。
 
 Lambda はサブネットに **Hyperplane ENI** を作り、関数の通信をそこに流す。可用性のため、複数のアベイラビリティーゾーンのサブネットを指定する。
+
+`VpcConfig` の項目は次の通り。
+
+| 項目 | 内容 |
+| --- | --- |
+| `SubnetIds` | 接続するサブネット。プライベートサブネットを複数の AZ で指定する |
+| `SecurityGroupIds` | 関数の ENI に付けるセキュリティグループ |
+| `Ipv6AllowedForDualStack` | 既定 `false`。`true` で外向き IPv6 を許可する。全サブネットがデュアルスタックである必要がある |
+
+- 新しい関数は、ENI の準備ができるまで `Pending` で、呼び出せない。数分かかることがある。
+- ENI の管理権限は作成時に必要で、呼び出しには要らない。
+- 14 日間使われないと、ENI が回収されて関数は `Inactive` になる。次の呼び出しが失敗する場合がある。
+- VPC 設定を外すと、ENI の削除に最大 20 分かかる。
+- 専有テナンシーの VPC には直接接続できない。
 
 VPC に接続すると、関数の通信は VPC の中に閉じる。外に出る経路は自分で用意する。
 
@@ -193,6 +360,45 @@ RDS に多数の関数からつなぐ場合、接続数が増えすぎないよ�
 - 両方を設定する場合、Provisioned は予約済みの値を超えられない。
 - Provisioned は Application Auto Scaling で調整できる。ピークの時刻が決まっているならスケジュール、そうでなければ使用率によるターゲット追跡を使う。
 - あふれた呼び出しは `ProvisionedConcurrencySpilloverInvocations` メトリクスで確認する。
+
+### 予約済み同時実行の設定 {#reserved-concurrency}
+
+`PutFunctionConcurrency` の `ReservedConcurrentExecutions` で設定する。関数全体（全バージョン）に効く。上限でもあり、確保でもある。
+
+**計算例:** アカウントの上限 1,000 で、関数 A に 500、B に 300 を予約した。未予約は 200 で、そこから 100 を残すので、関数 C に予約できるのは最大 100。
+
+```bash
+aws lambda put-function-concurrency --function-name my-function --reserved-concurrent-executions 100
+```
+
+- **例:** 接続数 50 の DB を守るなら 50 にする。51 件目以降は 429 になり、DB は守られる。
+- **罠:** 使わない分も他の関数には回らない。大きく取りすぎると、他の関数がスロットリングされる。
+- **罠:** 非同期呼び出しの関数を 0 にすると、新しいイベントは再試行なしで DLQ かオンフェイラーデスティネーションに送られる。
+- **SQS:** 予約済み同時実行を使うなら 5 以上にして、スロットリングを減らす。
+
+### Provisioned Concurrency の設定 {#provisioned-concurrency}
+
+`PutProvisionedConcurrencyConfig` でバージョンかエイリアスに設定する。`$LATEST` には付けられない。
+
+**計算例:** ピークが 200 の関数なら、10% の余裕を見て 220 にする。
+
+- **罠:** 呼び出し元やイベントソースが `$LATEST` や別のエイリアスを指していると、設定した環境は使われず、コールドスタートが残る。
+- 反映には 1〜2 分かかる。全部の割り当てが終わるまで、どの環境も使えない。関数ごとに毎分 6,000 環境まで割り当てられる。
+- あふれた分は通常の同時実行で処理する。予約済みも設定していれば、予約の上限でスロットリングされる。
+- RPS の上限は割り当て数の 10 倍。割り当てが 10 なら 100 RPS を超えた分はあふれる。
+- バージョンごとの合計は予約済みの値を超えられない。合計が予約済みと同じだと、`$LATEST` はスロットリングされて動かない。
+- 初期化はハンドラーの外に集めると、割り当て時に済む。割り当て時の初期化は最大 15 分まで動ける。
+- 環境の種類は `AWS_LAMBDA_INITIALIZATION_TYPE`（`provisioned-concurrency` か `on-demand`）で分かる。
+
+ターゲット追跡では `LambdaProvisionedConcurrencyUtilization` を 10〜90% の間で指定する。70% なら、63%（目標の 90%）を下回り続けると減らす。
+
+**罠:** 短いバーストは平均値では検知しにくい。自動スケーリングが反応するには 3 分程度の継続が必要で、呼び出しがないとメトリクスも出ない。急なバーストには `Maximum` 統計を使う。
+
+### 同時実行数とリクエスト数の両方を見る {#concurrency-rps}
+
+同時実行数だけでは足りない。RPS の上限は同時実行数の 10 倍になる。
+
+**計算例:** 平均 20 ms の関数に 30,000 リクエスト/秒が来ると、同時実行数は 600。上限 1,000 に収まって見えるが、RPS の上限は 10,000 なのでスロットリングされる。上限を 3,000 以上に引き上げる必要がある。
 
 ### スロットリング {#throttling}
 
@@ -268,7 +474,7 @@ boto3.client("lambda").create_event_source_mapping(
 
 | 設定 | SQS | Kinesis と DynamoDB Streams |
 | --- | --- | --- |
-| `BatchSize` | 既定 10。標準キューは最大 10,000、FIFO は最大 10 | Kinesis は既定 100、最大 10,000 |
+| `BatchSize` | 既定 10。標準キューは最大 10,000、FIFO は最大 10 | 既定 100、最大 10,000 |
 | `MaximumBatchingWindowInSeconds` | 既定 0、最大 300。FIFO では使えない | 既定 0、最大 300 |
 | 同時実行の制御 | `ScalingConfig` の最大同時実行数、または provisioned mode | `ParallelizationFactor`（1〜10）でシャードごとの並列数を増やす |
 | 再試行の制御 | 可視性タイムアウトと `maxReceiveCount` | `MaximumRetryAttempts`、`MaximumRecordAgeInSeconds`、`BisectBatchOnFunctionError` |
@@ -278,8 +484,141 @@ boto3.client("lambda").create_event_source_mapping(
 
 SQS と組み合わせるときは、次の2点を守る。
 
-- キューの可視性タイムアウトを関数のタイムアウトの **6 倍以上** にする。関数のタイムアウトより短いと、マッピングの作成時にエラーになる。
+- キューの可視性タイムアウトを関数のタイムアウトの **6 倍以上** にする。バッチウィンドウを使うなら、その秒数も足す。関数のタイムアウトより短いと、マッピングの作成時や更新時にエラーになる。
 - リドライブポリシーの `maxReceiveCount` を **5 以上** にする。少なすぎると、スロットリングだけで DLQ に送られることがある。
+
+### バッチの設定 {#esm-batching}
+
+`BatchSize` は1回の呼び出しに入るレコードの最大数、`MaximumBatchingWindowInSeconds` は集める時間の最大値（0〜300 秒、1 秒単位）。次のどれかを満たすと関数が呼ばれる。
+
+1. バッチウィンドウが終わった
+2. バッチサイズに達した
+3. ペイロードが 6 MB に達した（変更不可）
+
+| ソース | `BatchSize` の既定と上限 | ウィンドウの既定 |
+| --- | --- | --- |
+| SQS 標準 | 10、最大 10,000 | 0 秒 |
+| SQS FIFO | 10、最大 10 | 使えない |
+| Kinesis、DynamoDB Streams | 100、最大 10,000 | 0 秒 |
+| MSK、自己管理 Kafka、Amazon MQ、DocumentDB | 100、最大 10,000 | 500 ms |
+
+**例:** 関数のタイムアウト 60 秒、バッチウィンドウ 20 秒の SQS マッピングなら、可視性タイムアウトは 60 × 6 + 20 = 380 秒にする。
+
+- **罠:** SQS で `BatchSize` を 10 より大きくするときは、`MaximumBatchingWindowInSeconds` を 1 以上にする。
+- **罠:** メタデータもペイロードに数えるので、バッチは `BatchSize` より小さくなることがある。
+- **罠:** 通信量の少ない SQS では、ウィンドウが 20 秒未満でも最大 20 秒待つことがある。
+- **罠:** Kafka などの 500 ms は秒単位の設定では戻せない。変更後に戻すなら、マッピングを作り直す。
+- 関数のタイムアウトは、バッチ全体を処理できる長さにする。
+
+### ParallelizationFactor {#esm-parallelization}
+
+Kinesis と DynamoDB Streams 専用で、1 シャードから同時に処理するバッチ数を決める。既定 1、最大 10。パーティションキーごとの順序は保たれる。
+
+**計算例:** 20 シャードで `ParallelizationFactor` を 5 にすると、同時実行は最大 100。予約済み同時実行が 50 のままだと、スロットリングで追いつかない。
+
+`IteratorAge` が増え続けるときに上げる。シャードを増やす方法もある。
+
+### StartingPosition {#esm-starting-position}
+
+ストリームで必須の設定。どこから読み始めるかを決める。
+
+| 値 | 動き | 使えるソース |
+| --- | --- | --- |
+| `LATEST` | 新しいレコードから | Kinesis、DynamoDB Streams |
+| `TRIM_HORIZON` | 保持されている最も古いレコードから | Kinesis、DynamoDB Streams |
+| `AT_TIMESTAMP` | 指定の時刻から（`StartingPositionTimestamp`、未来は不可） | Kinesis。DynamoDB Streams では使えない |
+
+**罠:** マッピングの作成や更新の後、ポーリングの開始には数分かかる。`LATEST` だとこの間のレコードを取りこぼす。取りこぼせないなら `TRIM_HORIZON` か `AT_TIMESTAMP` を使う。
+
+### ストリームのエラー処理の設定 {#esm-stream-errors}
+
+既定では、1 件の不良レコードでシャードが最大で保持期限まで止まる。既定の設定で Kinesis の場合、最長 1 週間止まることがある。
+
+| 設定 | 既定 | 範囲 | 効果 |
+| --- | --- | --- | --- |
+| `MaximumRetryAttempts` | -1（無限） | -1〜10,000 | 関数エラーの再試行回数の上限。スロットリングは数えない |
+| `MaximumRecordAgeInSeconds` | -1（無限） | -1、または 60〜604,800 | これより古いレコードを捨てる |
+| `BisectBatchOnFunctionError` | `false` | true/false | エラー時にバッチを半分に分けて再試行し、不良レコードを絞り込む |
+| `DestinationConfig.OnFailure` | なし | SQS、SNS、S3、Kafka | 捨てるレコードの情報を送る |
+
+**例:** `MaximumRetryAttempts: 2`、`BisectBatchOnFunctionError: true`、`OnFailure` に SQS を設定すると、不良レコードは 2 回の再試行後に飛ばされ、シャードが進む。調査は SQS に残った情報で行う。
+
+- **罠:** SQS と SNS の送信先に届くのはメタデータだけで、レコード本体は入らない。本体は位置情報を使ってストリームから読む。S3 には呼び出しレコード全体が届く。
+- **罠:** `MaximumRecordAgeInSeconds` に 1〜59 は指定できない。
+- `ReportBatchItemFailures` と併用すると、返したシーケンス番号の位置でバッチを分ける。
+
+### TumblingWindowInSeconds {#esm-tumbling-window}
+
+Kinesis と DynamoDB Streams で、時間枠ごとに状態を持って集計する。0〜900 秒で、0 は無効。
+
+- 関数は `state` を返す。ないと失敗扱いになる。
+- 状態はシャードごとに最大 1 MB。超えると枠が早く閉じる。
+- 枠の最後の呼び出しでは `isFinalInvokeForWindow` が `true` になる。ここで集計結果を保存する。
+- 枠の境界はレコードがストリームに入った時刻で決まる。
+- リシャーディングには対応しない。シャードが終わると枠も閉じる。
+
+**例:** `TumblingWindowInSeconds` を 300 にすると、シャードごとの 5 分間の売上合計を外部 DB なしで計算できる。
+
+### FilterCriteria {#esm-filter}
+
+条件に合うレコードだけを関数に渡す。呼び出し回数を減らせる。既定で 5 個まで（申請で 10 個まで）指定でき、OR で評価する。
+
+```bash
+aws lambda create-event-source-mapping --function-name my-function \
+  --event-source-arn arn:aws:sqs:ap-northeast-1:111122223333:orders \
+  --filter-criteria '{"Filters":[{"Pattern":"{\"body\":{\"type\":[\"order\"]}}"}]}'
+```
+
+条件に合わなかったレコードの扱いはソースで変わる。
+
+| ソース | 動き |
+| --- | --- |
+| SQS | Lambda がキューから **削除** する |
+| Kinesis、DynamoDB Streams | イテレーターが通過する。保持期間が過ぎると消える |
+
+- **罠:** 同じ SQS キューを別のコンシューマーも読んでいると、合わなかったメッセージは消えてしまう。
+- **罠:** データのキーはソースで違う。SQS は `body` を指定する。
+- `FilteredOutEventCount` メトリクスで、除外された数を確認できる。
+- 機密情報を含むなら KMS キーで暗号化できる。`ListEventSourceMappings` では `null` になり、`GetEventSourceMapping` と `kms:Decrypt` で読める。
+
+### ScalingConfig の MaximumConcurrency {#esm-max-concurrency}
+
+SQS 専用で、そのマッピングが呼べる関数の同時実行数を制限する。範囲は 2〜1,000 で、追加料金はない。
+
+**例:** 1 つの関数に重要なキューと低優先度のキューをつなぐ。低優先度のマッピングを `MaximumConcurrency: 10` にすれば、予約済み同時実行を食いつぶさない。
+
+```bash
+aws lambda update-event-source-mapping --uuid a1b2c3d4-5678-90ab-cdef-11111EXAMPLE \
+  --scaling-config '{"MaximumConcurrency":10}'
+```
+
+- **罠:** 予約済み同時実行とは独立した設定。全マッピングの合計を予約済み同時実行以下にしないと、スロットリングされる。
+- **FIFO:** メッセージグループ数と設定値の小さいほうで頭打ちになる。グループが 6 で設定が 10 なら、最大 6。
+- 既定では、SQS のマッピングは 5 同時実行から始まり、毎分 300 ずつ、最大 1,250 まで増える。
+
+### ProvisionedPollerConfig {#esm-provisioned-mode}
+
+ポーラーを専用で確保するプロビジョンドモード。SQS、MSK、自己管理 Kafka で使える。追加料金がかかる。
+
+| 項目 | SQS | Kafka |
+| --- | --- | --- |
+| `MinimumPollers` | 2〜200、既定 2 | 既定 1、最大 200 |
+| `MaximumPollers` | 2〜10,000、既定 200 | 1〜2,000、既定 200 |
+| ポーラー 1 台の能力 | 1 MB/秒、10 同時呼び出し、毎秒 10 回のポーリング | 5 MB/秒、5 同時呼び出し |
+
+**計算例:** バッチサイズ 10、平均 3 KB、平均 100 ms の関数なら、SQS のポーラー 1 台で約 100 イベント/秒。1,000 イベント/秒を処理するには `MinimumPollers` を 10 にする。関数が平均 1 秒なら 1 台 10 イベント/秒なので、100 にする。
+
+- SQS では毎分 1,000 同時呼び出しずつ増え、最大 100,000 まで増やせる。
+- **罠:** SQS では `MaximumConcurrency` と併用できない。同時実行の上限は `MaximumPollers` で決める。
+- 使用量は `ProvisionedPollers` メトリクスで確認する。遅延を抑えるなら `MaximumBatchingWindowInSeconds` を 0 にする。
+
+### その他のマッピング設定 {#esm-other}
+
+| 設定 | 内容 |
+| --- | --- |
+| `Enabled` | 既定 `true`。`false` にするとポーリングと呼び出しを止める。マッピングを消さずに一時停止できる |
+| `FunctionResponseTypes` | `ReportBatchItemFailures` のみ。[部分バッチレスポンス](#partial-batch-response) を有効にする |
+| `FunctionName` | エイリアスを指定すると、Provisioned Concurrency を使える |
 
 ## 再試行の動き {#retries}
 
@@ -289,6 +628,40 @@ SQS と組み合わせるときは、次の2点を守る。
 | 非同期 | 関数エラーは最大 2 回。1回目の再実行まで1分、2回目まで2分。スロットリングと 500 番台は最大 6 時間 | `MaximumRetryAttempts`（0〜2）、`MaximumEventAgeInSeconds`（最大 6 時間） |
 | SQS | 可視性タイムアウト後に再度見えるようになる | 可視性タイムアウト、`maxReceiveCount`、DLQ |
 | Kinesis、DynamoDB Streams | バッチ全体をレコードが期限切れになるまで再試行し、そのシャードは止まる | `MaximumRetryAttempts`、`MaximumRecordAgeInSeconds`、バッチ分割、部分バッチレスポンス |
+
+### 非同期呼び出しの設定 {#async-config}
+
+関数、バージョン、エイリアスの単位で設定する。
+
+| 設定 | 既定 | 範囲 | 内容 |
+| --- | --- | --- | --- |
+| `MaximumRetryAttempts` | 2 | 0〜2 | 関数エラーの再試行回数 |
+| `MaximumEventAgeInSeconds` | 21,600（6 時間） | 60〜21,600 | 内部キューでイベントを保持する時間 |
+
+**流れの例（既定）:** 関数エラーの場合、1 回目が失敗してから 1 分後に 2 回目、その 2 分後に 3 回目を実行する。3 回とも失敗すると捨てるか、DLQ やデスティネーションへ送る。
+
+スロットリングと 500 番台のエラーでは、イベントをキューに戻す。間隔は 1 秒から最大 5 分まで広がり、最大 6 時間続ける。この再試行は `MaximumRetryAttempts` の対象ではなく、`MaximumEventAgeInSeconds` で打ち切る。
+
+- **例:** 古い通知に意味がないなら、`MaximumEventAgeInSeconds` を 300 にする。5 分待って処理できなかったイベントは送信先に回る。
+- **例:** 副作用があり二重実行を避けたい関数は `MaximumRetryAttempts` を 0 にする。
+
+```bash
+# put は既存の設定を上書きする。未指定の項目は消える
+aws lambda put-function-event-invoke-config --function-name my-function \
+  --maximum-event-age-in-seconds 3600 --maximum-retry-attempts 0
+
+# update は指定した項目だけを変える。送信先を残したいならこちら
+aws lambda update-function-event-invoke-config --function-name my-function \
+  --maximum-retry-attempts 0
+```
+
+監視には次のメトリクスを使う。
+
+| メトリクス | 内容 |
+| --- | --- |
+| `AsyncEventsReceived` | キューに入ったイベント数 |
+| `AsyncEventAge` | キューに入ってから呼び出されるまでの時間 |
+| `AsyncEventsDropped` | 処理されずに捨てられたイベント数 |
 
 非同期呼び出しでは、エラーがなくても同じイベントが2回届くことがある。詰まったシャードは `IteratorAge` メトリクスの増加で検知する。
 
@@ -306,6 +679,11 @@ SQS と組み合わせるときは、次の2点を守る。
 - FIFO のキューやトピックは送信先にできない。失敗すると `DestinationDeliveryFailures` メトリクスが増える。
 - 実行ロールには送信先への権限（`sqs:SendMessage`、`sns:Publish` など）が必要。
 - SNS を送信先にすると、メッセージの上限（既定 256 KiB）を超える場合がある。
+- 送信先ごとに実行ロールの権限が違う。S3 は `s3:PutObject` と `s3:ListBucket`（KMS 暗号化なら `kms:GenerateDataKey` も）、Lambda は `lambda:InvokeFunction`、EventBridge は `events:PutEvents`。
+- EventBridge では、`detail-type` が `Lambda Function Invocation Result - Success` または `Failure` になる。ルールはこれで絞る。
+- S3 の送信先は失敗時のみ。バケットを消して設定を残すと、同名のバケットを他人が作ったときに記録が流れる危険がある。
+
+DLQ のメッセージには、属性として `RequestID`、`ErrorCode`、`ErrorMessage`（先頭 1 KB）が付く。DLQ に送れなかったイベントは削除され、`DeadLetterErrors` メトリクスが増える。
 
 ```python
 import boto3
@@ -362,6 +740,13 @@ def handler(event, context):
 
 `$LATEST` は未発行で、デプロイのたびに上書きされる。本番は発行済みバージョンを指すエイリアス経由で呼ぶ。こうすると、呼び出し元を変えずに切り替えとロールバックができる。
 
+- 発行すると、コード、ランタイム、メモリ、タイムアウト、環境変数、レイヤー、VPC 設定、実行ロール、トレース設定、ログ設定などが固定される。
+- 予約済み同時実行は関数全体の設定で、変更しても新しいバージョンは発行できない。
+- 発行後も、トリガー、デスティネーション、Provisioned Concurrency、非同期呼び出しの設定、DB 接続とプロキシは変更できる。
+- `$LATEST` が前のバージョンと同じなら、新しいバージョンは作られない。
+- 番号は再利用されない。関数を消して作り直しても同じ番号には戻らない。
+- 修飾なしの ARN は `$LATEST` を呼ぶ。修飾なしの ARN でエイリアスは作れない。
+
 ```python
 import boto3
 
@@ -392,6 +777,8 @@ boto3.client("lambda").update_alias(
 - 指定できるのは2バージョンまで。
 - どちらも発行済みで、実行ロールと DLQ の設定が同じである必要がある。`$LATEST` は不可。
 - どちらが動いたかは、ログや `x-amz-executed-version` ヘッダーで分かる。
+- `AdditionalVersionWeights` の値は 0.0〜1.0 の割合で、指定できるのは2つ目のバージョン1つだけ。
+- 配分は確率で決まるので、通信量が少ないと実際の割合はぶれる。
 
 CodeDeploy を使うと、この切り替えを自動化できる。詳細は [CI/CD](cicd.md) を参照する。
 
@@ -431,7 +818,7 @@ CMD ["app.handler"]
 3. オープンソースの AWS Lambda Power Tuning で、料金と速度のバランスを調べる。
 
 ```text
-REPORT RequestId: ... Duration: 12.34 ms Billed Duration: 100 ms Memory Size: 128 MB Max Memory Used: 18 MB
+REPORT RequestId: ... Duration: 12.34 ms Billed Duration: 13 ms Memory Size: 128 MB Max Memory Used: 18 MB
 ```
 
 ### コールドスタートを減らす {#cold-start}
@@ -445,12 +832,38 @@ REPORT RequestId: ... Duration: 12.34 ms Billed Duration: 100 ms Memory Size: 12
 
 SnapStart は発行済みのバージョンとエイリアスでのみ使える。Provisioned Concurrency、EFS、512 MB を超える `/tmp` とは併用できない。スナップショットから復元するので、乱数やネットワーク接続など、環境ごとに一意であるべき値の扱いに注意する。
 
+### SnapStart の設定 {#snapstart}
+
+`SnapStart.ApplyOn` を `PublishedVersions` にすると有効になる。既定は `None`。バージョンの発行時に初期化が走り、スナップショットを作る。
+
+```bash
+aws lambda update-function-configuration --function-name my-function \
+  --snap-start ApplyOn=PublishedVersions
+aws lambda publish-version --function-name my-function
+```
+
+確認は `get-function-configuration` で `OptimizationStatus` が `On`、`State` が `Active` になっているかを見る。
+
+| 状態 | 意味 |
+| --- | --- |
+| `Pending` | スナップショットを作成中。呼び出しは失敗する |
+| `Active` | 呼び出せる |
+| `Inactive` | 定期的な再生成で初期化に失敗した場合など |
+| `Failed` | 初期化やスナップショット作成でエラー |
+
+- **罠:** `$LATEST` には効かない。発行済みバージョンかエイリアスを呼ぶ。
+- **罠:** 初期化で作った乱数や ID はすべての環境で同じになる。一意な値はハンドラーの中で作る。接続も復元後に確認する。
+- **罠（Java）:** 14 日呼ばれないとスナップショットが消え、次の呼び出しは `SnapStartNotReadyException` になる。`Active` に戻るのを待って呼ぶ。
+- 料金: Java は追加料金なし。それ以外はスナップショットのキャッシュと復元に料金がかかる。
+- Node.js、Ruby、OS 専用ランタイムでは使えない。
+
 ### コードの最適化 {#code-optimization}
 
 - SDK クライアントと DB 接続はハンドラーの外で作り、再利用する。
 - 静的データは `/tmp` にキャッシュする。ただしユーザーデータは残さない。
 - keep-alive で接続を維持する。
 - 関数が自分自身を呼び出す構成を避ける。S3 トリガーの関数が同じバケットに書くと、無限ループになる。
+- 再帰ループの検出が既定で有効。同じリクエストの連鎖で約 16 回呼ばれると、Lambda が次の呼び出しを止めて通知し、`RecursiveInvocationsDropped` メトリクスが増える。対象は SQS、S3、SNS、EventBridge のカスタムバス、Lambda 同士で、DynamoDB を挟むループは検出できない。
 - ボトルネックの調査は [X-Ray と CloudWatch](observability.md) を使う。
 
 ## ほぼリアルタイムのデータ処理 {#near-real-time}
@@ -521,6 +934,39 @@ SQS のイベントは次の形になる。`body` は文字列なので、JSON �
 
 API Gateway 用のテストイベントは [API Gateway のページ](api-gateway.md) を、スタブを使う単体テストは [SDK と耐障害性](sdk-resilience.md) を参照する。
 
+## 既定値と上限のまとめ {#numbers}
+
+| 項目 | 既定 | 範囲・上限 |
+| --- | --- | --- |
+| メモリ | 128 MB | 128〜10,240 MB |
+| タイムアウト | 3 秒 | 1〜900 秒 |
+| `/tmp` | 512 MB | 512〜10,240 MB |
+| 環境変数 | なし | 合計 4 KB |
+| レイヤー | なし | 5 個 |
+| .zip パッケージ | なし | 直接 50 MB、展開後 250 MB |
+| コンテナイメージ | なし | 10 GB |
+| ペイロード | なし | 同期 6 MB、非同期 1 MB、ストリーミング 200 MB |
+| アカウントの同時実行数 | 1,000 | 引き上げ可。100 は予約できない |
+| スケーリング速度 | 関数ごと | 10 秒あたり 1,000 環境 |
+| RPS の上限 | なし | 同時実行数の 10 倍 |
+| 非同期の再試行 | 2 回 | 0〜2 |
+| 非同期の最大経過時間 | 6 時間 | 60〜21,600 秒 |
+| `BatchSize`（SQS） | 10 | 標準 10,000、FIFO 10 |
+| `BatchSize`（ストリーム） | 100 | 10,000 |
+| `MaximumBatchingWindowInSeconds` | 0 秒 | 0〜300 秒 |
+| `ParallelizationFactor` | 1 | 1〜10 |
+| `TumblingWindowInSeconds` | 0（無効） | 0〜900 秒 |
+| `MaximumRetryAttempts`（ストリーム） | -1 | -1〜10,000 |
+| `MaximumRecordAgeInSeconds` | -1 | -1、または 60〜604,800 秒 |
+| `FilterCriteria` | なし | 5 個（申請で 10 個） |
+| `MaximumConcurrency` | なし | 2〜1,000 |
+| `MinimumPollers`（SQS） | 2 | 2〜200 |
+| `MaximumPollers`（SQS） | 200 | 2〜10,000 |
+| SQS の既定のスケーリング | 5 同時実行 | 毎分 300 増、最大 1,250 |
+| 可視性タイムアウト | 推奨 | 関数のタイムアウト × 6 + バッチウィンドウ |
+| `maxReceiveCount` | 推奨 | 5 以上 |
+| エイリアスの重み | なし | 0.0〜1.0、2 バージョンまで |
+
 ## 試験のポイント {#exam-points}
 
 | こう問われたら | 答え |
@@ -546,6 +992,18 @@ API Gateway 用のテストイベントは [API Gateway のページ](api-gatewa
 | 実行が遅くて CPU が足りない | メモリを増やす。CPU が比例して増える |
 | 環境変数の値をコンソールでも隠したい | 暗号化ヘルパー（クライアント側暗号化）とコードでの復号 |
 | 15 分を超える処理 | [Step Functions](step-functions.md) に分割、または [コンテナ](containers.md) |
+| SQS でバッチサイズを 10 より大きくできない | `MaximumBatchingWindowInSeconds` を 1 以上に |
+| ストリームの取りこぼしをなくす | `StartingPosition` を `TRIM_HORIZON` か `AT_TIMESTAMP` に |
+| シャードの処理が遅れて `IteratorAge` が増える | `ParallelizationFactor` を上げる、シャードを増やす |
+| キューごとに同時実行を制限 | `ScalingConfig` の `MaximumConcurrency` |
+| SQS で 1,250 を超える同時実行 | プロビジョンドモード |
+| 一部のメッセージだけ処理したい | `FilterCriteria`。SQS では不一致が削除される |
+| 非同期の設定を一部だけ変更 | `update-function-event-invoke-config` |
+| 短いリクエストで同時実行に余裕があるのに 429 | RPS の上限（同時実行数の 10 倍） |
+| 関数 URL で 403 | `lambda:InvokeFunctionUrl` と `lambda:InvokeFunction` を許可 |
+| 未署名のデプロイを止めたい | コード署名の `Enforce` |
+| 上流にトレースがあるのに関数のトレースが出ない | `TracingConfig` を `Active` に |
+| ログレベルを変えても効かない | ログ形式を JSON に |
 
 ## 関連ページ {#related}
 
@@ -580,3 +1038,22 @@ API Gateway 用のテストイベントは [API Gateway のページ](api-gatewa
 - [Testing in the console](https://docs.aws.amazon.com/lambda/latest/dg/testing-functions.html)
 - [sam local generate-event](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/using-sam-cli-local-generate-event.html)
 - [sam local invoke](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/using-sam-cli-local-invoke.html)
+- [Configure memory](https://docs.aws.amazon.com/lambda/latest/dg/configuration-memory.html)
+- [Configure timeout](https://docs.aws.amazon.com/lambda/latest/dg/configuration-timeout.html)
+- [Configure ephemeral storage](https://docs.aws.amazon.com/lambda/latest/dg/configuration-ephemeral-storage.html)
+- [Instruction set architectures](https://docs.aws.amazon.com/lambda/latest/dg/foundation-arch.html)
+- [Execution role](https://docs.aws.amazon.com/lambda/latest/dg/lambda-intro-execution-role.html)
+- [Resource-based policies](https://docs.aws.amazon.com/lambda/latest/dg/access-control-resource-based.html)
+- [Log-level filtering](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-cloudwatchlogs-log-level.html)
+- [Tracing with X-Ray](https://docs.aws.amazon.com/lambda/latest/dg/services-xray.html)
+- [Code signing](https://docs.aws.amazon.com/lambda/latest/dg/configuration-codesigning.html)
+- [Function URLs](https://docs.aws.amazon.com/lambda/latest/dg/urls-configuration.html)
+- [Function URL access control](https://docs.aws.amazon.com/lambda/latest/dg/urls-auth.html)
+- [Reserved concurrency](https://docs.aws.amazon.com/lambda/latest/dg/configuration-concurrency.html)
+- [CreateEventSourceMapping](https://docs.aws.amazon.com/lambda/latest/api/API_CreateEventSourceMapping.html)
+- [Event filtering](https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html)
+- [Configuring SQS scaling](https://docs.aws.amazon.com/lambda/latest/dg/services-sqs-scaling.html)
+- [Kinesis tumbling windows](https://docs.aws.amazon.com/lambda/latest/dg/services-kinesis-windows.html)
+- [Configuring asynchronous error handling](https://docs.aws.amazon.com/lambda/latest/dg/invocation-async-configuring.html)
+- [Weighted aliases](https://docs.aws.amazon.com/lambda/latest/dg/configuring-alias-routing.html)
+- [Recursive loop detection](https://docs.aws.amazon.com/lambda/latest/dg/invocation-recursion.html)

@@ -418,6 +418,306 @@ S3 バケットキーを有効にすると、暗号化コンテキストはオ�
 
 SSE-KMS のオブジェクトを読むには、`s3:GetObject` に加えて KMS キーの `kms:Decrypt` も必要です。権限エラーの原因としてよく問われます。
 
+## キーの作成時の設定 {#key-creation-settings}
+
+`CreateKey` は引数なしでも動き、対称の暗号化キーができます。
+
+| パラメータ | 既定 | 値と効果 |
+| --- | --- | --- |
+| `KeySpec` | `SYMMETRIC_DEFAULT` | 下の表。作成後は変更できない |
+| `KeyUsage` | `ENCRYPT_DECRYPT` | `SIGN_VERIFY`, `GENERATE_VERIFY_MAC`, `KEY_AGREEMENT` |
+| `Origin` | `AWS_KMS` | `EXTERNAL`（インポート）, `AWS_CLOUDHSM`, `EXTERNAL_KEY_STORE` |
+| `MultiRegion` | `false` | `true` でマルチリージョンのプライマリキー。後から変換できない |
+| `Policy` | 既定のキーポリシー | 未指定なら「IAM を有効にする文」のみ |
+| `BypassPolicyLockoutSafetyCheck` | `false` | 自分が管理できなくなるポリシーの拒否を飛ばす。通常は使わない |
+
+### キーの仕様 {#key-specs}
+
+| 仕様 | 用途 | 備考 |
+| --- | --- | --- |
+| `SYMMETRIC_DEFAULT` | 暗号化と復号 | 暗号文は KMS でのみ復号できる。データキーの生成はこれだけ |
+| `RSA_2048`, `RSA_3072`, `RSA_4096` | 暗号化と復号、または署名と検証 | どちらか一方を作成時に選ぶ |
+| `ECC_NIST_P256`, `ECC_NIST_P384`, `ECC_NIST_P521`, `ECC_SECG_P256K1` | 署名と検証、または鍵共有 | |
+| `ECC_NIST_EDWARDS25519` | 署名と検証 | |
+| `HMAC_224`, `HMAC_256`, `HMAC_384`, `HMAC_512` | `GenerateMac`, `VerifyMac` | `KeyUsage` の指定が必須 |
+
+### 対称と非対称の違い {#symmetric-vs-asymmetric}
+
+| 観点 | 対称 | 非対称 |
+| --- | --- | --- |
+| 鍵素材 | KMS の外に出ない | 公開鍵は `GetPublicKey` で取得できる |
+| 暗号文の作成場所 | KMS 内 | KMS の外で公開鍵を使える |
+| 暗号化コンテキスト | 使える | 使えない |
+| `Decrypt` の `KeyId` | 省略できる | 必須 |
+| 自動ローテーション | 対象 | 対象外 |
+
+外部のシステムが AWS の認証情報を持てず、データを暗号化して送ってくる場合は、RSA キーの公開鍵を渡します。AWS の認証情報があるなら、対称キーが標準です。
+
+## キーポリシーの詳細 {#key-policy-details}
+
+### 既定のキーポリシー {#default-key-policy-details}
+
+| 作成の方法 | 既定で入る文 |
+| --- | --- |
+| API、CLI、SDK、CloudFormation | IAM を有効にする文のみ |
+| コンソール | IAM を有効にする文、キー管理者、キー利用者、AWS サービスとの統合のための文 |
+
+| 文 | 主な権限 |
+| --- | --- |
+| キー管理者 | `kms:Create*`, `kms:Describe*`, `kms:Enable*`, `kms:Put*`, `kms:Update*`, `kms:Revoke*`, `kms:Disable*`, `kms:Get*`, `kms:Delete*`, `kms:ScheduleKeyDeletion`, `kms:CancelKeyDeletion` など |
+| キー利用者 | `kms:Encrypt`, `kms:Decrypt`, `kms:ReEncrypt*`, `kms:GenerateDataKey*`, `kms:DescribeKey` |
+| AWS サービスとの統合 | `kms:CreateGrant`, `kms:ListGrants`, `kms:RevokeGrant`（`kms:GrantIsForAWSResource` が真のとき） |
+
+`arn:aws:iam::アカウント:root` を指定すると、そのアカウントの主体すべてに直接許可されるわけではありません。アカウントが IAM ポリシーで委譲できるようになるだけです。
+
+この文を消してから IAM だけで許可しても、キーを使えません。利用者には `AccessDeniedException` が返ります。誰も管理できないポリシーを `PutKeyPolicy` で設定すると、キーが管理不能になります。
+
+キーポリシーの `Principal` を `*` にして条件を付けないと、全アカウントの全員に許可するので避けます。
+
+### kms:ViaService {#via-service}
+
+特定のサービス経由に限定します。AWS サービスが利用者の代理で呼ぶとき（フォワードアクセスセッション）に効きます。
+
+```json
+{
+  "Effect": "Allow",
+  "Principal": {"AWS": "arn:aws:iam::111122223333:role/App"},
+  "Action": ["kms:Decrypt", "kms:GenerateDataKey*"],
+  "Resource": "*",
+  "Condition": {
+    "StringEquals": {
+      "kms:ViaService": "s3.ap-northeast-1.amazonaws.com",
+      "kms:CallerAccount": "111122223333"
+    }
+  }
+}
+```
+
+このロールは S3 を通してならキーを使えますが、アプリから直接 `kms:Decrypt` を呼ぶと拒否されます。値には `<サービス>.<リージョン>.amazonaws.com` の形で、リージョンを含めます。
+
+### 主な条件キー {#kms-condition-keys}
+
+| キー | 用途 |
+| --- | --- |
+| `kms:ViaService` | 特定のサービス経由に限定 |
+| `kms:CallerAccount` | 呼び出し元のアカウント |
+| `kms:EncryptionContext:キー`, `kms:EncryptionContextKeys` | 暗号化コンテキストの値、キーで絞る |
+| `kms:GrantIsForAWSResource` | AWS サービスと統合されたグラントだけ許可 |
+| `kms:RequestAlias`, `kms:ResourceAliases` | 別名に基づく制御。IAM の `Resource` に別名は書けない |
+
+### グラントの設定 {#grant-settings}
+
+```bash
+aws kms create-grant \
+  --key-id 1234abcd-12ab-34cd-56ef-1234567890ab \
+  --grantee-principal arn:aws:iam::111122223333:role/Worker \
+  --operations Decrypt GenerateDataKey \
+  --retiring-principal arn:aws:iam::111122223333:role/Admin \
+  --constraints EncryptionContextEquals={Purpose=Test}
+```
+
+| 項目 | 内容 |
+| --- | --- |
+| `GranteePrincipal` | 権限を受ける主体。別アカウントでも可 |
+| `Operations` | 暗号操作、`DescribeKey`, `CreateGrant`, `RetireGrant` などに限る。`ScheduleKeyDeletion` は不可で、`ValidationError` になる |
+| `Constraints` | `EncryptionContextEquals` か `EncryptionContextSubset` |
+| `RetiringPrincipal` | グラントを退役できる主体 |
+| `Name` | 再試行の重複を防ぐ名前 |
+| 上限 | キーあたり 50,000 |
+
+**結果整合性**: 反映は通常数秒以内ですが、すぐに使うならレスポンスの `GrantToken` をリクエストの `GrantTokens` に渡します。トークンは秘密ではありません。
+
+| 削除の API | 主な使い手 |
+| --- | --- |
+| `RetireGrant` | 作業が終わったグラントの受け手や退役の主体 |
+| `RevokeGrant` | 権限を取り消す管理者。付与を意図的に否定する |
+
+## マルチリージョンキー {#multi-region-keys}
+
+| 項目 | 内容 |
+| --- | --- |
+| 共通するもの | キー ID、鍵素材、キーの仕様、自動ローテーションの設定 |
+| 別々のもの | キーポリシー、グラント、別名、タグ、キーの有効、無効 |
+| 作成 | `CreateKey` の `MultiRegion=true` のあと `ReplicateKey` |
+| ローテーション | プライマリで実施 |
+| 既存のキーの変換 | できない |
+| 料金と上限 | 関連キーはそれぞれ 1 つのキーとして数える |
+
+```bash
+aws kms replicate-key --key-id mrk-1234abcd12ab34cd56ef1234567890ab \
+  --replica-region us-west-2
+```
+
+東京で暗号化した DynamoDB グローバルテーブルのフィールドを、オレゴンでも再暗号化なしで復号したい場合に使います。クライアント側で暗号化するとき以外は、単一リージョンのキーが基本です。多くの AWS サービスは、これを単一リージョンのキーと同様に扱います。
+
+プライマリキーを削除するには、先にレプリカを削除します。その間の状態は `PendingReplicaDeletion` です。プライマリの待機期間は、最後のレプリカが削除されたときから始まります。
+
+## ローテーションの設定 {#rotation-settings}
+
+```bash
+aws kms enable-key-rotation --key-id <id> --rotation-period-in-days 180
+```
+
+| 設定 | 値 |
+| --- | --- |
+| `RotationPeriodInDays` | 90〜2,560 日。既定 365 日 |
+| オンデマンド | キーあたり 25 回まで。引き上げ不可 |
+
+180 日に設定して 3 年運用すると、自動ローテーションは約 6 回です。ID や ARN は変わらず、新しい暗号文は新しい鍵素材で作られ、古い暗号文は古い鍵素材で復号されます。
+
+既存の暗号文やデータキーは再暗号化されません。データキーを再度暗号化したいなら、`ReEncrypt` を使います。
+
+## キーの無効化と削除 {#disable-delete}
+
+| 操作 | 効果 | 戻せるか | 暗号操作でのエラー |
+| --- | --- | --- | --- |
+| `DisableKey` | 使えなくなる。ローテーションも止まる | `EnableKey` | `DisabledException` |
+| `ScheduleKeyDeletion` | 7〜30 日後に削除（既定 30 日） | 待機中は `CancelKeyDeletion`。戻すと `Disabled` になる | `KMSInvalidStateException` |
+| 削除の完了 | 鍵素材、メタデータ、別名を削除 | 不可 | |
+
+実際の削除は、指定より最大 24 時間ほど遅れることがあります。正確な日時は `DescribeKey` で確認します。
+
+待機中に誰かがキーを使おうとしたことを検知するには、CloudTrail のイベントから CloudWatch アラームを作ります。
+
+## 鍵素材のインポート {#imported-key-material}
+
+自分で作った鍵素材を使う方法で、`Origin=EXTERNAL` のキーを作ります。
+
+1. `CreateKey --origin EXTERNAL` で鍵素材なしのキーを作る。
+2. `GetParametersForImport` でラッピング用の公開鍵とインポートトークンを取得する。
+3. 鍵素材を暗号化し、`ImportKeyMaterial` でアップロードする。
+
+| 観点 | 内容 |
+| --- | --- |
+| 対象 | 対称、非対称（ML-DSA, ML-KEM を除く）、HMAC、マルチリージョンキー |
+| 有効期限 | `ValidTo` で任意に設定できる |
+| 鍵素材の削除 | `DeleteImportedKeyMaterial` ですぐ削除できる。再度インポートで戻せる |
+| 自動ローテーション | 不可 |
+| オンデマンドローテーション | 対称キーは可。新しい鍵素材を先にインポートする |
+
+鍵素材が期限切れや削除になると、キーの状態が `PendingImport` になり、使えなくなります。
+
+待機期間なしで鍵素材を消せるのが、インポートを選ぶ主な理由です。
+
+## API の詳細 {#api-details}
+
+| API | 入力 | 出力 | 上限 |
+| --- | --- | --- | --- |
+| `Encrypt` | 平文 | 暗号文 | 下の表 |
+| `Decrypt` | 暗号文 | 平文 | 暗号文は 6,144 バイトまで |
+| `ReEncrypt` | 暗号文、宛先キー | 新しい暗号文 | 平文をアプリに見せない |
+| `GenerateDataKey` | `KeySpec` または `NumberOfBytes` | 平文のキー、暗号化されたキー | `NumberOfBytes` は 1〜1,024 |
+| `GenerateDataKeyWithoutPlaintext` | 同上 | 暗号化されたキーのみ | |
+| `GenerateDataKeyPair` | `KeyPairSpec` | 公開鍵、平文の秘密鍵、暗号化された秘密鍵 | |
+| `GenerateRandom` | `NumberOfBytes` | ランダムなバイト列 | 1〜1,024 バイト。キー不要 |
+
+| 暗号化のアルゴリズム、キー | `Encrypt` の平文の上限 |
+| --- | --- |
+| `SYMMETRIC_DEFAULT` | 4,096 バイト |
+| `RSA_2048` + `RSAES_OAEP_SHA_1` / `SHA_256` | 214 / 190 バイト |
+| `RSA_3072` + `RSAES_OAEP_SHA_1` / `SHA_256` | 342 / 318 バイト |
+| `RSA_4096` + `RSAES_OAEP_SHA_1` / `SHA_256` | 470 / 446 バイト |
+
+`GenerateDataKey` は `KeySpec` と `NumberOfBytes` を同時に指定できません。128 ビットや 256 ビットなら `KeySpec` を使います。
+
+KMS はデータキーを保存も追跡もしません。またデータキーで暗号化もしません。使うのはアプリ側で、暗号化されたキーの保管もアプリの責任です。
+
+**用途別の例**です。
+
+| 場面 | API |
+| --- | --- |
+| 今すぐ 10 MB のファイルを暗号化 | `GenerateDataKey` |
+| 別のワーカーが後で暗号化するキーを、準備だけする | `GenerateDataKeyWithoutPlaintext` |
+| KMS キーを新しいものに切り替え、データキーを包み直す | `ReEncrypt` |
+| 暗号学的に強い 32 バイトのトークンが欲しい | `GenerateRandom` |
+
+### 主なエラー {#kms-errors}
+
+| エラー | 原因 |
+| --- | --- |
+| `AccessDeniedException` | キーポリシー、IAM、グラントのいずれにも許可がない |
+| `InvalidCiphertextException` | 暗号文の破損、暗号化コンテキストの不一致 |
+| `IncorrectKeyException` | `KeyId` が暗号化に使ったキーと違う |
+| `DisabledException` | キーが無効 |
+| `KMSInvalidStateException` | 削除待ちなど、操作に合わない状態 |
+| `ThrottlingException` | リクエストの上限超過（HTTP 400） |
+| `KeyUnavailableException` | キーを一時的に使えない。再試行する |
+| `NotFoundException` | 指定のキーがない。別のリージョンや、別アカウントのキーを ID で指定している場合など |
+
+## リクエストの計算 {#request-quota-calc}
+
+| 項目 | 既定の上限（秒間、共有） |
+| --- | --- |
+| 対称キーの暗号操作 | 10,000。`ap-northeast-1` などは 20,000。`us-east-1`, `us-west-2`, `eu-west-1` は 100,000 |
+| RSA キーの暗号操作 | 1,000 |
+| 楕円曲線、SM2 キーの暗号操作 | 1,000 |
+| `CreateGrant` | 50 |
+| `DescribeKey` | 2,000 |
+| `CreateKey` | 5 |
+
+**計算の例**: 東京リージョンで、SSE-KMS の S3 バケットに秒間 500 回 `PutObject` し、秒間 800 回 `GetObject` するとします。S3 バケットキーがないと、KMS へのリクエストは秒間 1,300 回です。
+
+同じアカウントとリージョンの他の処理と合わせて 20,000 を超えなければ、スロットリングされません。バケットキーを有効にすると、S3 が短期間バケット単位のキーを再利用するので、KMS へのリクエストはさらに減ります。
+
+### S3 バケットキー {#s3-bucket-key-settings}
+
+| 項目 | 内容 |
+| --- | --- |
+| 効果 | KMS へのリクエストのコストを最大 99% 削減 |
+| 既存のオブジェクト | 対象外。`CopyObject` でコピーすると適用される |
+| 暗号化コンテキスト | バケット ARN になる。オブジェクト ARN を条件にしたポリシーは効かなくなる |
+| CloudTrail | KMS のイベントがオブジェクト単位でなくバケット単位になる |
+
+### データキーキャッシュの設定 {#data-key-cache-settings}
+
+| しきい値 | 既定、範囲 | 必須か |
+| --- | --- | --- |
+| 最大有効期間 | 0 より大きい値。多くの言語は秒、JavaScript はミリ秒 | 必須 |
+| 暗号化の最大メッセージ数 | 1〜2^32。既定 2^32 | 任意 |
+| 暗号化の最大バイト数 | 既定 2^63 - 1 | 任意 |
+
+## CloudTrail での監査 {#kms-cloudtrail}
+
+KMS のすべての操作は CloudTrail に記録されます。読み取り専用の `ListAliases` や、管理操作の `CreateKey`、暗号操作の `Decrypt` も含みます。
+
+- `Encrypt` の `Plaintext` のような機密フィールドは記録されない。
+- 暗号化コンテキストは記録される。
+- 証跡からは、KMS のイベントだけをまとめて除外できる（個別には選べない）。大量のイベントでコストが増えるときの選択肢。
+- `RotateKey` イベントでローテーションを確認できる。
+- AWS 所有キーの使用は記録されない。
+
+## アカウントをまたぐ手順 {#cross-account-steps}
+
+Account A のキーを Account B のロールで使う順序です。
+
+1. A のキーポリシーで、B のアカウントかロールに `kms:Decrypt` などを許可する。
+2. B の IAM ポリシーで、ロールにキー ARN への同じ権限を許可する。
+3. B のロールは呼び出しでキー ARN か別名 ARN を指定する。
+4. スロットリングは B（呼び出し側）に計上される。
+
+別名を使う場合は別名 ARN にします。`alias/app-key` のように書くと、B のアカウントの別名を探して `NotFoundException` になります。
+
+片方だけだと `AccessDeniedException` です。
+
+## 既定値と上限のまとめ {#numbers}
+
+| 項目 | 値 |
+| --- | --- |
+| `Encrypt` の平文（対称） | 4,096 バイト |
+| `Decrypt` の暗号文 | 6,144 バイト |
+| `GenerateDataKey` の `NumberOfBytes` | 1〜1,024 |
+| `GenerateRandom` | 1〜1,024 バイト |
+| 自動ローテーションの期間 | 既定 365 日。90〜2,560 日 |
+| オンデマンドローテーション | キーあたり 25 回 |
+| AWS 管理キーのローテーション | 約 1 年ごと |
+| 削除の待機期間 | 既定 30 日。7〜30 日 |
+| カスタマー管理キー | リージョンあたり 100,000 |
+| 別名 | キーあたり 50 |
+| グラント | キーあたり 50,000 |
+| 対称キーの暗号操作 | 秒間 10,000 / 20,000 / 100,000（リージョンによる） |
+| RSA、楕円曲線の暗号操作 | 秒間 1,000 |
+| S3 バケットキーの削減効果 | 最大 99% |
+
 ## 試験のポイント {#exam-points}
 
 | こう問われたら | 答え |
@@ -438,6 +738,12 @@ SSE-KMS のオブジェクトを読むには、`s3:GetObject` に加えて KMS �
 | 特定サービス経由でのみ鍵を使わせる | `kms:ViaService` |
 | 環境変数の暗号化ヘルパーを使う Lambda の権限 | 実行ロールに `kms:Decrypt` |
 | キーの削除の待機期間 | 7〜30 日。既定は 30 日 |
+| ランダムなバイト列を KMS で作る | `GenerateRandom`（1〜1,024 バイト） |
+| 今は平文のキーが要らない | `GenerateDataKeyWithoutPlaintext` |
+| KMS の外の相手に公開鍵だけ渡して暗号化させる | 非対称の RSA キー |
+| 別リージョンで再暗号化なしに復号したい | マルチリージョンキー |
+| 待機期間なしで鍵素材を消したい | インポートした鍵素材と `DeleteImportedKeyMaterial` |
+| グラントをすぐに使う | `GrantToken` を渡す |
 
 ## 関連ページ {#related}
 
