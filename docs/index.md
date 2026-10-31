@@ -10,6 +10,7 @@ AWS の学習と運用の情報をまとめた個人用 wiki です。
 ## サービス解説 {#services}
 
 - [サービスの一覧](services/index.md)
+- [リソースの提供単位と EC サイトの構成例](services/resource-scope.md)
 
 ## 質問と回答 {#qa}
 

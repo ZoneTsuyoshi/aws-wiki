@@ -20,7 +20,7 @@ AWS の構成や運用をまとめる wiki。`docs/` の md を MkDocs Material 
 
 新しい試験のコースを作るときは、`docs/courses/dva/` と同じ構成にし、公式スキルとページの対応表（`coverage.md`）も作る。
 
-`docs/services/` では、設定項目ごとに「何が変わるか、既定値と範囲、具体的な値を使った例、設定を誤ったときの症状」を書く。
+`docs/services/` では、設定項目ごとに「何が変わるか、既定値と範囲、具体的な値を使った例、設定を誤ったときの症状」を書く。リソースには提供単位（グローバル、リージョン、AZ）と VPC の内外も書き、`docs/services/resource-scope.md` にそろえる。
 
 問題集は `docs/courses/<試験>/exercises/` に置き、形式を `scripts/check_exercises.py` で検査する。問題はオリジナルで書き、正解は公式ドキュメントで確認する。過去問やダンプは使わない。各スキルに最低3問そろえる。
 
