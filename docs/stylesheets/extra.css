@@ -1,0 +1,41 @@
+.md-typeset a.exam-badge {
+  display: inline-block;
+  margin: 0 0.2rem 0.2rem 0;
+  padding: 0 0.45rem;
+  border: 1px solid transparent;
+  border-radius: 0.8rem;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.md-typeset a.exam-badge:hover {
+  color: #fff;
+  opacity: 0.85;
+}
+
+.md-typeset a.exam-badge .twemoji {
+  vertical-align: -0.1em;
+}
+
+.md-typeset a.exam-foundational { background: #1b7f4b; border-color: #1b7f4b; }
+.md-typeset a.exam-associate { background: #1f6feb; border-color: #1f6feb; }
+.md-typeset a.exam-professional { background: #7c3aed; border-color: #7c3aed; }
+.md-typeset a.exam-specialty { background: #b45309; border-color: #b45309; }
+
+.md-typeset a.exam-badge--related {
+  background: transparent;
+  font-weight: 500;
+}
+
+.md-typeset a.exam-badge--related.exam-foundational { color: #1b7f4b; }
+.md-typeset a.exam-badge--related.exam-associate { color: #1f6feb; }
+.md-typeset a.exam-badge--related.exam-professional { color: #7c3aed; }
+.md-typeset a.exam-badge--related.exam-specialty { color: #b45309; }
+
+[data-md-color-scheme="slate"] .md-typeset a.exam-badge--related.exam-foundational { color: #4ade80; border-color: #4ade80; }
+[data-md-color-scheme="slate"] .md-typeset a.exam-badge--related.exam-associate { color: #7db4ff; border-color: #7db4ff; }
+[data-md-color-scheme="slate"] .md-typeset a.exam-badge--related.exam-professional { color: #c4a5ff; border-color: #c4a5ff; }
+[data-md-color-scheme="slate"] .md-typeset a.exam-badge--related.exam-specialty { color: #fbbf24; border-color: #fbbf24; }

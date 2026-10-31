@@ -1,5 +1,7 @@
 # コスト管理
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIB](../courses/aib/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
+
 AWS の費用を把握し、予算を管理し、割引を使って減らすためのサービスと考え方をまとめます。
 
 [![コスト管理ツールの役割](../assets/diagrams/cost-management-tools.png)](../assets/diagrams/cost-management-tools.png)
@@ -15,6 +17,8 @@ AWS の費用を把握し、予算を管理し、割引を使って減らすた�
 | 大きさを適正にする | [Compute Optimizer](#compute-optimizer) | 過去の使用から提案 |
 
 ## Billing and Cost Management {#billing}
+
+[:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
 請求、支払い、費用の分析をまとめたコンソールです。請求書の確認、支払い方法の設定、クレジットの確認ができます。
 
@@ -47,6 +51,8 @@ CloudWatch の請求メトリクス `EstimatedCharges` でアラームを作れ�
 
 ## Cost Explorer {#cost-explorer}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIB](../courses/aib/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
+
 費用と使用量をグラフで分析するツールです。
 
 | 項目 | 内容 |
@@ -67,6 +73,8 @@ CloudWatch の請求メトリクス `EstimatedCharges` でアラームを作れ�
 組織に参加したアカウントは、参加前のデータを見られなくなります。
 
 ## AWS Budgets {#budgets}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 費用や使用量のしきい値を設定して、超えそうなときに通知や処理を行います。監視と通知は無料です。
 
@@ -121,6 +129,8 @@ Budgets 用のサービスロールが必要です。ないとアクションが
 
 ## Data Exports と Cost and Usage Reports {#data-exports}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
 Cost and Usage Reports（CUR）は、最も詳しい費用と使用量のデータです。S3 に配信し、Athena や Redshift、QuickSight で分析します。
 
 現在の推奨は、Data Exports で作る **CUR 2.0** です。
@@ -159,6 +169,8 @@ Athena 向けの設定では Parquet で配信し、セットアップ用のス�
 
 ## Cost Anomaly Detection {#cost-anomaly-detection}
 
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 機械学習で通常と異なる費用を検出して通知します。週次や月次の季節性や自然な成長を考慮するので、誤検知を減らせます。
 
 Cost Explorer を有効にすると、自動で設定されます。オプトアウトできます。
@@ -190,6 +202,8 @@ Cost Explorer を有効にすると、自動で設定されます。オプトア
 Budgets との違いは、Budgets は自分で決めた額との比較で、異常検出は過去のパターンとの比較であることです。
 
 ## Cost Categories {#cost-categories}
+
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 費用を、事業の構造に合わせた独自の分類にまとめる機能です。ルールを定義し、評価はルールの順に行います。
 
@@ -232,6 +246,8 @@ flowchart TD
 
 ## Pricing Calculator {#pricing-calculator}
 
+[:material-sprout: AIB](../courses/aib/services.md){ .exam-badge .exam-foundational }
+
 構成の費用を作る前に見積もるツールです。
 
 | 種類 | 特徴 |
@@ -257,6 +273,8 @@ flowchart TD
 
 ### Savings Plans {#savings-plans}
 
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
 1 時間あたりの利用額（USD/時）を 1 年か 3 年確約して、割引を受けます（Database は 1 年、前払いなしのみ）。公式は RI より Savings Plans を推奨しています。
 
 | 種類 | 割引の上限 | 適用先 | 柔軟性 |
@@ -278,6 +296,8 @@ flowchart TD
 使用率が低いと、確約した額を使わない分だけ損をします。Budgets の使用率の予算で監視します。確約額は、Cost Explorer の推奨を基に決めます。
 
 ### Reserved Instances {#reserved-instances}
+
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 特定の構成を 1 年か 3 年確約する割引です。物理的なインスタンスではなく、条件の合う利用に自動で適用される請求上の割引です。
 
@@ -337,6 +357,8 @@ flowchart TD
 定常の基盤には確約割引、変動分にはオンデマンド、中断できる部分にはスポットと、組み合わせるのが基本です。
 
 ## Compute Optimizer と適正サイズ {#compute-optimizer}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 使用状況を分析して、適正サイズの推奨とアイドルリソースを示すサービスです。使うにはオプトインが必要です。
 
@@ -418,6 +440,8 @@ flowchart TD
 AZ 間の通信が多いアプリは、同じ AZ の中で処理を完結させると減らせます。ただし可用性とのトレードオフです。
 
 ## AI サービスの料金の構造 {#ai-pricing}
+
+[:material-sprout: AIB](../courses/aib/services.md){ .exam-badge .exam-foundational }
 
 AI サービスの課金の単位はさまざまです。金額は変わりやすいので、単位を覚えます。
 

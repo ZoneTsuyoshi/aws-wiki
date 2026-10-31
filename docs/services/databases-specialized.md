@@ -1,5 +1,7 @@
 # 専門データベース（Neptune、DocumentDB、Keyspaces、MemoryDB、Timestream ほか）
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 グラフ、ドキュメント、ワイドカラム、インメモリ、時系列といった用途別のデータベースと、RDS Custom、Aurora の応用機能をまとめます。最後に、AWS のデータベース全体の選び方を表にします。RDS、Aurora の基本と ElastiCache は [データベースとキャッシュ](databases.md)、DynamoDB は [DynamoDB](dynamodb.md) を参照してください。
 
 [![データモデル別のデータベース](../assets/diagrams/databases-specialized-models.png)](../assets/diagrams/databases-specialized-models.png)
@@ -15,6 +17,8 @@
 | [RDS Custom](#rds-custom) | リレーショナル | Oracle、SQL Server | OS に入れる RDS | **Oracle は 2027 年 3 月に終了** |
 
 ## Amazon Neptune {#neptune}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 高度に接続されたデータのための、フルマネージドのグラフデータベースです。数十億の関係をミリ秒で問い合わせます。SQL の多段の結合を繰り返す問題に向きます。
 
@@ -90,6 +94,8 @@ curl -X POST https://<cluster-endpoint>:8182/loader \
 
 ## Amazon DocumentDB {#documentdb}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 MongoDB 互換の、フルマネージドのドキュメントデータベースです。JSON をそのまま保存し、スキーマが揃わないデータに向きます。
 
 | クラスターの種類 | 特徴 | 向く場面 |
@@ -122,6 +128,8 @@ mongodb://user:password@my-cluster.cluster-xxxx.ap-northeast-1.docdb.amazonaws.c
 **DynamoDB との違い**: 入れ子の条件での柔軟な検索や集計を使うなら DocumentDB です。キーでの一定の遅延と運用の少なさを優先するなら DynamoDB です。既存の MongoDB からの移行は DocumentDB を選びます。
 
 ## Amazon Keyspaces {#keyspaces}
+
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 Apache Cassandra 互換のサーバーレスなデータベースです。既存の CQL、ドライバーのコードをそのまま使えます。
 
@@ -168,6 +176,8 @@ Apache Cassandra 互換のサーバーレスなデータベースです。既存
 
 ## Amazon MemoryDB {#memorydb}
 
+[:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
+
 耐久性のあるインメモリデータベースです。Valkey と Redis OSS に互換です。キャッシュではなく**主データベース**として使えます。
 
 読み取りはマイクロ秒、書き込みは 1 桁ミリ秒です。書き込みは Multi-AZ のトランザクションログに永続化してから応答します。
@@ -194,6 +204,8 @@ Apache Cassandra 互換のサーバーレスなデータベースです。既存
 **例**: セッション、ランキング、在庫カウンターの正本を Redis のデータ構造で持ちたい場合に、MemoryDB を選びます。RDS の前に置く読み取りキャッシュなら ElastiCache です。
 
 ## Amazon Timestream {#timestream}
+
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 時系列データ用のサービスで、2 つの異なるエンジンがあります。**試験の古い資料は LiveAnalytics を前提にしていることがあるので注意します。**
 
@@ -227,6 +239,8 @@ Apache Cassandra 互換のサーバーレスなデータベースです。既存
 | 大量の履歴を SQL で分析する | S3 と [Athena](streaming.md#athena)、または Redshift |
 
 ## Amazon RDS Custom {#rds-custom}
+
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 OS とデータベースに管理者権限でアクセスできる RDS です。パッケージアプリの要件で、独自のパッチや設定が必要なときに使います。対応エンジンは Oracle と SQL Server だけです。
 

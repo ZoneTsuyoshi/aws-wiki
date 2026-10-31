@@ -4,6 +4,8 @@
 
 全120スキルと解説の対応は[対応表](coverage.md)で確認できます。
 
+[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+
 ## 試験の概要 {#overview}
 
 | 項目 | 内容 | 出典 |

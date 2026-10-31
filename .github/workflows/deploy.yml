@@ -35,6 +35,7 @@ jobs:
         run: |
           python scripts/check_exercises.py
           python scripts/build_study_pages.py --check
+          python scripts/build_exam_badges.py --check
 
       - name: Generate diagrams
         run: for f in diagrams_src/*.py; do python "$f"; done

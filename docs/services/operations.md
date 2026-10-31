@@ -1,5 +1,7 @@
 # 運用サービス
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 EC2 フリートの管理、パッチ、自動修復、監視の周辺サービスをまとめたページです。SOA-C03、DOP-C02、SAP-C03 で問われる運用の設定を中心に扱います。
 
 CloudWatch の基本は [オブザーバビリティ](observability.md)、Auto Scaling の基本は [EC2 と Beanstalk](ec2-beanstalk.md)、StackSets の基本は [IaC と CLI](iac.md)、Parameter Store は [シークレットと設定](secrets.md) を参照してください。ここでは重複を避け、運用の視点を足します。
@@ -35,6 +37,8 @@ CloudWatch の基本は [オブザーバビリティ](observability.md)、Auto S
 DevOps Guru の終了日は、サービスのガイドでは 2027 年 9 月 30 日、AWS General Reference の一覧では 2027 年 9 月 29 日です。
 
 ## AWS Systems Manager {#systems-manager}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 EC2、オンプレミス、他クラウドのノードをまとめて運用するサービスです。多くの機能は、ノードが「マネージドノード」になっていることが前提です。
 
@@ -394,6 +398,8 @@ aws ssm create-maintenance-window \
 
 ## EC2 の運用 {#ec2-operations}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 インスタンスプロファイル、IMDS、ユーザーデータ、インスタンスタイプは [EC2 と Beanstalk](ec2-beanstalk.md) にあります。
 
 ### AMI の管理 {#amis}
@@ -432,6 +438,8 @@ aws ssm get-parameter \
 CloudFormation では、パラメータの型を `AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>` にすると解決できます。
 
 ### EC2 Image Builder {#image-builder}
+
+[:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 AMI とコンテナイメージの作成、テスト、配布を自動化します。自作の Packer やスクリプトの保守を減らせます。
 
@@ -604,6 +612,8 @@ curl -H "X-aws-ec2-metadata-token: $TOKEN" \
 **設定を誤ったときの症状:** ルートボリュームが暗号化されていないと、起動の検証で失敗します。後から休止したくなっても有効にできないので、起動し直します。
 
 ## EC2 Auto Scaling の運用 {#auto-scaling}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
 
 容量、クールダウン、ウォームアップ、ヘルスチェックの基本は [EC2 Auto Scaling](ec2-beanstalk.md#auto-scaling) を参照してください。ここでは DOP-C02 の深さで、更新と自動化の設定を扱います。
 
@@ -999,6 +1009,8 @@ sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
 
 ## CloudWatch Synthetics {#synthetics}
 
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 スケジュールで動くスクリプト（カナリア）で、エンドポイントや API を外から確認します。実際のユーザーのアクセスがない時間帯でも問題に気づけます。
 
 カナリアはアカウント内に Lambda 関数として作られ、Node.js、Python、Java で書きます。ブラウザの操作には Playwright、Puppeteer、Selenium を使えます。
@@ -1037,6 +1049,8 @@ sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
 
 ## Amazon DevOps Guru {#devops-guru}
 
+[:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
+
 !!! warning "新規受付は終了しています"
     2026 年 10 月 29 日で新規顧客の受付を終了し、2027 年 9 月 30 日にサポートを終了します。AWS は CloudWatch と AWS DevOps Agent への移行を案内しています。
 
@@ -1051,6 +1065,8 @@ sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
 
 ## AWS DevOps Agent {#devops-agent}
 
+[:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate }
+
 インシデントの調査とリリースの確認を行う AI エージェントです。SOA-C03 のスキルで、修復の自動化の例として名前が挙がっています。
 
 - アラートやサポートチケットを受けて調査を始め、テレメトリ、コード、デプロイの情報を関連付けて根本原因を探します。
@@ -1060,6 +1076,8 @@ sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
 概要は [AI サービス](ai.md) にもあります。
 
 ## Amazon Managed Grafana {#managed-grafana}
+
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 Grafana のサーバーをマネージドで動かします。ワークスペースという単位で作ります。
 
@@ -1073,6 +1091,8 @@ Grafana のサーバーをマネージドで動かします。ワークスペー
 **症状:** ワークスペースに入れないなら、IdP か Identity Center のユーザーに権限を割り当てたか確認します。
 
 ## Amazon Managed Service for Prometheus {#managed-prometheus}
+
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 Prometheus 互換のメトリクスを保存し、PromQL で検索するサーバーレスのサービスです。
 
@@ -1090,6 +1110,8 @@ Prometheus 互換のメトリクスを保存し、PromQL で検索するサー�
 
 ## Amazon Q Developer in chat applications {#q-chat}
 
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 **旧称は AWS Chatbot です。** 2025 年 2 月 19 日に名称が変わりました。機能、料金、設定は同じです。
 
 CloudFormation のリソース名、IAM のアクション、サービスプリンシパル、エンドポイントには `chatbot` が残っています。
@@ -1103,6 +1125,8 @@ CloudFormation のリソース名、IAM のアクション、サービスプリ�
 **例:** CloudWatch アラームを SNS に送り、Q Developer in chat applications の設定で Slack のチャネルを購読させます。
 
 ## AWS User Notifications {#user-notifications}
+
+[:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 AWS の通知を一か所で管理します。
 
@@ -1203,6 +1227,8 @@ flowchart TD
 
 ## AWS OpsWorks の状況 {#opsworks}
 
+[:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
+
 !!! warning "提供を終了しています"
     OpsWorks Stacks、OpsWorks for Chef Automate、OpsWorks for Puppet Enterprise は、いずれも 2024 年 5 月 1 日に完全に終了しました。
 
@@ -1212,6 +1238,8 @@ Chef や Puppet による構成管理のサービスでした。DOP-C02 の範�
 
 ## AWS Device Farm {#device-farm}
 
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
 実機のスマートフォンとタブレットで、Android、iOS、Web のアプリをテストするサービスです。SAP-C03 では範囲外です。
 
 - **`us-west-2`（オレゴン）だけ** で提供されます。
@@ -1219,6 +1247,8 @@ Chef や Puppet による構成管理のサービスでした。DOP-C02 の範�
 - Appium のテストをローカルのクライアントから実機に対して実行できます。
 
 ## Amazon ECS Anywhere {#ecs-anywhere}
+
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate }
 
 オンプレミスのサーバーや VM を、ECS クラスターの外部インスタンスとして登録します。ECS の基本は [コンテナ](containers.md) を参照してください。
 
@@ -1236,6 +1266,8 @@ Chef や Puppet による構成管理のサービスでした。DOP-C02 の範�
 **対応 OS:** 2026 年 8 月 7 日から Amazon Linux 2、RHEL 7 と 8、Ubuntu 18 などのサポートがなくなりました。Amazon Linux 2023、Ubuntu 20 以降、RHEL 9 を使います。
 
 ## Amazon EKS Anywhere {#eks-anywhere}
+
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate }
 
 自分のデータセンターで Kubernetes クラスターを作って運用するためのソフトウェアです。
 
@@ -1259,11 +1291,15 @@ AWS との常時接続が取れるなら Hybrid Nodes、取れないなら EKS A
 
 ## Amazon EKS Distro {#eks-distro}
 
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
+
 Amazon EKS で使っている Kubernetes の構成要素の配布版です。
 
 クラスターの構築、更新、バックアップはすべて自分で行います。EKS と同じ部品を、自分の環境で使いたいときに選びます。ライフサイクル管理も欲しいなら EKS Anywhere を選びます。
 
 ## Red Hat OpenShift Service on AWS (ROSA) {#rosa}
+
+[:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 Red Hat OpenShift を AWS でマネージドで使うサービスです。既に OpenShift を使っている組織が、そのまま AWS へ移るときに選びます。
 

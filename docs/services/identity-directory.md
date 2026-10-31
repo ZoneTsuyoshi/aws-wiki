@@ -1,5 +1,7 @@
 # ID とディレクトリ
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty .exam-badge--related }
+
 従業員の ID、Active Directory、ハードウェアの鍵管理、アプリの認可、ゼロトラストのアクセスをまとめたページです。IAM の基本は [IAM と STS](iam.md)、顧客向けの認証は [Cognito](cognito.md)、KMS は [KMS](kms.md) を参照してください。
 
 [![IAM Identity Center の ID ソースとアカウントへのアクセス](../assets/diagrams/identity-directory-sources.png)](../assets/diagrams/identity-directory-sources.png)
@@ -18,6 +20,8 @@
     - **CloudHSM の `hsm1.medium`** は 2026 年 3 月 31 日でサポートが終了しました。2025 年 4 月から新規に作れず、2026 年 1 月から `hsm2m.medium` への自動移行が始まっています。
 
 ## IAM Identity Center {#identity-center}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 従業員の ID を 1 か所でつなぎ、複数の AWS アカウントとアプリへの SSO を提供します。長期のアクセスキーなしで CLI や SDK も使えます。
 
@@ -174,6 +178,8 @@ Identity Center 自体の障害に備えるには、IdP から各アカウント
 
 ## Directory Service {#directory-service}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 AWS で Active Directory を使うための選択肢です。
 
 | 観点 | Managed Microsoft AD | AD Connector | Simple AD |
@@ -257,6 +263,8 @@ Samba 4 の簡易ディレクトリです。ユーザー、グループ、グル
 | 細かいパスワードポリシー | OU やグループごとのポリシー | 特権ユーザーだけ厳しくする |
 
 ## CloudHSM {#cloudhsm}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 FIPS 検証済みの **単一テナントの HSM** を VPC で使えるサービスです。鍵とユーザーは利用者が管理し、AWS は鍵を見られません。
 
@@ -346,6 +354,8 @@ KMS の API や AWS サービスとの統合を保ったまま、鍵の素材を
 
 ## Verified Permissions {#verified-permissions}
 
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 自作アプリの **認可を外部に切り出す** サービスです。Cedar でポリシーを書き、アプリは「この主体はこの操作をしてよいか」を問い合わせます。認証は Cognito や OIDC の IdP が担います。
 
 ```text
@@ -386,6 +396,8 @@ aws verifiedpermissions is-authorized \
 API Gateway では、Lambda オーソライザーから呼ぶ構成が AWS のブログで紹介されています。
 
 ## Verified Access {#verified-access}
+
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 VPN なしで社内アプリへアクセスさせるサービスです。リクエストごとに、ユーザーと端末の信頼データをポリシーで評価します。
 
@@ -430,6 +442,8 @@ when {
 Client VPN との違いです。VPN はネットワーク全体に入るのに対し、Verified Access はアプリ単位でリクエストごとに判断します。ネットワークの経路を減らせるので、不要なネットワークアクセスの削減につながります。
 
 ## IAM Access Analyzer {#access-analyzer}
+
+[:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 意図しないアクセスを見つけ、ポリシーを検証するツールです。基本は [IAM のページ](iam.md#access-analyzer) にあります。
 

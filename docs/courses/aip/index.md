@@ -4,6 +4,8 @@
 
 モデルの開発や学習は問われません。与えられた制約の中で、AWS のサービスをどう組み合わせるかが中心です。
 
+[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+
 ## 試験の概要 {#overview}
 
 | 項目 | 内容 |

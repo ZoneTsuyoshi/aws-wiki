@@ -1,5 +1,7 @@
 # クラウドの基礎
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIB](../courses/aib/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 AWS を使う前提になる考え方と、設計の指針、インフラの構造、サポートの仕組みをまとめます。Cloud Practitioner の中心範囲で、上位の試験でも前提知識になります。
 
 | 知りたいこと | 見るもの |
@@ -83,6 +85,8 @@ AWS 上のシステムを評価するための設計指針です。6 つの柱�
 
 ### Well-Architected Tool {#wa-tool}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 ワークロードを質問形式でレビューするコンソールのツールです。追加料金はかかりません。
 
 | 要素 | 内容 |
@@ -99,6 +103,8 @@ AWS 上のシステムを評価するための設計指針です。6 つの柱�
 AWS Well-Architected Agent というエージェント機能もありますが、2026 年 10 月時点でプレビューです。
 
 ## Cloud Adoption Framework {#caf}
+
+[:material-sprout: AIB](../courses/aib/services.md){ .exam-badge .exam-foundational }
 
 AWS CAF は、組織がクラウドに移行するための準備を整理した枠組みです。技術だけでなく、人や統治も扱います。
 
@@ -130,6 +136,8 @@ Cloud Practitioner の試験ガイドは、CAF で得られる成果の例とし
 - 運用効率の向上
 
 ## 責任共有モデル {#shared-responsibility}
+
+[:material-sprout: AIB](../courses/aib/services.md){ .exam-badge .exam-foundational }
 
 セキュリティとコンプライアンスは、AWS と利用者で分担します。AWS は「クラウドのセキュリティ」、利用者は「クラウドの中のセキュリティ」を担当します。
 
@@ -203,17 +211,23 @@ AZ 名（`ap-northeast-1a` など）は、古いリージョンの一部で、20
 
 ### Local Zones {#local-zones}
 
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
 リージョンを大都市の近くに拡張する場所です。リアルタイムのゲーム、ライブ配信、AR/VR、仮想ワークステーションのほか、データの所在地の要件にも使います。
 
 オプトインしてから、親リージョンの VPC に Local Zone を指定したサブネットを作ります。
 
 ### Wavelength {#wavelength}
 
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 通信事業者のネットワークのエッジに、AWS のコンピューティングとストレージを置きます。VPC を Wavelength Zone に拡張し、キャリアゲートウェイで通信事業者のネットワークにつなぎます。
 
 5G 端末向けに低遅延を求める場合に選びます。作成や管理には親リージョンを使います。
 
 ### Outposts {#outposts}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 AWS が管理する機器を自社の施設に置き、リージョンと同じ API やツールを使えるサービスです。EC2、EBS、ECS、RDS などを Outpost のサブネットに作れます。
 
@@ -231,6 +245,8 @@ Local Zones との違いは、機器の置き場所です。Local Zones は AWS 
 CloudFront のキャッシュや Route 53 の応答などに使う拠点です。リージョンや AZ とは別の場所にあり、利用者に近い場所で処理して遅延を減らします。利用者が個別に配置するものではありません。
 
 ## AWS Support プラン {#support-plans}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational }
 
 プランの構成が変わっています。古い教材の Developer、Business、Enterprise On-Ramp は **2027 年 1 月 1 日に終了** します（AWS GovCloud (US) では継続）。Enterprise On-Ramp の利用者は Enterprise へ順次自動で移行します。
 
@@ -267,6 +283,8 @@ CloudFront のキャッシュや Route 53 の応答などに使う拠点です�
 
 ## Trusted Advisor {#trusted-advisor}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 環境を点検し、費用の節約、可用性と性能の改善、セキュリティの弱点に関する推奨を出すサービスです。
 
 | カテゴリ | 例 |
@@ -302,6 +320,8 @@ Trusted Advisor は助言するサービスで、自動では修正しません�
 
 ## AWS Health Dashboard {#health}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
+
 AWS のサービス障害や予定されたメンテナンスが自分にどう影響するかを示します。
 
 | 機能 | 対象 | 必要なプラン |
@@ -318,6 +338,8 @@ AWS のサービス障害や予定されたメンテナンスが自分にどう�
 
 ## AWS Artifact {#artifact}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 AWS のセキュリティとコンプライアンスの文書をオンデマンドでダウンロードするサービスです。
 
 | 機能 | 内容 |
@@ -333,6 +355,8 @@ AWS のセキュリティとコンプライアンスの文書をオンデマン�
 
 ## AWS Marketplace {#marketplace}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIB](../courses/aib/services.md){ .exam-badge .exam-foundational }
+
 サードパーティのソフトウェア、データ、サービスを探して購入し、デプロイできるカタログです。
 
 | 項目 | 内容 |
@@ -347,6 +371,8 @@ AWS のセキュリティとコンプライアンスの文書をオンデマン�
 
 ## マネジメントコンソールとアクセス方法 {#access-methods}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
+
 | 方法 | 向いている場面 | 認証 |
 | --- | --- | --- |
 | マネジメントコンソール | 手作業の確認、一度きりの操作 | パスワードと MFA、Identity Center |
@@ -360,6 +386,8 @@ AWS のセキュリティとコンプライアンスの文書をオンデマン�
 ルートユーザーは日常の作業に使いません。MFA を設定し、アクセスキーを作らないようにします。詳細は [IAM](iam.md) を参照してください。
 
 ## Amazon Lightsail {#lightsail}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 Web サイトや Web アプリを簡単に始めるためのサービスです。インスタンス、コンテナ、マネージドデータベース、ロードバランサー、コンテンツ配信をまとめて提供します。
 

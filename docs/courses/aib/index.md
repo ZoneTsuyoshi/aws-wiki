@@ -20,6 +20,8 @@ AI の能力を事業の成果につなげ、責任ある形で全社に広げ�
 
     条件は変わることがあります。予約の前に[公式ページ](https://aws.amazon.com/certification/certified-ai-business-strategist/)と[ベータ試験の方針](https://aws.amazon.com/certification/policies/before-testing/)を確認してください。
 
+[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+
 ## 試験の概要 {#overview}
 
 | 項目 | 内容 | 出典 |

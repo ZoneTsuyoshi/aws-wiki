@@ -13,6 +13,8 @@ AWS Well-Architected Framework に基づいて、ソリューションを設計�
 
     **イタリア語の試験は 2026年12月31日を最後に終了します。** 公式ページに、SAA-C03 に代わる新しい版の案内は確認できませんでした。受験前に公式ページを確認してください。
 
+[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+
 ## 試験の概要 {#overview}
 
 | 項目 | 内容 |

@@ -1,5 +1,7 @@
 # Amazon DynamoDB
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 フルマネージドのキーバリュー型 NoSQL データベースです。アクセスパターンが決まっていて、規模が変わっても一定の低レイテンシで読み書きしたいときに使います。
 
 [![DynamoDBの読み書きと周辺機能](../assets/diagrams/dynamodb-read-write.png)](../assets/diagrams/dynamodb-read-write.png)
@@ -669,6 +671,8 @@ resp = table.query(
 
 ## DynamoDB Streams {#streams}
 
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 項目の変更を時系列で記録します。テーブルの性能には影響しません。
 
 | 特性 | 内容 |
@@ -712,6 +716,8 @@ aws dynamodb update-table --table-name Orders \
 **落とし穴**: 処理の遅れが 24 時間を超えるとレコードは失われます。Streams の有効化はテーブルの性能に影響しません。
 
 ## DAX {#dax}
+
+[:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate }
 
 DynamoDB 専用のインメモリキャッシュで、VPC 内で動きます。アプリケーションは DAX クライアントに切り替えるだけで、ほぼ同じ API で使えます。
 

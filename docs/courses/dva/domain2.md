@@ -4,6 +4,8 @@ C03 の配点は **26%** です。認証と認可、暗号化と機密データ�
 
 サービスごとに順を追って学ぶときは、[サービス別の学習ページ](study/domain2/index.md)から始めます。
 
+この分野に限らず、コース全体で使うサービスは[サービス一覧](services.md)から確認できます。
+
 ## タスク 2.1: 認証と認可を実装する {#task-2-1}
 
 [![Cognito のユーザープールと ID プール](../../assets/diagrams/cognito-pools.png)](../../assets/diagrams/cognito-pools.png)

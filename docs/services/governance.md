@@ -1,5 +1,7 @@
 # ガバナンス
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 複数の AWS アカウントを、まとめて管理して統制するためのサービスです。組織の構造を作る Organizations、環境を整える Control Tower、設定を監査する Config を中心に扱います。
 
 [![マルチアカウント構成の例](../assets/diagrams/governance-multi-account.png)](../assets/diagrams/governance-multi-account.png)
@@ -15,6 +17,8 @@
 | [Resource Groups と Tag Editor](#resource-groups) | タグでリソースをまとめて操作 | 整理 |
 
 ## AWS Organizations {#organizations}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 複数のアカウントを 1 つの組織にまとめるサービスです。追加料金はかかりません。
 
@@ -53,6 +57,8 @@ SCP を使おうとして使えない場合は、`aws organizations describe-org
 SCP の値は、古い教材の「5 個、5,120 文字」から増えています。
 
 ### SCP {#scp}
+
+[:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate }
 
 組織内の IAM ユーザーとロールが使える権限の上限を決めるポリシーです。権限は与えません。実際に使うには、IAM ポリシーなどでの許可も必要です。
 
@@ -176,6 +182,8 @@ SCP と権限境界の違いは [IAM](iam.md#boundaries-scp) を参照してく�
 
 ## AWS Control Tower {#control-tower}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 ベストプラクティスに沿ったマルチアカウント環境を構築し、統制するサービスです。Organizations、Service Catalog、IAM Identity Center などを組み合わせて動かします。
 
 | 要素 | 内容 |
@@ -228,6 +236,8 @@ Control Tower の外で OU やアカウント、SCP を変更すると、ドリ�
 | 同時に進められるコントロール操作 | 100 |
 
 ## AWS Config {#config}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 リソースの設定の履歴を記録し、ルールに合っているかを評価するサービスです。「いつ、どう設定が変わったか」と「今の設定が基準に合っているか」に答えます。
 
@@ -346,6 +356,8 @@ CloudTrail の設定は [オブザーバビリティ](observability.md#cloudtrai
 
 ## AWS Service Catalog {#service-catalog}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 組織が承認した構成をカタログにし、利用者がセルフサービスで作成できるようにするサービスです。
 
 | 要素 | 内容 |
@@ -370,6 +382,8 @@ CloudTrail の設定は [オブザーバビリティ](observability.md#cloudtrai
 共有は、アカウント間または Organizations で行えます。参照の共有なら元の更新が反映されます。コピーを配布するなら、CloudFormation で展開します。
 
 ## AWS Resource Access Manager {#ram}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 リソースをコピーせず、他のアカウントと共有するサービスです。追加料金はかかりません。
 
@@ -405,6 +419,8 @@ CloudTrail の設定は [オブザーバビリティ](observability.md#cloudtrai
 VPC ピアリングや Transit Gateway との使い分けは [ネットワーク接続](network-connectivity.md) を参照してください。
 
 ## AWS License Manager {#license-manager}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 Microsoft、SAP、Oracle、IBM などのソフトウェアライセンスを、アカウントやリージョンをまたいで管理するサービスです。
 
@@ -451,6 +467,8 @@ Tag Editor を使うと、複数のリソースをリージョンをまたいで
 | 費用への反映 | [コスト配分タグ](cost-management.md#cost-allocation-tags)の有効化 |
 
 ## AWS Proton の状況 {#proton}
+
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 **AWS Proton は、公式の告知では 2026 年 10 月 7 日でサポート終了です。** この日以降はコンソールとリソースにアクセスできません。デプロイ済みのインフラはそのまま残ります。
 

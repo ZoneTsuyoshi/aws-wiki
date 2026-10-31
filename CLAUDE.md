@@ -24,6 +24,8 @@ AWS の構成や運用をまとめる wiki。`docs/` の md を MkDocs Material 
 
 問題集は `docs/courses/<試験>/exercises/` に置き、形式を `scripts/check_exercises.py` で検査する。問題はオリジナルで書き、正解は公式ドキュメントで確認する。過去問やダンプは使わない。各スキルに最低3問そろえる。
 
+サービス解説の試験バッジ（`{ .exam-badge` の行）と `docs/courses/<試験>/services.md` は手で書かない。サービスや見出しを増やしたら `data/service_pages.json` を更新して `python3 scripts/build_exam_badges.py` を実行する。試験ガイドが改訂されたら `data/exam_services.json` も更新する。
+
 `docs/courses/<試験>/study/domainN/` は分野とサービスの組み合わせごとの学習ページで、事実は `docs/services/` の内容に合わせる。問題の一覧は手で書かず、問題を追加したら `python3 scripts/build_study_pages.py` を実行して更新する。
 
 ## 技術的な質問への対応

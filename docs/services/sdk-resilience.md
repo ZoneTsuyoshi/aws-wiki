@@ -1,5 +1,7 @@
 # SDK と耐障害性
 
+[:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate .exam-badge--related } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate .exam-badge--related } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate .exam-badge--related } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional .exam-badge--related }
+
 AWS SDK でサービスを呼ぶコードの書き方と、失敗しても動き続けるアプリケーションの作り方をまとめる。リトライ、タイムアウト、冪等性、アーキテクチャの選び方、シリアライズ、単体テストを扱う。
 
 [![疎結合なイベント駆動マイクロサービス](../assets/diagrams/sdk-resilience-event-driven.png)](../assets/diagrams/sdk-resilience-event-driven.png)

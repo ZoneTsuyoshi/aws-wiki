@@ -6,6 +6,8 @@ MLA-C02 の配点は **28%** で、4分野の中で最大です。従来の ML �
 
 [![データの取り込み、カタログ、変換、分析の流れ](../../assets/diagrams/data-engineering-pipeline.png)](../../assets/diagrams/data-engineering-pipeline.png)
 
+この分野に限らず、コース全体で使うサービスは[サービス一覧](services.md)から確認できます。
+
 ## タスク 1.1: データを収集して保存する {#task-1-1}
 
 ### 1.1.1 データソースからの抽出 {#skill-1-1-1}

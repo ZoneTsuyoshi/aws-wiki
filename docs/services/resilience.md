@@ -1,5 +1,7 @@
 # 耐障害性と DR
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty .exam-badge--related }
+
 障害が起きても業務を続け、許容する時間とデータ損失の範囲で復旧するための設計とサービスをまとめます。出発点は RTO と RPO で、これが戦略、構成、費用を決めます。
 
 [![ウォームスタンバイの構成](../assets/diagrams/resilience-warm-standby.png)](../assets/diagrams/resilience-warm-standby.png)
@@ -120,6 +122,8 @@ flowchart TD
 | 事前に容量を確保 | 操作なし | スケールに頼らない |
 
 ## AWS Backup {#backup}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 複数のサービスのバックアップを一元管理します。対象は EBS、EC2、RDS、Aurora、DynamoDB、EFS、FSx、Storage Gateway のボリューム、S3 などです。リージョンごとに対象のサービスをオプトインします。
 
@@ -272,6 +276,8 @@ aws backup put-backup-vault-lock-configuration \
 
 ## AWS Elastic Disaster Recovery(DRS) {#drs}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
+
 オンプレミスや他のクラウドのサーバー、別リージョンの EC2 を、ブロック単位で継続的に AWS へ複製します。**サーバー単位のパイロットライト**として使います。データベースのエンジンに依存しません。
 
 | 指標 | 値 |
@@ -306,6 +312,8 @@ sequenceDiagram
 
 ## AWS Resilience Hub {#resilience-hub}
 
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 アプリが目標の RTO、RPO を満たせるか評価し、改善を提案します。
 
 | 概念 | 内容 |
@@ -332,6 +340,8 @@ sequenceDiagram
 **落とし穴**: RTO、RPO を 0 と指定できますが、評価の最小はほぼ 0 です。0 のままだと常に違反になることがあります。
 
 ## Amazon Application Recovery Controller(ARC) {#arc}
+
+[:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 トラフィックを AZ やリージョンから移す機能の集まりです。
 
@@ -383,6 +393,8 @@ DNS のフェイルオーバーを、オン/オフのスイッチで操作しま
 - 手動のほか、CloudWatch アラームでも開始できます。
 
 ## AWS Fault Injection Service(FIS) {#fis}
+
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 本物の AWS リソースに本物の障害を起こして、カオスエンジニアリングを行います。本番の前に検証環境で試し、計画を立てます。
 

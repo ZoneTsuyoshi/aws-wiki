@@ -1,10 +1,14 @@
 # 高度なストレージ(FSx、インスタンスストア、S3 の設計)
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 FSx は、Windows、Lustre、NetApp ONTAP、OpenZFS のファイルシステムをマネージドで提供します。既存のプロトコルや機能が必要なときに選びます。あわせて、インスタンスストアと、アーキテクト向けの S3 の機能をまとめます。
 
 [![FSx の 4 種類と接続](../assets/diagrams/storage-advanced-fsx.png)](../assets/diagrams/storage-advanced-fsx.png)
 
 ## FSx の選び方 {#fsx-selection}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 | 観点 | [Windows File Server](#fsx-windows) | [Lustre](#fsx-lustre) | [NetApp ONTAP](#fsx-ontap) | [OpenZFS](#fsx-openzfs) |
 | --- | --- | --- | --- | --- |
@@ -78,6 +82,8 @@ EBS、EFS の設定は [ストレージの選び方](storage.md)、S3 は [S3](s
 
 ## FSx for Windows File Server {#fsx-windows}
 
+[:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
+
 Windows Server で動くマネージドのファイルサーバーです。既存の Windows アプリを変更せずに移せます。
 
 ### 主な設定 {#fsx-windows-settings}
@@ -136,6 +142,8 @@ aws fsx create-file-system --file-system-type WINDOWS \
 **落とし穴**: 通信は TCP 445 です。セキュリティグループと、AD へのポートを許可します。オンプレミスからは Direct Connect か VPN で接続します。
 
 ## FSx for Lustre {#fsx-lustre}
+
+[:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 高速な並列ファイルシステムです。HPC、機械学習、動画処理、金融モデルに使います。POSIX 準拠で、Linux のみです。
 
@@ -200,6 +208,8 @@ EC2、ECS(EC2 上)、EKS(CSI ドライバー)で接続します。同じ VPC の
 
 ## FSx for NetApp ONTAP {#fsx-ontap}
 
+[:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
+
 NetApp の ONTAP を使うマネージドのファイルシステムです。複数のプロトコルで同じデータを見せられ、NetApp の運用をそのまま使えます。
 
 ### デプロイタイプ {#fsx-ontap-deployment}
@@ -262,6 +272,8 @@ aws fsx create-volume --volume-type ONTAP --name data \
 **例**: オンプレミスの NetApp があるなら、SnapMirror でそのまま AWS へ複製し、切り替えられます。
 
 ## FSx for OpenZFS {#fsx-openzfs}
+
+[:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 ZFS や Linux のファイルサーバーをアプリの変更なしで移せます。NFS でアクセスし、スナップショットとクローンが高速です。
 

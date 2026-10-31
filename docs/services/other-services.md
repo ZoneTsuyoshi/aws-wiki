@@ -1,5 +1,7 @@
 # その他のサービス
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 試験の範囲リストにあるものの、専用のページを作るほどではないサービスを短くまとめました。提供が終わったものも、古い教材や範囲リストに名前が残っているので状況を記載します。
 
 ## 提供状況の一覧 {#status}
@@ -45,6 +47,8 @@
 
 ### AWS Batch {#batch}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
+
 コンテナのバッチジョブを、必要な量の容量を用意して順に実行します。ジョブの定義、キュー、コンピューティング環境を用意すれば、スケジューラーとインフラの管理は任せられます。
 
 - EC2、Fargate、ECS Managed Instances で動き、ECS または EKS 上で実行します。
@@ -64,6 +68,8 @@
 SAP-C03 では範囲外です。
 
 ### AWS App Runner {#app-runner}
+
+[:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 コンテナやソースコードを、インフラを意識せずに Web アプリとして動かすサービスです。
 
@@ -119,6 +125,8 @@ Microsoft、SAP、Oracle、IBM などのソフトウェアライセンスを、�
 
 ### AWS AppSync {#appsync}
 
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 GraphQL API と Pub/Sub API をサーバーレスで作るサービスです。
 
 | 項目 | 内容 |
@@ -132,6 +140,8 @@ GraphQL API と Pub/Sub API をサーバーレスで作るサービスです。
 **選び方:** クライアントが必要なフィールドだけを取得する、複数のデータソースを 1 つの API にまとめる、リアルタイムの更新を届けるなら AppSync を選びます。REST なら [API Gateway](api-gateway.md) です。
 
 ### Amazon SES {#ses}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate }
 
 メールの送受信サービスです。SOA-C03、SAP、CLF の範囲に入ります。
 
@@ -160,6 +170,8 @@ GraphQL API と Pub/Sub API をサーバーレスで作るサービスです。
 
 ### Amazon MQ {#mq}
 
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
 Apache ActiveMQ Classic と RabbitMQ のマネージドブローカーです。
 
 | エンジン | デプロイ | ストレージ |
@@ -171,6 +183,8 @@ Apache ActiveMQ Classic と RabbitMQ のマネージドブローカーです。
 
 ### Amazon Connect {#connect}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 クラウドのコンタクトセンターです。現在の製品名は **Amazon Connect Customer** で、Amazon Connect は複数の業務向け AI ソリューションの総称になりました。
 
 電話やチャットのルーティング、エージェントの画面、性能の追跡を提供します。自前の設備なしでコールセンターを作るときに選びます。
@@ -180,6 +194,8 @@ Apache ActiveMQ Classic と RabbitMQ のマネージドブローカーです。
 [![AWS IoT サービスの役割](../assets/diagrams/other-services-iot.png)](../assets/diagrams/other-services-iot.png)
 
 ### AWS IoT Core {#iot-core}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 デバイスと AWS を接続するメッセージブローカーです。
 
@@ -245,6 +261,8 @@ Fleet Hub は 2025 年 10 月 18 日に終了しました。
 
 ### Amazon WorkSpaces {#workspaces}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational }
+
 クラウドの仮想デスクトップです。Windows、Ubuntu、Rocky Linux、RHEL を使えます。
 
 | 種類 | 特徴 | 状況 |
@@ -261,11 +279,15 @@ Fleet Hub は 2025 年 10 月 18 日に終了しました。
 
 ### Amazon WorkSpaces Secure Browser {#secure-browser}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational }
+
 社内の Web アプリや SaaS に、管理されたブラウザから安全にアクセスするサービスです。
 
 **メンテナンスに移行しました（公表は 2026 年 9 月 29 日）。** 新しい顧客は使えません。
 
 ### Amazon WorkSpaces Applications（旧 AppStream 2.0） {#appstream}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational }
 
 デスクトップアプリを、ブラウザやクライアントへストリーミングします。**旧称は Amazon AppStream 2.0** です。
 
@@ -281,6 +303,8 @@ Fleet Hub は 2025 年 10 月 18 日に終了しました。
 
 ### Amazon Kinesis Video Streams {#kinesis-video}
 
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
+
 カメラなどの動画を AWS へ送り、保存して処理します。
 
 - 指定の保持期間で保存し、保存時に暗号化します。
@@ -290,6 +314,8 @@ Fleet Hub は 2025 年 10 月 18 日に終了しました。
 **選び方:** 動画のストリームなら Kinesis Video Streams、ログやイベントのレコードなら [Kinesis Data Streams](streaming.md) です。
 
 ### Amazon Interactive Video Service {#ivs}
+
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 インタラクティブなライブ配信のマネージドサービスです。
 
@@ -303,11 +329,15 @@ Fleet Hub は 2025 年 10 月 18 日に終了しました。
 
 ### AWS Elemental MediaConvert {#mediaconvert}
 
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
 ファイルベースの動画変換サービスです。保存された動画を、再生機器に合わせた形式へ変換します。放送品質のコーデックや HDR にも対応します。
 
 S3 に動画が届いたらジョブを実行する構成が定番です。
 
 ### AWS Elemental MediaLive {#medialive}
+
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 ライブ動画のリアルタイム変換サービスです。放送やストリーミング向けの出力を作ります。
 
@@ -329,11 +359,15 @@ Timestream for LiveAnalytics はメンテナンスに移行しました（公表
 
 ### Amazon Managed Blockchain {#managed-blockchain}
 
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
 パブリックの Ethereum と Bitcoin のノード、プライベートの Hyperledger Fabric のネットワークを提供します。
 
 **2026 年 10 月 29 日で新規受付を終了し、2027 年 9 月 29 日にサポートが終了します。** SAP-C03 では範囲外です。
 
 ### Amazon GameLift Servers {#gamelift}
+
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 セッション型のマルチプレイヤーゲームの専用サーバーを、デプロイ、運用、スケーリングします。旧称は Amazon GameLift です。
 
@@ -341,11 +375,15 @@ Timestream for LiveAnalytics はメンテナンスに移行しました（公表
 
 ### Amazon Braket {#braket}
 
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
 量子コンピューティングのマネージドサービスです。量子ハードウェアにアクセスし、アルゴリズムを試せます。
 
 自前のハードウェアなしで量子コンピューティングを評価するときに選びます。
 
 ### AWS Ground Station {#ground-station}
+
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 衛星との通信のためのアンテナをマネージドで提供します。
 
@@ -356,9 +394,13 @@ Timestream for LiveAnalytics はメンテナンスに移行しました（公表
 
 ### AWS DeepComposer {#deepcomposer}
 
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
 生成 AI で作曲を学ぶサービスでした。**2025 年 9 月 17 日に完全に終了しました。**
 
 ### AWS DeepRacer {#deepracer}
+
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 強化学習を自動運転のレースで学ぶサービスでした。
 

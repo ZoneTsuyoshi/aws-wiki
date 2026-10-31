@@ -15,6 +15,8 @@ AWS 上で ML と生成 AI のソリューションを構築、運用、監視�
 
     C01 で受ける人は[C01 で受ける場合](#c01)を先に読んでください。
 
+[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+
 ## 試験の概要 {#overview}
 
 | 項目 | MLA-C02 ベータ | MLA-C01 |

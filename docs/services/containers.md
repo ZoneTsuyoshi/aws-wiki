@@ -1,5 +1,7 @@
 # コンテナ(ECR、ECS、EKS)
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 コンテナイメージを ECR に保存し、ECS か EKS で動かします。AWS のサービスと簡単に連携したいなら ECS、Kubernetes の API やエコシステムが必要なら EKS を選びます。
 
 [![ECSタスクと2つのロールの役割](../assets/diagrams/containers-ecs-flow.png)](../assets/diagrams/containers-ecs-flow.png)
@@ -63,6 +65,8 @@ ECS のタスク定義では、`entryPoint` が `ENTRYPOINT` を、`command` が
 **落とし穴**: `RUN pip install` の前に `COPY . .` を書くと、ソースを 1 行変えるだけで依存関係を入れ直します。シークレットを `ENV` や `ARG` に入れるとイメージの履歴に残ります。
 
 ## ECR {#ecr}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
 
 ### 認証とプッシュ、プル {#ecr-auth}
 
@@ -227,6 +231,8 @@ aws ecr put-replication-configuration --replication-configuration '{
 
 ## ECS {#ecs}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
+
 | 用語 | 意味 |
 | --- | --- |
 | クラスター | タスクを動かす論理的なグループ |
@@ -379,6 +385,8 @@ Docker 20.10 以降は最低 6 MiB を予約するので、これ未満は指定
 タスクロールを指定すると、SDK はタスクロールの認証情報だけを使い、EC2 のインスタンスプロファイルの権限は引き継ぎません。EC2 で動かす場合はタスク間の分離がないので、厳しい分離が必要なら Fargate を使います。
 
 ### Fargate と EC2 {#fargate-vs-ec2}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
 
 | 観点 | Fargate | EC2 |
 | --- | --- | --- |
@@ -581,6 +589,8 @@ flowchart TD
 
 ## EKS {#eks}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 マネージドの Kubernetes です。アプリはマニフェストで宣言します。
 
 ### マニフェストとローリング更新 {#eks-manifests}
@@ -746,6 +756,8 @@ metadata:
 **IRSA の信頼ポリシーの落とし穴**: `sub` の条件にある名前空間と ServiceAccount 名が Pod のものと違うと、`AccessDenied`(`sts:AssumeRoleWithWebIdentity`)になります。Pod Identity の信頼ポリシーでは、プリンシパルを `pods.eks.amazonaws.com`、アクションを `sts:AssumeRole` と `sts:TagSession` にします。Pod Identity は Linux の EC2 ノードの Pod で使えます。Fargate と Windows の Pod は対象外です。
 
 ## AWS Copilot について {#copilot}
+
+[:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 !!! warning "AWS Copilot CLI はサポートが終了しています"
     AWS Copilot CLI は **2026 年 6 月 12 日にサポートが終了** しました。以降は新機能、セキュリティ更新、技術サポートがありません。既存のデプロイは動き続けますが、保守はされません。AWS は移行先として Amazon ECS Express Mode と AWS CDK を挙げています。

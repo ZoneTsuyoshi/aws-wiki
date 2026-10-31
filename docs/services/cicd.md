@@ -1,5 +1,7 @@
 # CI/CD（CodeBuild / CodeDeploy / CodePipeline）
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate .exam-badge--related }
+
 コードの変更をビルド、テスト、デプロイまで自動で進める AWS の開発者ツール群です。リリースを繰り返し安全に行いたいときに、パイプライン、デプロイ戦略、ロールバックを組み合わせて使います。
 
 [![CI/CD パイプラインの全体像](../assets/diagrams/cicd-pipeline.png)](../assets/diagrams/cicd-pipeline.png)
@@ -20,6 +22,8 @@ CloudFormation や SAM によるデプロイは [IaC](iac.md) で説明します
 
 ### デプロイ環境でコードリポジトリを使う {#repositories}
 
+[:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
+
 リポジトリを「デプロイの正」にします。手元で作った成果物ではなく、コミットから作った成果物を配布すれば、本番で動くものを必ずコミットまでたどれます。
 
 CodePipeline のソースにできる代表的なものは次のとおりです。
@@ -32,6 +36,8 @@ CodePipeline のソースにできる代表的なものは次のとおりです�
 | ECR | IAM | EventBridge ルール |
 
 ### CodeCommit の現状 {#codecommit-status}
+
+[:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 CodeCommit は 2024 年に新規受付を止めましたが、**2025 年 11 月に一般提供へ戻り、新規利用者も使えるようになりました**。「CodeCommit は新規利用できない」という古い記述は現在は誤りです。なお、DVA-C02 と DVA-C03 の試験ガイドの対象サービス一覧に CodeCommit は載っていません（一覧は網羅的ではないとされています）。
 
@@ -65,6 +71,8 @@ git push origin v1.4.2
 CodeBuild だけで済む場合は、プロジェクトに Webhook を設定してプッシュや PR で直接ビルドを始めることもできます。承認や複数環境への展開が必要になったら CodePipeline を使います。
 
 ## CodeBuild {#codebuild}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 フルマネージドのビルドサービスです。ビルドごとに新しい環境を用意するので、ビルドサーバーの管理が不要です。ビルド時の権限はプロジェクトのサービスロールで決まります。
 
@@ -358,6 +366,8 @@ Docker イメージをビルドするプロジェクトでは特権モード（p
 VPC 内でビルドすると、インターネットへ出る経路がなければ依存関係の取得に失敗します。NAT ゲートウェイや VPC エンドポイントを確認します。
 
 ## CodeDeploy {#codedeploy}
+
+[:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 アプリケーションのリビジョンを、EC2、オンプレミス、Lambda、ECS へ配布するサービスです。
 
@@ -655,6 +665,8 @@ Auto Scaling と組み合わせると、新しいインスタンスへ自動で�
 
 ## CodePipeline {#codepipeline}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 ソースから本番までの流れを定義し、自動で進めるサービスです。自身はビルドや配布を行わず、CodeBuild や CodeDeploy などを呼び出します。
 
 ### ステージとアクション {#pipeline-structure}
@@ -836,6 +848,8 @@ CodePipeline は、以前に成功した実行の版を使ってステージを�
 
 ## CodeArtifact {#codeartifact}
 
+[:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 npm、pip、Maven、NuGet などのパッケージを保管する私設リポジトリです。社内ライブラリの共有や、公開パッケージの取得元を一本化したいときに使います。
 
 | 用語 | 意味 |
@@ -882,6 +896,8 @@ aws codeartifact login --tool pip --domain my-org --repository shared
 **パッケージオリジンコントロール**: パッケージごとに、直接の公開とアップストリームからの取り込みを `ALLOW` か `BLOCK` で制御します。社内パッケージと同名の公開パッケージを取り込む、依存関係かく乱を防げます。
 
 ## Amplify Hosting とブランチ {#amplify}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 Git リポジトリと接続し、ブランチごとに Web アプリをビルドしてホスティングします。ビルド設定はコンソールまたはリポジトリの `amplify.yml` に保存します。
 

@@ -1,5 +1,7 @@
 # オブザーバビリティ（CloudWatch / X-Ray / CloudTrail）
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 アプリケーションの状態をメトリクス、ログ、トレースで把握し、障害の原因や性能のボトルネックを見つけるための仕組みです。CloudWatch で数値とログを集め、X-Ray でリクエストの経路を追います。
 
 [![メトリクス・ログ・トレースの流れ](../assets/diagrams/observability-signals.png)](../assets/diagrams/observability-signals.png)
@@ -464,6 +466,8 @@ aws cloudwatch put-composite-alarm --alarm-name web-degraded \
 
 ## CloudWatch Logs {#cloudwatch-logs}
 
+[:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 ### ロググループと保持期間 {#log-groups}
 
 | 用語 | 意味 |
@@ -846,6 +850,8 @@ Powertools for AWS Lambda の Logger を使うと、相関 ID などの共通項
 
 ## X-Ray によるトレース {#xray}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 分散アプリケーションで 1 つのリクエストの経路と、各区間の時間を可視化します。
 
 ```mermaid
@@ -961,6 +967,8 @@ SDK からのデータを **UDP 2000 番**で受け取り、X-Ray API へ送る�
 必要な権限は `xray:PutTraceSegments` と `xray:PutTelemetryRecords` で、管理ポリシー `AWSXRayDaemonWriteAccess` に含まれます。
 
 ### SDK と OpenTelemetry（現在の推奨） {#xray-opentelemetry}
+
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 !!! warning "X-Ray SDK とデーモンはメンテナンスモード"
     X-Ray SDK とデーモンは 2026 年 2 月 25 日にメンテナンスモードに入り、セキュリティ修正のみになりました。新規の計装には **OpenTelemetry が推奨**されています。試験ではアノテーションなど X-Ray の概念も引き続き確認しておきましょう。
@@ -1143,6 +1151,8 @@ CloudTrail のデータイベント（S3 オブジェクトや Lambda 呼び出�
 
 ## CloudTrail の設定 {#cloudtrail}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 ### イベントの種類 {#cloudtrail-events}
 
 | 種類 | 記録するもの | 既定 |
@@ -1179,6 +1189,8 @@ CloudWatch Logs へ送ると、メトリクスフィルターで特定の操作�
 
 ### CloudTrail Lake {#cloudtrail-lake}
 
+[:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 イベントを ORC 形式でイベントデータストアに集め、SQL で検索する機能です。
 
 !!! warning "新規受付の終了"
@@ -1209,6 +1221,8 @@ CloudWatch Application Signals は、EC2、ECS、Lambda などのアプリから
 [![クォータとデプロイ完了の通知](../assets/diagrams/observability-alerts.png)](../assets/diagrams/observability-alerts.png)
 
 ### クォータの上限に近づいたとき {#quota-alerts}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 対応するサービスでは、使用量が `AWS/Usage` 名前空間のメトリクスとして記録されます。
 

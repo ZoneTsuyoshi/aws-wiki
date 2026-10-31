@@ -1,5 +1,7 @@
 # 生成 AI アプリの設計と運用
 
+[:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIB](../courses/aib/services.md){ .exam-badge .exam-foundational } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 Amazon Bedrock と AgentCore で本番の生成 AI アプリを作るための、設計、最適化、評価のページです。AIP-C01 の中心で、MLA-C02 の FM、RAG、エージェントの範囲にも対応します。
 
 [![S3 の文書を解析、チャンク化、埋め込みしてベクトルストアに保存し、アプリの質問で検索してリランクと生成を行う RAG の構成](../assets/diagrams/genai-apps-rag.png)](../assets/diagrams/genai-apps-rag.png)
@@ -45,6 +47,8 @@ API の呼び方、IAM、基本的なエラー処理は [AI サービスと AI �
 **PoC の進め方:** 数個のモデルを同じプロンプトと評価データで比較し、品質、遅延、コストを表にします。比較には [Bedrock Evaluations](#evaluation) を使います。
 
 ### Nova と Titan {#nova-titan}
+
+[:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 | ファミリー | モデル | 用途 |
 |---|---|---|
@@ -139,6 +143,8 @@ flowchart TD
 サーキットブレーカーは、失敗の回数を DynamoDB に記録し、しきい値を超えたら第一候補を呼ばずに代替へ進めます。[Step Functions](step-functions.md) を参照してください。
 
 ## Knowledge Bases {#knowledge-bases}
+
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 呼び出しの API とパラメータは [Knowledge Bases を呼ぶ](ai.md#knowledge-bases)にあります。ここでは取り込みと検索の設計を扱います。
 
@@ -404,6 +410,8 @@ CREATE INDEX ON bedrock_integration.bedrock_kb
 
 ### Bedrock Flows {#flows}
 
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 プロンプト、モデル、ナレッジベース、Lambda を画面でつないでワークフローを作ります。
 
 | ノード | 役割 |
@@ -442,6 +450,8 @@ CREATE INDEX ON bedrock_integration.bedrock_kb
 文書、画像、動画、音声を生成 AI で構造化データにします。Knowledge Bases のパーサーとしても使えます。
 
 ## プロンプトの管理 {#prompt-management}
+
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 | 機能 | 内容 |
 |---|---|
@@ -662,6 +672,8 @@ temperature と top-p の説明は[推論パラメータ](ai-fundamentals.md#inf
 
 ## エージェントのパターンと MCP {#agent-patterns}
 
+[:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational }
+
 ### 構造のパターン {#workflow-patterns}
 
 | パターン | 内容 | 例 |
@@ -753,6 +765,8 @@ Step Functions の `waitForTaskToken` で待ちます。[エージェントの�
 **ベクトル検索をツールにする:** 検索をツールや MCP サーバーとして公開すれば、モデルが必要なときに検索できます。
 
 ## AgentCore のアーキテクチャ {#agentcore}
+
+[:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 [![利用者が IdP で認証し、Runtime のエージェントが Memory を使い、Gateway と Policy を通してツールを呼び、CloudWatch で観測する構成](../assets/diagrams/genai-apps-agentcore.png)](../assets/diagrams/genai-apps-agentcore.png)
 

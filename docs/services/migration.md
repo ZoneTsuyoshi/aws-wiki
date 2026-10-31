@@ -1,5 +1,7 @@
 # 移行と転送
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 オンプレミスや他のクラウドから AWS へ、サーバー、データベース、ファイルを移すサービスをまとめます。何を移すかでサービスが決まり、データ量と回線で転送方法が決まります。
 
 [![移行の経路とサービス](../assets/diagrams/migration-paths.png)](../assets/diagrams/migration-paths.png)
@@ -52,6 +54,8 @@
 
 ## AWS Migration Hub {#migration-hub}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational }
+
 **現在の状況**: 2025 年 11 月 7 日に新規受付を終了しました。既存のお客様は進行中のプロジェクトを続けられます。新機能は追加されず、セキュリティ更新は続きます。後継の AWS Transform へのデータ移行は不要です。
 
 サーバーをアプリにまとめ、MGN や DMS の進み具合を 1 か所で追跡する画面です。
@@ -61,6 +65,8 @@
 - **見分け方**: Migration Hub 自体はデータを移しません。実際の移行は MGN や DMS が行います。
 
 ## Application Discovery Service {#application-discovery}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate }
 
 **現在の状況**: 新規受付を終了しました。後継は AWS Transform です。
 
@@ -75,6 +81,8 @@
 **落とし穴**: Agentless Collector は VM の中を見ないので、実行中のプロセスがわかりません。依存関係を詳しく調べるならエージェントです。
 
 ## Migration Evaluator {#migration-evaluator}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational }
 
 移行の費用対効果(ビジネスケース)を作るサービスです。依存関係の調査ではなく、コストの比較に使います。
 
@@ -91,6 +99,8 @@
 新規受付を止めたという記載は、公式のページでは確認できませんでした(2026 年 10 月時点)。
 
 ## AWS Transform {#transform}
+
+[:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 AI エージェントを使って、移行とモダナイズを進めるサービスです。2025 年 5 月に始まり、Migration Hub の機能を引き継いでいます。追加料金はかかりません。
 
@@ -115,6 +125,8 @@ AI エージェントを使って、移行とモダナイズを進めるサー�
 | Reader | 閲覧のみ |
 
 ## AWS Transform MGN(旧 Application Migration Service) {#mgn}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 物理、仮想、他のクラウドのサーバーを、**ブロック単位の継続的な複製**で EC2 へ移します。切り替えの停止は通常、分単位です。AWS Application Migration Service から名前が変わり、試験ガイドでも両方の名前が使われます。API やコンソールの URL では今も `mgn` です。
 
@@ -170,6 +182,8 @@ sequenceDiagram
 **落とし穴**: vCenter のエージェントレス複製は、新規のデプロイでは使えなくなりました。古い資料で「エージェントを入れられないなら agentless」とあっても、今はエージェントでの複製が推奨です。
 
 ## AWS DMS {#dms}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 データベースを移行するサービスです。移行中も元のデータベースを使い続けられます。
 
@@ -252,6 +266,8 @@ DMS はソースのトランザクションログから変更を読みます。�
 
 ## AWS SCT と DMS Schema Conversion {#sct}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
 エンジンが異なる移行(異種間移行)で、スキーマとコードを変換します。データは移しません。データは DMS で移します。
 
 | 観点 | AWS SCT | DMS Schema Conversion |
@@ -270,6 +286,8 @@ DMS はソースのトランザクションログから変更を読みます。�
 変換できない機能は、評価レポートに残ります。拡張パックは、変換できない機能を Lambda 関数や Python ライブラリで補います。
 
 ## AWS DataSync {#datasync}
+
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 ファイルやオブジェクトを転送する、マネージドのオンラインサービスです。増分転送、圧縮、暗号化、整合性の検証を自動で行います。
 
@@ -324,6 +342,8 @@ aws datasync create-task \
 
 ## AWS Transfer Family {#transfer-family}
 
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 SFTP、FTPS、FTP、AS2、ブラウザでの転送を受け付け、S3 または EFS に保存するマネージドサービスです。取引先のツールや設定を変えずに、自前のファイルサーバーをなくせます。
 
 | プロトコル | エンドポイント | 要点 |
@@ -345,6 +365,8 @@ SFTP、FTPS、FTP、AS2、ブラウザでの転送を受け付け、S3 または
 **落とし穴**: 公開エンドポイントは SFTP だけで、セキュリティグループでは制限できません。FTPS は VPC でホストします。
 
 ## AWS Storage Gateway {#storage-gateway}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 オンプレミスに置くアプライアンスで、ローカルのアプリと AWS のストレージをつなぎます。ESXi、KVM、Hyper-V、Nutanix AHV の VM、ハードウェアアプライアンス、EC2 にデプロイできます。
 
@@ -382,6 +404,8 @@ SFTP、FTPS、FTP、AS2、ブラウザでの転送を受け付け、S3 または
 
 ## Snow Family の現在の状況 {#snow-family}
 
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate }
+
 **現在の状況**: Snow Family のデバイスは新規のお客様に提供されません。既存のお客様は使い続けられ、AWS はセキュリティと可用性の改善を続けています。
 
 | 元の用途 | 代わりに使うもの |
@@ -394,6 +418,8 @@ SAA の試験ガイドの対象一覧には Snow Family が残っています。
 
 ## AWS Data Transfer Terminal {#data-transfer-terminal}
 
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
 高速回線につながった AWS の施設に、自分のストレージ機器を持ち込んでアップロードするサービスです。デバイスが届くのを待つ Snow とは逆で、データを持っていく形です。
 
 - コンソールで予約し、施設で S3 などへ直接アップロードします。
@@ -404,6 +430,8 @@ SAA の試験ガイドの対象一覧には Snow Family が残っています。
 - **向く場面**: 撮影や車載の収集など、すでに可搬の機器にデータがあるとき。
 
 ## App2Container {#app2container}
+
+[:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 **現在の状況**: 新規受付を終了しました。後継は AWS Transform のコンテナ化です。
 
@@ -417,6 +445,8 @@ SAA の試験ガイドの対象一覧には Snow Family が残っています。
 **見分け方**: ソースコードがないアプリのコンテナ化なら App2Container、ソースコードから進めるなら AWS Transform です。
 
 ## VMware の移行 {#vmware}
+
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate }
 
 VMware の環境と運用を変えずに AWS へ移す Relocate の選択肢です。
 

@@ -4,6 +4,8 @@
 
 Athena の使い方、CloudWatch と CloudTrail の使い分け、Glue Data Quality と DataBrew の使い分けがよく問われます。
 
+この分野に限らず、コース全体で使うサービスは[サービス一覧](services.md)から確認できます。
+
 ## タスク 3.1: AWS サービスでデータ処理を自動化する {#task-3-1}
 
 ### 3.1.1 パイプラインの連結（MWAA、Step Functions） {#skill-3-1-1}

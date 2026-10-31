@@ -4,6 +4,8 @@ C03 の配点は **22%** で、C02 の 18% から増えました。原因の調�
 
 サービスごとに順を追って学ぶときは、[サービス別の学習ページ](study/domain4/index.md)から始めます。
 
+この分野に限らず、コース全体で使うサービスは[サービス一覧](services.md)から確認できます。
+
 ## タスク 4.1: 根本原因の分析を支援する {#task-4-1}
 
 [![オブザーバビリティの3つのシグナル](../../assets/diagrams/observability-signals.png)](../../assets/diagrams/observability-signals.png)

@@ -7,6 +7,8 @@
 
     すでに準備が進んでいるなら、11月16日までに C02 を受ける選択肢もあります。C02 で取得した認定は、元の有効期限まで有効です。受験日に合わせて範囲を確認してください（[AWS のお知らせ](https://aws.amazon.com/blogs/training-and-certification/september-2026-new-offerings/)）。
 
+[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+
 ## 試験の概要 {#overview}
 
 | 項目 | 内容 |

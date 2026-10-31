@@ -1,5 +1,7 @@
 # ネットワーク接続（ハイブリッドとマルチ VPC）
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 オンプレミスと AWS、VPC と VPC、リージョンとリージョンをつなぐサービスと、その経路制御、DNS、検査、調査の方法をまとめます。主な読者は Advanced Networking（ANS-C01）の受験者で、ルートの優先順位と BGP の属性を計算例つきで扱います。
 
 VPC の基本、VPC エンドポイント、Route 53 のレコードとルーティングポリシー、ELB、CloudFront は [ネットワーク](networking.md) を参照してください。ここでは繰り返しません。
@@ -23,6 +25,8 @@ VPC の基本、VPC エンドポイント、Route 53 のレコードとルーテ
     - **Transit Gateway Network Manager** の機能は、公式文書では **AWS Global Networks for Transit Gateways** として説明されています。コンソールは AWS Network Manager です。試験ガイドは旧称を使っています。
 
 ## Direct Connect {#direct-connect}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 オンプレミスと AWS を、インターネットを通らない専用回線で接続するサービスです。物理接続（コネクション）の上に論理接続（VIF）を作り、BGP で経路を交換します。
 
@@ -201,6 +205,8 @@ aws directconnect update-connection \
 
 ## Site-to-Site VPN {#site-to-site-vpn}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
+
 オンプレミスの顧客ゲートウェイ（CGW）と、AWS 側の VGW または Transit Gateway を IPsec で結びます。AWS の VPN はルートベースのみで、ポリシーベースは使えません。
 
 ### トンネル {#vpn-tunnels}
@@ -323,6 +329,8 @@ Direct Connect の上に、公開 IP を使わず IPsec を張ります。金融
 
 ## Client VPN {#client-vpn}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 利用者の端末から OpenVPN ベースのクライアントで接続するマネージド VPN です。拠点と拠点をつなぐ Site-to-Site VPN とは用途が違います。
 
 | 項目 | 内容 |
@@ -360,6 +368,8 @@ Direct Connect の上に、公開 IP を使わず IPsec を張ります。金融
 **スプリットトンネル:** 有効にすると、エンドポイントのルートだけがクライアントのルートテーブルへ追加されます。接続後にルートを足したら、再接続するまで反映されません。
 
 ## Transit Gateway {#transit-gateway}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 VPC、VPN、Direct Connect を 1 か所で接続するリージョンのルーターです。VPC を増やしても接続先は 1 つで済みます。高可用性の設計なので、冗長化のために 2 つ作る必要はありません。
 
@@ -849,6 +859,8 @@ AWS は BGP の MED で主のトンネルを示します。トンネルの保守
 
 ## Cloud WAN {#cloud-wan}
 
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
 複数リージョンの WAN を、1 つの JSON ポリシーで宣言するマネージドサービスです。リージョンごとに Transit Gateway を作ってピアリングし、ルートテーブルをそろえる作業を置き換えます。
 
 | 概念 | 内容 |
@@ -919,6 +931,8 @@ AWS は BGP の MED で主のトンネルを示します。トンネルの保守
 
 ## VPC ピアリング {#vpc-peering}
 
+[:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate }
+
 2 つの VPC を直接接続します。リージョンをまたぐことも、アカウントをまたぐこともできます。
 
 | 項目 | 内容 |
@@ -961,6 +975,8 @@ AWS は BGP の MED で主のトンネルを示します。トンネルの保守
 **移行時の注意:** ピアリングから Transit Gateway へ移ると、MTU が 9001 から 8500 に下がります。両方の VPC を同時に切り替えないと、非対称な経路で大きなパケットが落ちます。
 
 ## Global Accelerator {#global-accelerator}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
 
 世界共通の固定 IP でトラフィックを受け、最寄りのエッジから AWS ネットワークを通って正常なエンドポイントへ送ります。
 
@@ -1041,6 +1057,8 @@ AWS は BGP の MED で主のトンネルを示します。トンネルの保守
 
 ### IPAM {#ipam}
 
+[:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate }
+
 VPC IP Address Manager は、組織全体の IP を計画、割り当て、監視する機能です。
 
 | 概念 | 内容 |
@@ -1097,6 +1115,8 @@ Global Accelerator へ持ち込む場合は手順が別です。
 
 ## IPv6 と Egress-only インターネットゲートウェイ {#ipv6}
 
+[:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate }
+
 | 項目 | 内容 |
 |---|---|
 | VPC の CIDR | 作成時に 1 つ、後から最大 5 つ。/44〜/60（/4 刻み）。Amazon 提供の範囲は自分で選べない |
@@ -1143,6 +1163,8 @@ aws ec2 modify-subnet-attribute --subnet-id subnet-EXAMPLE --enable-dns64
 ## NAT と Elastic IP {#nat-eip}
 
 ### NAT ゲートウェイ {#nat-gateway}
+
+[:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate }
 
 | | パブリック | プライベート |
 |---|---|---|
@@ -1193,6 +1215,8 @@ aws ec2 modify-subnet-attribute --subnet-id subnet-EXAMPLE --enable-dns64
 | NAT ゲートウェイ → ピアリング → 宛先 | 可 |
 
 ### Elastic IP {#elastic-ip}
+
+[:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate }
 
 固定の公開 IPv4 アドレスです。
 
@@ -1383,6 +1407,8 @@ sequenceDiagram
 
 ### DNS Firewall {#dns-firewall}
 
+[:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 VPC Resolver を通るクエリのドメイン名でフィルターします。
 
 | 要素 | 内容 |
@@ -1403,6 +1429,8 @@ VPC Resolver を通るクエリのドメイン名でフィルターします。
 **CNAME の落とし穴:** 連鎖の検査が有効だと、CNAME の先のドメインも許可が必要です。許可リスト方式では、ここで解決に失敗します。
 
 ## Network Firewall {#network-firewall}
+
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 VPC の境界でトラフィックを検査するマネージドのファイアウォールと IPS です。ステートフルエンジンは Suricata 互換です。
 
@@ -1560,6 +1588,8 @@ GWLB の概要は [ネットワーク](networking.md#gwlb) にあります。こ
 
 ### Reachability Analyzer {#reachability-analyzer}
 
+[:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate }
+
 設定のモデルを解析して、2 点間の到達性を調べます。**パケットを送らないので、本番に影響しません。**
 
 | 項目 | 内容 |
@@ -1593,6 +1623,8 @@ aws ec2 describe-network-insights-analyses \
 **自動化:** パスを CloudFormation で定義し（`AWS::EC2::NetworkInsightsPath`）、変更のたびに分析を実行すると、接続の意図を継続的に確認できます。
 
 ### Network Access Analyzer {#network-access-analyzer}
+
+[:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 「あってはならない経路」を見つけます。Reachability Analyzer が 1 組を調べるのに対し、こちらは環境全体の要件を調べます。
 
@@ -1648,6 +1680,8 @@ ENI のパケットをコピーして、監視用のアプライアンスへ送�
 - セッションを消すまで課金は続きます。
 
 ## フローログの分析 {#flow-log-analysis}
+
+[:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate }
 
 フローログの基本は [ネットワーク](networking.md#flow-logs) にあります。ここでは読み方を扱います。
 
@@ -1838,6 +1872,8 @@ sudo ip route add 192.168.0.0/16 via 10.0.0.1 mtu 1400
 
 ## VPC Lattice {#vpc-lattice}
 
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
 サービス間の通信を接続、認可、監視するアプリケーションネットワークのサービスです。IP ルーティングではなく、サービスのレベルでつなぎます。
 
 | 要素 | 内容 |
@@ -1869,6 +1905,8 @@ sudo ip route add 192.168.0.0/16 via 10.0.0.1 mtu 1400
 **クライアントの条件:** VPC の関連付けやエンドポイントがない VPC のクライアントは、サービスネットワークへリクエストを送れません。ターゲットだけを VPC に置いても、そこからは呼べません。
 
 ## App Mesh の状況 {#app-mesh}
+
+[:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
 
 !!! danger "サポート終了"
     AWS App Mesh は、公式の告知では **2026 年 9 月 30 日でサポート終了**です。この日以降はコンソールにもリソースにもアクセスできません。ANS-C01 の試験範囲の一覧にはまだ載っています。

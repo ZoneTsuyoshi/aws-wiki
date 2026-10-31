@@ -6,6 +6,8 @@
 
 [![データレイクと分析の基本構成](../../assets/diagrams/data-engineering-pipeline.png)](../../assets/diagrams/data-engineering-pipeline.png)
 
+この分野に限らず、コース全体で使うサービスは[サービス一覧](services.md)から確認できます。
+
 ## タスク 1.1: データを取り込む {#task-1-1}
 
 ### 1.1.1 ストリーミングソースの読み取り {#skill-1-1-1}

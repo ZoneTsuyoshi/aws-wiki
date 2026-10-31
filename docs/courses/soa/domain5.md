@@ -6,6 +6,8 @@
 
 [![VPC の構成](../../assets/diagrams/networking-vpc.png)](../../assets/diagrams/networking-vpc.png)
 
+この分野に限らず、コース全体で使うサービスは[サービス一覧](services.md)から確認できます。
+
 ## タスク 5.1: ネットワークの機能と接続を実装、最適化する {#task-5-1}
 
 ### 5.1.1 VPC の設定 {#skill-5-1-1}

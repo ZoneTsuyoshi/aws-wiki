@@ -1,5 +1,7 @@
 # マネージド AI サービス
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 学習済みの機能を API で呼べる AWS の AI サービスをまとめたページです。ML の専門知識がなくても使えます。多くの試験で「この業務に合うサービスはどれか」と問われます。
 
 [![音声を Transcribe、PDF を Textract で文字にし、Comprehend で PII を処理してから Bedrock で要約する構成](../assets/diagrams/ai-managed-services-pipeline.png)](../assets/diagrams/ai-managed-services-pipeline.png)
@@ -27,6 +29,8 @@
     既存の顧客は使い続けられますが、新機能は追加されません。試験の対象一覧に残っていても、新規の設計では公式が示す代替を選びます。
 
 ## Amazon Comprehend {#comprehend}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 テキストから情報を取り出す NLP サービスです。入力は UTF-8 のテキストで、カスタム分類とカスタム固有表現は画像、PDF、Word も受け付けます。
 
@@ -62,6 +66,8 @@ aws comprehend detect-pii-entities --language-code en \
 
 ## Amazon Comprehend Medical {#comprehend-medical}
 
+[:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
 診療記録などの非構造化テキストから医療情報を取り出します。
 
 | 機能 | API | 内容 |
@@ -74,6 +80,8 @@ aws comprehend detect-pii-entities --language-code en \
 - 医師の判断の代わりにはなりません。信頼度スコアを確認し、人がレビューします。
 
 ## Amazon Lex {#lex}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 音声とテキストの会話インターフェイスを作ります。現在のドキュメントは Lex V2 で、V1 からの移行ガイドがあります。
 
@@ -100,6 +108,8 @@ aws comprehend detect-pii-entities --language-code en \
 
 ## Amazon Textract {#textract}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 文書から文字と構造を取り出します。単純な OCR と違い、表やフォームの関係も分かります。
 
 | API、機能 | 内容 | 例 |
@@ -125,6 +135,8 @@ aws comprehend detect-pii-entities --language-code en \
 
 ## Amazon Transcribe {#transcribe}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 音声を文字にします。
 
 | 機能 | 内容 |
@@ -143,9 +155,13 @@ aws comprehend detect-pii-entities --language-code en \
 
 ### Transcribe Medical {#transcribe-medical}
 
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
 医師の口述や患者との会話など、医療の音声向けです。HIPAA の対象ですが、利用者の責任もあります。診断の代わりにはなりません。
 
 ## Amazon Translate {#translate}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
 ニューラル機械翻訳です。
 
@@ -163,6 +179,8 @@ aws comprehend detect-pii-entities --language-code en \
 **カスタム用語か並列データか:** 固有名詞の固定なら用語、文体を合わせるなら並列データです。
 
 ## Amazon Polly {#polly}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
 テキストを音声にします。
 
@@ -183,6 +201,8 @@ aws comprehend detect-pii-entities --language-code en \
 **具体例:** 「AWS」を「エー・ダブリュー・エス」と読ませるならレキシコンです。文の間に間を入れるなら SSML の `<break>` です。長い記事は非同期にします。
 
 ## Amazon Rekognition {#rekognition}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 画像と動画を分析します。
 
@@ -212,6 +232,8 @@ aws comprehend detect-pii-entities --language-code en \
 
 ## Amazon Personalize {#personalize}
 
+[:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
+
 自社の行動データでレコメンドモデルを作ります。
 
 | データ | 内容 | 必須か |
@@ -236,6 +258,8 @@ aws comprehend detect-pii-entities --language-code en \
 **Personalize か SageMaker AI か:** レコメンドだけなら Personalize で済みます。独自のアルゴリズムが必要なら SageMaker AI（Factorization Machines など）です。
 
 ## Amazon Kendra {#kendra}
+
+[:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 !!! warning "メンテナンスモード"
     Kendra は 2026-06-30 にメンテナンスモードに入り、2026-07-30 から新規顧客を受け付けていません。バグ修正とセキュリティ更新は続きます。公式は [Bedrock Managed Knowledge Base](genai-apps.md#managed-kb) への移行を勧めています。
@@ -268,6 +292,8 @@ aws comprehend detect-pii-entities --language-code en \
 
 ## Amazon Augmented AI（A2I） {#a2i}
 
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 !!! warning "新規受付終了"
     SageMaker A2I は新規顧客を受け付けていません。既存の顧客は使えますが、新機能は予定されていません。
 
@@ -288,6 +314,8 @@ ML の予測を人がレビューする仕組みです。
 
 ## AWS HealthLake {#healthlake}
 
+[:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
+
 医療データを FHIR R4 形式で保存、分析、共有する HIPAA 対象のサービスです。
 
 | 機能 | 内容 |
@@ -300,6 +328,8 @@ ML の予測を人がレビューする仕組みです。
 **Comprehend Medical か HealthLake か:** テキストの抽出だけなら Comprehend Medical、FHIR でデータを管理して相互運用するなら HealthLake です。
 
 ## Amazon Q Business と Q Apps {#q-business}
+
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 !!! warning "新規受付終了"
     Amazon Q Business は新規顧客を受け付けていません。既存の顧客にはバグ修正とセキュリティ更新が続きますが、新機能は検討されません。公式は [Amazon Quick](ai.md#quick) への移行を勧めています。

@@ -1,5 +1,7 @@
 # Amazon SageMaker AI
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIB](../courses/aib/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 ML モデルの準備、学習、デプロイ、監視をまとめて行うマネージドサービスです。MLA-C02 の中心で、AIP-C01、AIF-C01 にも出ます。
 
 [![Pipelines で前処理と学習と登録を行い、承認を EventBridge で検知してエンドポイントにデプロイし、CloudWatch で監視する MLOps の流れ](../assets/diagrams/sagemaker-mlops.png)](../assets/diagrams/sagemaker-mlops.png)
@@ -49,6 +51,8 @@ ML の作業全体を行う Web の開発環境です。
 
 ### SageMaker Unified Studio の位置づけ {#unified-studio}
 
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 | | SageMaker AI Studio | SageMaker Unified Studio |
 |---|---|---|
 | 属するもの | SageMaker AI | 次世代の Amazon SageMaker |
@@ -69,6 +73,8 @@ ML の作業全体を行う Web の開発環境です。
 データの取り込みと変換の全体像は[データエンジニアリング](data-engineering.md)を、特徴量の考え方は[特徴量エンジニアリング](ai-fundamentals.md#feature-engineering)を参照してください。
 
 ### Processing {#processing}
+
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 前処理、後処理、評価を、マネージドなコンテナのジョブとして実行します。
 
@@ -99,6 +105,8 @@ processor.run(
 **落とし穴:** `/opt/ml/processing/output` の外に書いたファイルは S3 に残りません。
 
 ### Data Wrangler {#data-wrangler}
+
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 データの取り込み、変換、分析を画面で行う機能です。**Canvas に統合され**、自然言語でも変換できます。
 
@@ -150,6 +158,8 @@ processor.run(
 **落とし穴:** オンラインストアだけの設定では履歴が残らず、後から学習に使えません。
 
 ### Ground Truth {#ground-truth}
+
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 !!! warning "新規受付終了"
     Ground Truth は新規顧客を受け付けていません。
@@ -355,6 +365,8 @@ flowchart TD
 
 ### JumpStart {#jumpstart}
 
+[:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 事前学習済みのモデル（FM を含む）、ソリューションテンプレート、ノートブックのハブです。
 
 | 機能 | 内容 |
@@ -390,6 +402,8 @@ flowchart TD
 **再現可能な実験:** データのバージョン、コードのコミット、ハイパーパラメータを記録します。
 
 ### Clarify {#clarify}
+
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 !!! warning "新規受付終了"
     Clarify は新規顧客を受け付けていません。公式の代替は、指標を pandas などで自前計算する、SHAP を直接使う、FM の評価には Bedrock Evaluations を使う、というものです。Bedrock Evaluations は表データのバイアス検出の代わりにはなりません。
@@ -704,6 +718,8 @@ aws application-autoscaling put-scaling-policy \
 
 ### SageMaker Neo {#neo}
 
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 学習済みモデルをコンパイルし、ターゲットのハードウェアで高速に動かします。
 
 | 項目 | 内容 |
@@ -757,6 +773,8 @@ step_cond = ConditionStep(name="CheckAUC", conditions=[cond],
 
 ### Model Registry {#model-registry}
 
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 モデルのバージョンと承認を管理します。
 
 | 用語 | 意味 |
@@ -801,6 +819,8 @@ sm.update_model_package(
 ## 監視 {#monitoring}
 
 ### Model Monitor {#model-monitor}
+
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 !!! warning "新規受付終了"
     Model Monitor は新規顧客を受け付けていません。公式の移行先は、公開の監視ソリューション（MLflow Apps と Evidently AI）、QuickSight、CloudWatch です。

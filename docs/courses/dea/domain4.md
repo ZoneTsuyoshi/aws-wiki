@@ -4,6 +4,8 @@
 
 データ向けの権限である Lake Formation と Redshift の権限が中心です。ガイド 1.1 で、SageMaker Unified Studio と SageMaker Catalog のガバナンスが追加されました。
 
+この分野に限らず、コース全体で使うサービスは[サービス一覧](services.md)から確認できます。
+
 ## タスク 4.1: 認証の仕組みを適用する {#task-4-1}
 
 ### 4.1.1 VPC セキュリティグループの更新 {#skill-4-1-1}

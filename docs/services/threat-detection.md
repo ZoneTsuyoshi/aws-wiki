@@ -1,5 +1,7 @@
 # 脅威検出とインシデント対応
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 AWS 環境の脅威を検出し、調査して封じ込めるためのサービスをまとめたページです。セキュリティ専門知識試験（SCS-C03）の分野 1、2、6 を主な読者に想定し、DDoS 防御とネットワークの防御も扱います。
 
 [![検出結果を集約して自動対応する流れ](../assets/diagrams/threat-detection-response.png)](../assets/diagrams/threat-detection-response.png)
@@ -27,6 +29,8 @@ AWS 環境の脅威を検出し、調査して封じ込めるためのサービ�
     SCS-C03 の試験ガイドには Audit Manager と CodeGuru Security の名前が残っています。出題された場合に備えて、役割は覚えておきます。
 
 ## GuardDuty {#guardduty}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 ログとイベントを継続的に分析し、脅威インテリジェンスと機械学習で不審な活動を検出するサービスです。リージョン単位で有効にします。
 
@@ -178,6 +182,8 @@ S3 エクスポートには KMS キーが必須で、キーポリシーとバケ
 
 ## Security Hub {#security-hub}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 ### 製品の現在の形 {#security-hub-products}
 
 現在は名前の似た 2 つの製品があります。古い教材の「Security Hub」は、今の **Security Hub CSPM** を指します。
@@ -256,6 +262,8 @@ CSPM のイベントの種類は `Security Hub Findings - Imported`（全件）�
 
 ## Inspector {#inspector}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 ワークロードを自動で見つけ、ソフトウェアの脆弱性と意図しないネットワーク経路を継続的にスキャンします。修正が確認できると検出結果は自動で閉じられます。
 
 ### スキャンの種類 {#inspector-scan-types}
@@ -322,6 +330,8 @@ Code Security は [CodeGuru Security](#codeguru-security) の後継で、Amazon 
 
 ## Macie {#macie}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 S3 のバケットを監視し、オブジェクトの中の機密データを機械学習とパターンマッチで検出します。S3 以外のデータは、RDS のスナップショットを Parquet で出力するなどして S3 に移せば検査できます。
 
 ### 検出の方法 {#macie-discovery}
@@ -365,6 +375,8 @@ S3 のバケットを監視し、オブジェクトの中の機密データを�
 
 ## Detective {#detective}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 ログから行動グラフを作り、検出結果の根本原因と影響範囲を調べるサービスです。検出や修復ではなく **調査** を担います。
 
 | データ | 区分 | 補足 |
@@ -381,6 +393,8 @@ S3 のバケットを監視し、オブジェクトの中の機密データを�
 - 調査は検出結果、検出結果グループ、エンティティのどこからでも始められます。
 
 ## Security Lake {#security-lake}
+
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 セキュリティログを自分のアカウントの S3 に集約し、Parquet と OCSF に変換するデータレイクです。データの所有権は利用者にあります。
 
@@ -404,6 +418,8 @@ S3 のバケットを監視し、オブジェクトの中の機密データを�
 **症状:** カスタムソースのデータが検索できない場合は、Parquet 形式か、OCSF のクラスが混ざっていないかを確認します。AWS Glue のクローラーがパーティションを登録します。
 
 ## Audit Manager {#audit-manager}
+
+[:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 !!! warning "保守モード"
     2026 年 4 月 30 日から新しいアカウントで設定できません。既存の利用者は使い続けられますが、新しいリージョンやアカウントへは広げられず、新機能と新しいフレームワークは追加されません。AWS は代替として AWS Config の適合パックを案内しています。
@@ -432,6 +448,8 @@ AWS 自身の準拠資料と契約を扱う無料のサービスです。
 
 ## Firewall Manager {#firewall-manager}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 保護の設定を組織全体に一元展開するサービスです。新しいアカウントやリソースにも自動で適用します。
 
 | 前提 | 内容 | 誤ったときの症状 |
@@ -455,11 +473,15 @@ AWS 自身の準拠資料と契約を扱う無料のサービスです。
 
 ## Shield {#shield}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 ### Shield Standard {#shield-standard}
 
 全ユーザーに追加料金なしで自動適用される、ネットワーク層とトランスポート層（L3、L4）の DDoS 防御です。Route 53 のホストゾーン、CloudFront、Global Accelerator の標準アクセラレーターで特に効果が大きくなります。
 
 ### Shield Advanced {#shield-advanced}
+
+[:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 | 項目 | 内容 |
 | --- | --- |
@@ -503,6 +525,8 @@ L3、L4 は自動で緩和されます。L7 は正当な通信を止めないよ
 WAF のルールの詳細は [WAF のページ](certificates.md#waf) を参照してください。
 
 ## Network Firewall {#network-firewall}
+
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 VPC 向けのマネージドなステートフルファイアウォール兼 IPS で、Suricata 互換のルールが使えます。
 
@@ -709,6 +733,8 @@ sequenceDiagram
 
 ## Automated Forensics Orchestrator for Amazon EC2 {#forensics-orchestrator}
 
+[:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 SOC 向けのフォレンジックの流れを自動化する、AWS のガイダンスです。マネージドサービスではなく、自分のアカウントにデプロイします。現在の名前は **Automated Forensics Orchestrator for Amazon EC2 and EKS** で、EC2 上の EKS にも対応します。
 
 流れは取得、隔離、調査、報告です。
@@ -829,6 +855,8 @@ filter action = "REJECT"
 作成後は形式を変更できません。必要なフィールドが足りないときは、作り直します。
 
 ## CodeGuru Security {#codeguru-security}
+
+[:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 !!! danger "サポート終了"
     Amazon CodeGuru Security は 2025 年 11 月 20 日にサポートを終了し、コンソールとドキュメントも利用できなくなりました。SCS-C03 のスキル 3.2.6 と対象サービス一覧には名前が残っています。

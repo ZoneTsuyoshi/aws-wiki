@@ -4,6 +4,8 @@
 
 どの層で止めるかが判断の中心です。DDoS、Web の攻撃、ドメインやパケットの検査で、使うサービスが変わります。
 
+この分野に限らず、コース全体で使うサービスは[サービス一覧](services.md)から確認できます。
+
 ## タスク 4.1: セキュリティとコンプライアンスの要件を満たす {#task-4-1}
 
 [![Transit Gateway と GWLB による集中検査](../../assets/diagrams/network-connectivity-inspection.png)](../../assets/diagrams/network-connectivity-inspection.png)

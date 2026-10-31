@@ -1,5 +1,7 @@
 # データエンジニアリング（Glue、EMR、Redshift、Lake Formation ほか）
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 データを集め、変換し、保存し、権限を付けて分析に渡すためのサービスをまとめます。Data Engineer（DEA-C01）の中心範囲です。Kinesis、Firehose、Athena、OpenSearch は [ストリーミングと分析](streaming.md)、S3 自体は [S3](s3.md) を参照してください。
 
 [![データレイクと分析の基本構成](../assets/diagrams/data-engineering-pipeline.png)](../assets/diagrams/data-engineering-pipeline.png)
@@ -19,6 +21,8 @@
 | ダッシュボードを作る | [Quick Sight](#quick-sight) | 旧 QuickSight |
 
 ## AWS Glue {#glue}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 サーバーレスのデータ統合サービスです。メタデータのカタログ、スキーマの推定、Spark ベースの ETL、ワークフローをまとめて提供します。
 
@@ -215,6 +219,8 @@ job.commit()                             # 状態を更新する
 
 ### Data Quality {#glue-data-quality}
 
+[:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
+
 データの品質をルールで測るサーバーレスの機能です。オープンソースの Deequ を基盤とし、DQDL という言語でルールを書きます。25 種類以上の組み込みルールと、機械学習による異常検出があります。
 
 | 入口 | タイミング | 使う人 |
@@ -236,6 +242,8 @@ Rules = [
 
 ### DataBrew {#databrew}
 
+[:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
+
 コードを書かずにデータを整形する、視覚的なツールです。アナリストやデータサイエンティストが主な利用者です。
 
 | 用語 | 意味 |
@@ -255,6 +263,8 @@ Rules = [
 | 向く場面 | 探索と整形 | 本番の大規模変換 | パイプラインの中の検査 |
 
 ## Amazon EMR {#emr}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 Spark、Hive、Presto、HBase などのオープンソースを動かすビッグデータ基盤です。Glue より設定の自由度が高く、アプリケーションやバージョンを細かく選べます。
 
@@ -349,6 +359,8 @@ aws emr-serverless create-application \
 **Glue との違い**: どちらもサーバーレスの Spark です。カタログと一体になった ETL、Data Quality、ブックマークを使うなら Glue、既存の Spark や Hive のコードと EMR のリリースをそのまま持ち込むなら EMR Serverless です。
 
 ## Amazon Redshift {#redshift}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 列指向で超並列（MPP）のデータウェアハウスです。大きなテーブルの結合と集計に向きます。行単位の更新を大量に行う OLTP には向きません。
 
@@ -661,6 +673,8 @@ RDS と Aurora でも考え方は同じです。PostgreSQL は `pg_locks` と `p
 
 ## AWS Lake Formation {#lake-formation}
 
+[:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
+
 Data Catalog と S3 上のデータに、データベースのような権限モデルを与えるサービスです。S3 バケットポリシーと IAM を組み合わせる代わりに、テーブル、列、行で権限を付けられます。
 
 ```mermaid
@@ -748,6 +762,8 @@ aws lakeformation grant-permissions \
 
 ## Amazon AppFlow {#appflow}
 
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 SaaS と AWS の間でデータを転送する、コード不要のサービスです。
 
 | 項目 | 内容 |
@@ -766,6 +782,8 @@ SaaS と AWS の間でデータを転送する、コード不要のサービス�
 **選び方**: 対応 SaaS からの定型的な転送なら AppFlow です。独自の API や複雑な変換が必要なら Glue か Lambda を使います。
 
 ## Amazon MSK {#msk}
+
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 Apache Kafka を実行するマネージドサービスです。Kafka の API とツールをそのまま使えます。
 
@@ -804,6 +822,8 @@ Apache Kafka を実行するマネージドサービスです。Kafka の API �
 
 ## Amazon Managed Service for Apache Flink {#flink}
 
+[:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
+
 Apache Flink のアプリケーションを実行するサービスです。ウィンドウ集計や結合など、状態を持つストリーム処理に向きます。Java、Scala、Python、SQL を使えます。
 
 旧称は Kinesis Data Analytics です。旧 **Kinesis Data Analytics for SQL アプリケーション** は 2025 年 10 月に新規作成が停止され、2026 年 1 月 27 日からアプリケーションの削除が始まりました。SQL で書くなら Flink の Studio か Flink SQL を使います。
@@ -829,6 +849,8 @@ Apache Flink のアプリケーションを実行するサービスです。ウ�
 **チェックポイントとスナップショット**: チェックポイントは自動で、障害復旧に使います。スナップショットは手動で、更新や移行の前に取ります。
 
 ## Amazon MWAA {#mwaa}
+
+[:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
 Apache Airflow のマネージドサービスです。DAG（有向非巡回グラフ）を Python で書き、依存関係を定義します。
 
@@ -866,6 +888,8 @@ with DAG("daily_orders", start_date=datetime(2026, 1, 1), schedule="0 2 * * *") 
 
 ## AWS Data Pipeline の現状 {#data-pipeline}
 
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate }
+
 **新規顧客は利用できません。** 既存の顧客は使い続けられますが、メンテナンスモードで新機能はありません。
 
 新規の要件には Glue、Step Functions、MWAA を選びます。試験で既存の Data Pipeline が出たら、移行先としてこれらを選ぶと考えます。
@@ -899,6 +923,8 @@ DataZone の流れは次のとおりです。
 
 ## Amazon Quick Sight {#quick-sight}
 
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
+
 BI とダッシュボードのサービスです。**Amazon QuickSight は Amazon Quick に発展し、BI の機能は Amazon Quick Sight になりました。** API や SDK は従来どおり動きます。
 
 Amazon Quick は、Quick Sight のほか、AI エージェント、Quick Flows、Quick Automate、Quick Index、Quick Research などを含む製品です。
@@ -917,6 +943,8 @@ Amazon Quick は、Quick Sight のほか、AI エージェント、Quick Flows�
 
 ## AWS Data Exchange {#data-exchange}
 
+[:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate }
+
 他の組織とデータの利用権を交換するサービスです。
 
 | 形 | 内容 |
@@ -930,6 +958,8 @@ Amazon Quick は、Quick Sight のほか、AI エージェント、Quick Flows�
 **例**: 気象データの提供者から購読し、自分の S3 に取り込む、または Redshift のデータ共有でコピーせずに参照します。
 
 ## AWS Clean Rooms {#clean-rooms}
+
+[:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 複数の組織が、元のデータを見せ合わずに共同で分析するサービスです。
 
@@ -949,6 +979,8 @@ Amazon Quick は、Quick Sight のほか、AI エージェント、Quick Flows�
 | Redshift データ共有 | 信頼できる相手とライブのテーブルを共有する |
 
 ## S3 Tables と Apache Iceberg {#s3-tables-iceberg}
+
+[:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate }
 
 ### Apache Iceberg {#iceberg}
 

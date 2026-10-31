@@ -1,10 +1,14 @@
 # ネットワーク（VPC / Route 53 / ELB / CloudFront）
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 アプリケーションへの通信の入口と、AWS リソース間の通信経路を構成するサービス群です。開発者にとっては、接続できない原因の切り分け、ロードバランサーのヘルスチェック、CloudFront のキャッシュ設定が特に重要です。
 
 [![VPC と VPC エンドポイント](../assets/diagrams/networking-vpc.png)](../assets/diagrams/networking-vpc.png)
 
 ## VPC の基本 {#vpc}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 ### サブネットとルートテーブル {#subnets-route-tables}
 
@@ -52,6 +56,8 @@ NAT ゲートウェイには AZ ごとに作るゾーン型のほか、複数の
 
 ### セキュリティグループのルール {#security-group-rules}
 
+[:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate }
+
 | 項目 | 内容 |
 |---|---|
 | 指定するもの | プロトコル、ポート範囲、送信元または宛先（CIDR、セキュリティグループ、プレフィックスリスト） |
@@ -64,6 +70,8 @@ NAT ゲートウェイには AZ ごとに作るゾーン型のほか、複数の
 **落とし穴:** 許可のルールしかないので、特定の IP だけ拒否する設定はできません。拒否は NACL で行います。
 
 ### ネットワーク ACL のルール {#nacl-rules}
+
+[:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate }
 
 | 項目 | 既定の NACL | 自作の NACL |
 |---|---|---|
@@ -123,6 +131,8 @@ aws lambda update-function-configuration --function-name orders \
 
 ## VPC エンドポイントと PrivateLink {#vpc-endpoints}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
+
 インターネットを経由せず、VPC から AWS サービスへ接続する仕組みです。NAT の料金削減とセキュリティの向上につながります。
 
 | | ゲートウェイエンドポイント | インターフェイスエンドポイント |
@@ -180,6 +190,8 @@ S3 のバケットポリシーで `aws:SourceVpce` 条件を使うと、特定�
 **落とし穴:** VPC エンドポイント経由のリクエストには、`aws:SourceIp` に使うパブリック IP がありません。公開 IP を条件にした許可はこの経路では効かないので、`aws:SourceVpce` に書き換えます。
 
 ## Route 53 {#route53}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 ### レコード {#route53-records}
 
@@ -279,6 +291,8 @@ TTL は DNS リゾルバーがレコードをキャッシュする秒数です�
 - エンドポイントのファイアウォールは、ヘルスチェッカーの IP を許可します。
 
 ## Elastic Load Balancing {#elb}
+
+[:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 ### ALB と NLB の違い {#alb-vs-nlb}
 
@@ -548,6 +562,8 @@ TLS をターゲットで終端したいなら、NLB の TCP リスナー 443 �
 
 ## CloudFront {#cloudfront}
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 世界中のエッジロケーションでコンテンツをキャッシュして配信する CDN です。応答の高速化とオリジンの負荷軽減が目的です。
 
 [![CloudFront の構成](../assets/diagrams/networking-cloudfront.png)](../assets/diagrams/networking-cloudfront.png)
@@ -707,6 +723,8 @@ url = signer.generate_presigned_url(
 | 向いている用途 | 世界中への限定配信 | 一時的なアップロードやダウンロード（[S3](s3.md)） |
 
 ### Lambda@Edge と CloudFront Functions {#edge-functions}
+
+[:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 | | CloudFront Functions | Lambda@Edge |
 |---|---|---|

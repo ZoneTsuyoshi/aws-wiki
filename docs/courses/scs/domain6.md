@@ -6,6 +6,8 @@
 
 [![マルチアカウント構成の例](../../assets/diagrams/governance-multi-account.png)](../../assets/diagrams/governance-multi-account.png)
 
+この分野に限らず、コース全体で使うサービスは[サービス一覧](services.md)から確認できます。
+
 ## タスク 6.1: アカウントを一元的に展開して管理する {#task-6-1}
 
 ### 6.1.1 Organizations の展開と設定 {#skill-6-1-1}

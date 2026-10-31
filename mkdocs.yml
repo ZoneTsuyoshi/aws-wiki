@@ -30,9 +30,15 @@ plugins:
 validation:
   anchors: warn
 
+extra_css:
+  - stylesheets/extra.css
+
 markdown_extensions:
   - admonition
   - attr_list
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.details
   - pymdownx.highlight
   - tables
@@ -50,6 +56,7 @@ nav:
       - courses/index.md
       - Cloud Practitioner:
           - courses/clf/index.md
+          - サービス一覧: courses/clf/services.md
           - courses/clf/domain1.md
           - courses/clf/domain2.md
           - courses/clf/domain3.md
@@ -57,6 +64,7 @@ nav:
           - スキル対応表: courses/clf/coverage.md
       - AI Practitioner:
           - courses/aif/index.md
+          - サービス一覧: courses/aif/services.md
           - courses/aif/domain1.md
           - courses/aif/domain2.md
           - courses/aif/domain3.md
@@ -65,6 +73,7 @@ nav:
           - スキル対応表: courses/aif/coverage.md
       - AI Business Strategist:
           - courses/aib/index.md
+          - サービス一覧: courses/aib/services.md
           - courses/aib/domain1.md
           - courses/aib/domain2.md
           - courses/aib/domain3.md
@@ -72,6 +81,7 @@ nav:
           - スキル対応表: courses/aib/coverage.md
       - Solutions Architect - Associate:
           - courses/saa/index.md
+          - サービス一覧: courses/saa/services.md
           - courses/saa/domain1.md
           - courses/saa/domain2.md
           - courses/saa/domain3.md
@@ -79,6 +89,7 @@ nav:
           - スキル対応表: courses/saa/coverage.md
       - Developer - Associate:
           - courses/dva/index.md
+          - サービス一覧: courses/dva/services.md
           - 分野1 開発:
               - スキルごとの要点: courses/dva/domain1.md
               - サービス別の学習: courses/dva/study/domain1/index.md
@@ -159,6 +170,7 @@ nav:
               - ネットワークと配信: courses/dva/exercises/networking.md
       - CloudOps Engineer - Associate:
           - courses/soa/index.md
+          - サービス一覧: courses/soa/services.md
           - courses/soa/domain1.md
           - courses/soa/domain2.md
           - courses/soa/domain3.md
@@ -167,6 +179,7 @@ nav:
           - スキル対応表: courses/soa/coverage.md
       - Data Engineer - Associate:
           - courses/dea/index.md
+          - サービス一覧: courses/dea/services.md
           - courses/dea/domain1.md
           - courses/dea/domain2.md
           - courses/dea/domain3.md
@@ -174,6 +187,7 @@ nav:
           - スキル対応表: courses/dea/coverage.md
       - Machine Learning Engineer - Associate:
           - courses/mla/index.md
+          - サービス一覧: courses/mla/services.md
           - courses/mla/domain1.md
           - courses/mla/domain2.md
           - courses/mla/domain3.md
@@ -181,6 +195,7 @@ nav:
           - スキル対応表: courses/mla/coverage.md
       - Solutions Architect - Professional:
           - courses/sap/index.md
+          - サービス一覧: courses/sap/services.md
           - courses/sap/domain1.md
           - courses/sap/domain2.md
           - courses/sap/domain3.md
@@ -189,6 +204,7 @@ nav:
           - スキル対応表: courses/sap/coverage.md
       - DevOps Engineer - Professional:
           - courses/dop/index.md
+          - サービス一覧: courses/dop/services.md
           - courses/dop/domain1.md
           - courses/dop/domain2.md
           - courses/dop/domain3.md
@@ -198,6 +214,7 @@ nav:
           - スキル対応表: courses/dop/coverage.md
       - Generative AI Developer - Professional:
           - courses/aip/index.md
+          - サービス一覧: courses/aip/services.md
           - courses/aip/domain1.md
           - courses/aip/domain2.md
           - courses/aip/domain3.md
@@ -206,6 +223,7 @@ nav:
           - スキル対応表: courses/aip/coverage.md
       - Advanced Networking - Specialty:
           - courses/ans/index.md
+          - サービス一覧: courses/ans/services.md
           - courses/ans/domain1.md
           - courses/ans/domain2.md
           - courses/ans/domain3.md
@@ -213,6 +231,7 @@ nav:
           - スキル対応表: courses/ans/coverage.md
       - Security - Specialty:
           - courses/scs/index.md
+          - サービス一覧: courses/scs/services.md
           - courses/scs/domain1.md
           - courses/scs/domain2.md
           - courses/scs/domain3.md

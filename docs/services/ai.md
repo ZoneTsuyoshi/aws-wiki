@@ -1,5 +1,7 @@
 # AI サービスと AI 開発ツール
 
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIB](../courses/aib/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
+
 アプリに生成 AI を組み込むときは Amazon Bedrock と Amazon Bedrock AgentCore を、開発そのものを AI に支援させるときは Kiro（DVA-C02 では Amazon Q Developer）を使います。DVA-C03 では、これらを安全に呼び出して運用する力が新しく問われます。
 
 [![VPC 内のアプリからインターフェイスエンドポイント経由で Bedrock を呼び、呼び出しログを CloudWatch Logs と S3 に送る構成](../assets/diagrams/ai-bedrock-private-access.png)](../assets/diagrams/ai-bedrock-private-access.png)
@@ -37,6 +39,8 @@ DVA-C03 の対象サービス一覧に載る AI 関連は次の 4 つです。
 ## AI 支援開発ツール {#ai-dev-tools}
 
 ### Kiro {#kiro}
+
+[:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 Kiro は AWS が提供する AI 開発環境で、主に IDE と CLI で使います。自然言語の指示からコードを書かせるだけでなく、仕様を先に固めて、それに沿って実装させる流れを支えます。
 
@@ -145,6 +149,8 @@ TypeScript では any を使わない。
 **落とし穴:** `autoApprove: ["*"]` は、書き込みのツールも確認なしで動かします。秘密情報は `${VAR}` で参照し、値を直接書いたファイルをコミットしません。
 
 ### Amazon Q Developer の現状と Kiro との関係 {#q-developer}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 DVA-C02 が名指しする Amazon Q Developer は、IDE 向けの部分が Kiro へ移行中です。AWS の公式告知で確認できる日程は次のとおりです。
 
@@ -1216,6 +1222,8 @@ CloudWatch investigations は、設定なしでも実行できますが、調査
 **一般的な実践:** X-Ray のトレースや CloudWatch のメトリクスを根拠として AI に渡し、改善案を出させます。Kiro に最適化専用の機能は確認できていないので、Steering で性能要件を伝え、チャットで依頼します。Lambda のメモリ調整などの基本は [Lambda](lambda.md) を参照してください。
 
 ## Amazon Quick {#quick}
+
+[:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIB](../courses/aib/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 Amazon Quick は、チャットを入口にして、データ分析、タスク自動化、調査、Web アプリ作成を行う AI サービスです。開発者向けの API というより、業務ユーザー向けのアプリケーションです。
 

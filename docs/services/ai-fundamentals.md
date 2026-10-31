@@ -1,5 +1,7 @@
 # AI の基礎、責任ある AI、AI 戦略
 
+[:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational .exam-badge--related } [:material-sprout: AIB](../courses/aib/services.md){ .exam-badge .exam-foundational .exam-badge--related } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate .exam-badge--related } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional .exam-badge--related }
+
 AI、機械学習、生成 AI の考え方を、計算例つきでまとめたページです。AIF-C01 と AIB-C01 の中心で、MLA-C02 と AIP-C01 の前提にもなります。
 
 [![データ収集から監視と再学習までの ML ライフサイクルと、各段階で使う AWS サービス](../assets/diagrams/ai-fundamentals-lifecycle.png)](../assets/diagrams/ai-fundamentals-lifecycle.png)

@@ -23,6 +23,8 @@ AWS とハイブリッドのネットワークを、大規模に設計、実装�
     - **Route 53 Resolver** は現在 **Route 53 VPC Resolver** です。
     - **Transit Gateway Network Manager** の機能は、現在は **AWS Global Networks for Transit Gateways** として説明されています。コンソールは AWS Network Manager です。
 
+[:material-format-list-bulleted: このコースのサービス一覧](services.md){ .md-button }
+
 ## 試験の概要 {#overview}
 
 | 項目 | 内容 | 出典 |

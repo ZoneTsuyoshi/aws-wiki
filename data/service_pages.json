@@ -1,0 +1,907 @@
+{
+ "AWS AI service pricing structures (for example, consumption-based, instance-based, seat-based)": [
+  "cost-management#ai-pricing"
+ ],
+ "AWS Amplify": [
+  "cicd#amplify"
+ ],
+ "AWS App Mesh": [
+  "network-connectivity#app-mesh"
+ ],
+ "AWS App Runner": [
+  "other-services#app-runner"
+ ],
+ "AWS App2Container": [
+  "migration#app2container"
+ ],
+ "AWS AppConfig": [
+  "secrets#appconfig"
+ ],
+ "AWS AppSync": [
+  "other-services#appsync"
+ ],
+ "AWS Application Auto Scaling": [
+  "operations#auto-scaling"
+ ],
+ "AWS Application Discovery Service": [
+  "migration#application-discovery"
+ ],
+ "AWS Application Migration Service": [
+  "migration#mgn"
+ ],
+ "AWS Artifact": [
+  "cloud-foundations#artifact"
+ ],
+ "AWS Audit Manager": [
+  "threat-detection#audit-manager"
+ ],
+ "AWS Auto Scaling": [
+  "operations#auto-scaling"
+ ],
+ "AWS Backup": [
+  "resilience#backup"
+ ],
+ "AWS Batch": [
+  "other-services#batch"
+ ],
+ "AWS Billing and Cost Management": [
+  "cost-management#billing"
+ ],
+ "AWS Budgets": [
+  "cost-management#budgets"
+ ],
+ "AWS CDK": [
+  "iac#cdk"
+ ],
+ "AWS CLI": [
+  "iac#aws-cli"
+ ],
+ "AWS Certificate Manager (ACM)": [
+  "certificates#acm"
+ ],
+ "AWS Chatbot": [
+  "operations#q-chat"
+ ],
+ "AWS Clean Rooms": [
+  "data-engineering#clean-rooms"
+ ],
+ "AWS Client VPN": [
+  "network-connectivity#client-vpn"
+ ],
+ "AWS Cloud Adoption Framework (AWS CAF)": [
+  "cloud-foundations#caf"
+ ],
+ "AWS Cloud Map": [],
+ "AWS Cloud WAN": [
+  "network-connectivity#cloud-wan"
+ ],
+ "AWS CloudFormation": [
+  "iac#cloudformation-template"
+ ],
+ "AWS CloudHSM": [
+  "identity-directory#cloudhsm"
+ ],
+ "AWS CloudShell": [
+  "iac#cloudshell"
+ ],
+ "AWS CloudTrail": [
+  "observability#cloudtrail"
+ ],
+ "AWS CloudTrail Lake": [
+  "observability#cloudtrail-lake"
+ ],
+ "AWS CodeArtifact": [
+  "cicd#codeartifact"
+ ],
+ "AWS CodeBuild": [
+  "cicd#codebuild"
+ ],
+ "AWS CodeCommit": [
+  "cicd#codecommit-status"
+ ],
+ "AWS CodeConnections": [
+  "cicd#repositories"
+ ],
+ "AWS CodeDeploy": [
+  "cicd#codedeploy"
+ ],
+ "AWS CodePipeline": [
+  "cicd#codepipeline"
+ ],
+ "AWS CodeStar": [],
+ "AWS Compute Optimizer": [
+  "cost-management#compute-optimizer"
+ ],
+ "AWS Config": [
+  "governance#config"
+ ],
+ "AWS Control Tower": [
+  "governance#control-tower"
+ ],
+ "AWS Copilot": [
+  "containers#copilot"
+ ],
+ "AWS Cost Anomaly Detection": [
+  "cost-management#cost-anomaly-detection"
+ ],
+ "AWS Cost Categories": [
+  "cost-management#cost-categories"
+ ],
+ "AWS Cost Explorer": [
+  "cost-management#cost-explorer"
+ ],
+ "AWS Cost and Usage Report": [
+  "cost-management#data-exports"
+ ],
+ "AWS Cost and Usage Reports": [
+  "cost-management#data-exports"
+ ],
+ "AWS DMS": [
+  "migration#dms"
+ ],
+ "AWS Data Exchange": [
+  "data-engineering#data-exchange"
+ ],
+ "AWS Data Pipeline": [
+  "data-engineering#data-pipeline"
+ ],
+ "AWS Data Transfer Terminal": [
+  "migration#data-transfer-terminal"
+ ],
+ "AWS DataSync": [
+  "migration#datasync"
+ ],
+ "AWS Database Migration Service (AWS DMS)": [
+  "migration#dms"
+ ],
+ "AWS DeepComposer": [
+  "other-services#deepcomposer"
+ ],
+ "AWS DeepRacer": [
+  "other-services#deepracer"
+ ],
+ "AWS DevOps Agent": [
+  "operations#devops-agent"
+ ],
+ "AWS Device Farm": [
+  "operations#device-farm"
+ ],
+ "AWS Direct Connect": [
+  "network-connectivity#direct-connect"
+ ],
+ "AWS Directory Service": [
+  "identity-directory#directory-service"
+ ],
+ "AWS Distro for OpenTelemetry": [
+  "observability#xray-opentelemetry"
+ ],
+ "AWS Elastic Beanstalk": [
+  "ec2-beanstalk"
+ ],
+ "AWS Elastic Disaster Recovery": [
+  "resilience#drs"
+ ],
+ "AWS Elemental MediaConvert": [
+  "other-services#mediaconvert"
+ ],
+ "AWS Elemental MediaLive": [
+  "other-services#medialive"
+ ],
+ "AWS Encryption SDK": [
+  "kms#encryption-sdk"
+ ],
+ "AWS Fargate": [
+  "containers#fargate-vs-ec2"
+ ],
+ "AWS Fault Injection Service": [
+  "resilience#fis"
+ ],
+ "AWS Fault Injection Simulator (AWS FIS)": [
+  "resilience#fis"
+ ],
+ "AWS Firewall Manager": [
+  "threat-detection#firewall-manager"
+ ],
+ "AWS Global Accelerator": [
+  "network-connectivity#global-accelerator"
+ ],
+ "AWS Glue": [
+  "data-engineering#glue"
+ ],
+ "AWS Glue Data Quality": [
+  "data-engineering#glue-data-quality"
+ ],
+ "AWS Glue DataBrew": [
+  "data-engineering#databrew"
+ ],
+ "AWS Ground Station": [
+  "other-services#ground-station"
+ ],
+ "AWS Health": [
+  "cloud-foundations#health"
+ ],
+ "AWS Health Dashboard": [
+  "cloud-foundations#health"
+ ],
+ "AWS HealthLake": [
+  "ai-managed-services#healthlake"
+ ],
+ "AWS IAM": [
+  "iam"
+ ],
+ "AWS IAM Access Analyzer": [
+  "identity-directory#access-analyzer"
+ ],
+ "AWS IAM Identity Center": [
+  "identity-directory#identity-center"
+ ],
+ "AWS Identity and Access Management (IAM)": [
+  "iam"
+ ],
+ "AWS IoT Core": [
+  "other-services#iot-core"
+ ],
+ "AWS KMS": [
+  "kms"
+ ],
+ "AWS Key Management Service (AWS KMS)": [
+  "kms"
+ ],
+ "AWS Lake Formation": [
+  "data-engineering#lake-formation"
+ ],
+ "AWS Lambda": [
+  "lambda"
+ ],
+ "AWS Lambda@Edge": [
+  "networking#edge-functions"
+ ],
+ "AWS License Manager": [
+  "governance#license-manager"
+ ],
+ "AWS Local Zones": [
+  "cloud-foundations#local-zones"
+ ],
+ "AWS Managed Service for Prometheus": [
+  "operations#managed-prometheus"
+ ],
+ "AWS Management Console": [
+  "cloud-foundations#access-methods"
+ ],
+ "AWS Marketplace": [
+  "cloud-foundations#marketplace"
+ ],
+ "AWS Migration Hub": [
+  "migration#migration-hub"
+ ],
+ "AWS Network Firewall": [
+  "threat-detection#network-firewall",
+  "network-connectivity#network-firewall"
+ ],
+ "AWS OpsWorks": [
+  "operations#opsworks"
+ ],
+ "AWS Organizations": [
+  "governance#organizations"
+ ],
+ "AWS Outposts": [
+  "cloud-foundations#outposts"
+ ],
+ "AWS Pricing Calculator": [
+  "cost-management#pricing-calculator"
+ ],
+ "AWS Private CA": [
+  "certificates#private-ca"
+ ],
+ "AWS Private Certificate Authority": [
+  "certificates#private-ca"
+ ],
+ "AWS PrivateLink": [
+  "networking#vpc-endpoints"
+ ],
+ "AWS Proton": [
+  "governance#proton"
+ ],
+ "AWS Resilience Hub": [
+  "resilience#resilience-hub"
+ ],
+ "AWS Resource Access Manager (AWS RAM)": [
+  "governance#ram"
+ ],
+ "AWS SAM": [
+  "iac#sam"
+ ],
+ "AWS SCT": [
+  "migration#sct"
+ ],
+ "AWS SDKs and Tools": [
+  "sdk-resilience"
+ ],
+ "AWS STS": [
+  "iam#sts-settings"
+ ],
+ "AWS Schema Conversion Tool (AWS SCT)": [
+  "migration#sct"
+ ],
+ "AWS Secrets Manager": [
+  "secrets#secrets-manager"
+ ],
+ "AWS Security Agent": [],
+ "AWS Security Hub": [
+  "threat-detection#security-hub"
+ ],
+ "AWS Serverless Application Repository": [
+  "iac#sam"
+ ],
+ "AWS Service Catalog": [
+  "governance#service-catalog"
+ ],
+ "AWS Shield": [
+  "threat-detection#shield"
+ ],
+ "AWS Shield Advanced": [
+  "threat-detection#shield-advanced"
+ ],
+ "AWS Site-to-Site VPN": [
+  "network-connectivity#site-to-site-vpn"
+ ],
+ "AWS Snow Family": [
+  "migration#snow-family"
+ ],
+ "AWS Step Functions": [
+  "step-functions"
+ ],
+ "AWS Storage Gateway": [
+  "migration#storage-gateway"
+ ],
+ "AWS Support": [
+  "cloud-foundations#support-plans"
+ ],
+ "AWS Systems Manager": [
+  "operations#systems-manager"
+ ],
+ "AWS Tools and SDKs": [
+  "sdk-resilience"
+ ],
+ "AWS Transfer Family": [
+  "migration#transfer-family"
+ ],
+ "AWS Transform": [
+  "migration#transform"
+ ],
+ "AWS Transform MGN (previously known as AWS Application Migration Service)": [
+  "migration#mgn"
+ ],
+ "AWS Transit Gateway": [
+  "network-connectivity#transit-gateway"
+ ],
+ "AWS Trusted Advisor": [
+  "cloud-foundations#trusted-advisor"
+ ],
+ "AWS User Notifications": [
+  "operations#user-notifications"
+ ],
+ "AWS VPN": [
+  "network-connectivity#site-to-site-vpn"
+ ],
+ "AWS Verified Access": [
+  "identity-directory#verified-access"
+ ],
+ "AWS WAF": [
+  "certificates#waf"
+ ],
+ "AWS Wavelength": [
+  "cloud-foundations#wavelength"
+ ],
+ "AWS Well-Architected Tool": [
+  "cloud-foundations#wa-tool"
+ ],
+ "AWS X-Ray": [
+  "observability#xray"
+ ],
+ "AWS shared responsibility model": [
+  "cloud-foundations#shared-responsibility"
+ ],
+ "Amazon API Gateway": [
+  "api-gateway"
+ ],
+ "Amazon AppFlow": [
+  "data-engineering#appflow"
+ ],
+ "Amazon AppStream 2.0": [
+  "other-services#appstream"
+ ],
+ "Amazon Application Recovery Controller": [
+  "resilience#arc"
+ ],
+ "Amazon Athena": [
+  "streaming#athena"
+ ],
+ "Amazon Augmented AI": [
+  "ai-managed-services#a2i"
+ ],
+ "Amazon Aurora": [
+  "databases#aurora"
+ ],
+ "Amazon Aurora Serverless": [
+  "databases#aurora-serverless-v2"
+ ],
+ "Amazon Aurora Serverless v2": [
+  "databases#aurora-serverless-v2"
+ ],
+ "Amazon Bedrock": [
+  "ai",
+  "genai-apps"
+ ],
+ "Amazon Bedrock AgentCore": [
+  "ai",
+  "genai-apps#agentcore"
+ ],
+ "Amazon Bedrock Knowledge Bases": [
+  "genai-apps#knowledge-bases"
+ ],
+ "Amazon Bedrock Prompt Flows": [
+  "genai-apps#flows"
+ ],
+ "Amazon Bedrock Prompt Management": [
+  "genai-apps#prompt-management"
+ ],
+ "Amazon Braket": [
+  "other-services#braket"
+ ],
+ "Amazon CloudFront": [
+  "networking#cloudfront"
+ ],
+ "Amazon CloudWatch": [
+  "observability"
+ ],
+ "Amazon CloudWatch Logs": [
+  "observability#cloudwatch-logs"
+ ],
+ "Amazon CloudWatch Synthetics": [
+  "operations#synthetics"
+ ],
+ "Amazon CodeGuru": [
+  "threat-detection#codeguru-security"
+ ],
+ "Amazon CodeGuru Security": [
+  "threat-detection#codeguru-security"
+ ],
+ "Amazon Cognito": [
+  "cognito"
+ ],
+ "Amazon Comprehend": [
+  "ai-managed-services#comprehend"
+ ],
+ "Amazon Comprehend Medical": [
+  "ai-managed-services#comprehend-medical"
+ ],
+ "Amazon Connect": [
+  "other-services#connect"
+ ],
+ "Amazon Data Firehose": [
+  "streaming#firehose"
+ ],
+ "Amazon Data Lifecycle Manager": [
+  "storage#ebs-snapshots"
+ ],
+ "Amazon Detective": [
+  "threat-detection#detective"
+ ],
+ "Amazon DevOps Guru": [
+  "operations#devops-guru"
+ ],
+ "Amazon DocumentDB": [
+  "databases-specialized#documentdb"
+ ],
+ "Amazon DocumentDB (with MongoDB compatibility)": [
+  "databases-specialized#documentdb"
+ ],
+ "Amazon DynamoDB": [
+  "dynamodb"
+ ],
+ "Amazon DynamoDB Accelerator (DAX)": [
+  "dynamodb#dax"
+ ],
+ "Amazon DynamoDB Streams": [
+  "dynamodb#streams"
+ ],
+ "Amazon EBS": [
+  "storage#ebs-encryption"
+ ],
+ "Amazon EC2": [
+  "ec2-beanstalk",
+  "operations#ec2-operations"
+ ],
+ "Amazon EC2 (including EC2 Image Builder, EC2 Instance Connect)": [
+  "ec2-beanstalk",
+  "operations#ec2-operations",
+  "operations#image-builder"
+ ],
+ "Amazon EC2 Auto Scaling": [
+  "ec2-beanstalk#auto-scaling",
+  "operations#auto-scaling"
+ ],
+ "Amazon EC2 Image Builder": [
+  "operations#image-builder"
+ ],
+ "Amazon EC2 security groups": [
+  "networking#security-group-rules"
+ ],
+ "Amazon ECR": [
+  "containers#ecr"
+ ],
+ "Amazon ECS": [
+  "containers#ecs"
+ ],
+ "Amazon ECS Anywhere": [
+  "operations#ecs-anywhere"
+ ],
+ "Amazon EFS": [
+  "storage#efs-settings"
+ ],
+ "Amazon EFS (including EFS Lifecycle policies)": [
+  "storage#efs-settings"
+ ],
+ "Amazon EKS": [
+  "containers#eks"
+ ],
+ "Amazon EKS Anywhere": [
+  "operations#eks-anywhere"
+ ],
+ "Amazon EKS Distro": [
+  "operations#eks-distro"
+ ],
+ "Amazon EMR": [
+  "data-engineering#emr"
+ ],
+ "Amazon ElastiCache": [
+  "databases#elasticache"
+ ],
+ "Amazon Elastic Block Store (Amazon EBS)": [
+  "storage#ebs-encryption"
+ ],
+ "Amazon Elastic Container Registry (Amazon ECR)": [
+  "containers#ecr"
+ ],
+ "Amazon Elastic Container Service (Amazon ECS)": [
+  "containers#ecs"
+ ],
+ "Amazon Elastic File System (Amazon EFS)": [
+  "storage#efs-settings"
+ ],
+ "Amazon Elastic Kubernetes Service (Amazon EKS)": [
+  "containers#eks"
+ ],
+ "Amazon EventBridge": [
+  "messaging#eventbridge"
+ ],
+ "Amazon FSx": [
+  "storage-advanced#fsx-selection"
+ ],
+ "Amazon FSx (for all types)": [
+  "storage-advanced#fsx-selection"
+ ],
+ "Amazon FSx for Lustre": [
+  "storage-advanced#fsx-lustre"
+ ],
+ "Amazon FSx for NetApp ONTAP": [
+  "storage-advanced#fsx-ontap"
+ ],
+ "Amazon FSx for OpenZFS": [
+  "storage-advanced#fsx-openzfs"
+ ],
+ "Amazon FSx for Windows File Server": [
+  "storage-advanced#fsx-windows"
+ ],
+ "Amazon GameLift": [
+  "other-services#gamelift"
+ ],
+ "Amazon GuardDuty": [
+  "threat-detection#guardduty"
+ ],
+ "Amazon Inspector": [
+  "threat-detection#inspector"
+ ],
+ "Amazon Interactive Video Service (Amazon IVS)": [
+  "other-services#ivs"
+ ],
+ "Amazon Kendra": [
+  "ai-managed-services#kendra"
+ ],
+ "Amazon Keyspaces": [
+  "databases-specialized#keyspaces"
+ ],
+ "Amazon Kinesis": [
+  "streaming#kinesis-data-streams"
+ ],
+ "Amazon Kinesis Data Firehose": [
+  "streaming#firehose"
+ ],
+ "Amazon Kinesis Data Streams": [
+  "streaming#kinesis-data-streams"
+ ],
+ "Amazon Kinesis Video Streams": [
+  "other-services#kinesis-video"
+ ],
+ "Amazon Lex": [
+  "ai-managed-services#lex"
+ ],
+ "Amazon Lightsail": [
+  "cloud-foundations#lightsail"
+ ],
+ "Amazon MQ": [
+  "other-services#mq"
+ ],
+ "Amazon Macie": [
+  "threat-detection#macie"
+ ],
+ "Amazon Managed Blockchain (AMB)": [
+  "other-services#managed-blockchain"
+ ],
+ "Amazon Managed Grafana": [
+  "operations#managed-grafana"
+ ],
+ "Amazon Managed Service for Apache Flink": [
+  "data-engineering#flink"
+ ],
+ "Amazon Managed Service for Prometheus": [
+  "operations#managed-prometheus"
+ ],
+ "Amazon Managed Streaming for Apache Kafka (Amazon MSK)": [
+  "data-engineering#msk"
+ ],
+ "Amazon Managed Workflows for Apache Airflow (Amazon MWAA)": [
+  "data-engineering#mwaa"
+ ],
+ "Amazon MemoryDB": [
+  "databases-specialized#memorydb"
+ ],
+ "Amazon MemoryDB for Redis": [
+  "databases-specialized#memorydb"
+ ],
+ "Amazon Neptune": [
+  "databases-specialized#neptune"
+ ],
+ "Amazon Nova": [
+  "genai-apps#nova-titan"
+ ],
+ "Amazon OpenSearch Service": [
+  "streaming#opensearch"
+ ],
+ "Amazon Personalize": [
+  "ai-managed-services#personalize"
+ ],
+ "Amazon Polly": [
+  "ai-managed-services#polly"
+ ],
+ "Amazon Q": [
+  "ai#q-developer"
+ ],
+ "Amazon Q Business": [
+  "ai-managed-services#q-business"
+ ],
+ "Amazon Q Business Apps": [
+  "ai-managed-services#q-business"
+ ],
+ "Amazon Q Developer": [
+  "ai#q-developer"
+ ],
+ "Amazon Quick": [
+  "ai#quick"
+ ],
+ "Amazon Quick Sight": [
+  "data-engineering#quick-sight"
+ ],
+ "Amazon QuickSight": [
+  "data-engineering#quick-sight"
+ ],
+ "Amazon RDS": [
+  "databases#rds"
+ ],
+ "Amazon RDS Custom for Oracle": [
+  "databases-specialized#rds-custom"
+ ],
+ "Amazon RDS Proxy": [
+  "databases#rds-proxy"
+ ],
+ "Amazon Redshift": [
+  "data-engineering#redshift"
+ ],
+ "Amazon Rekognition": [
+  "ai-managed-services#rekognition"
+ ],
+ "Amazon Route 53": [
+  "networking#route53"
+ ],
+ "Amazon Route 53 (including Route 53 Resolver DNS Firewall)": [
+  "networking#route53",
+  "network-connectivity#dns-firewall"
+ ],
+ "Amazon Route 53 Resolver DNS Firewall": [
+  "network-connectivity#dns-firewall"
+ ],
+ "Amazon S3": [
+  "s3"
+ ],
+ "Amazon S3 Cross-Region Replication": [
+  "s3#replication"
+ ],
+ "Amazon S3 Glacier": [
+  "s3#glacier-retrieval"
+ ],
+ "Amazon S3 Intelligent-Tiering": [
+  "s3#storage-classes"
+ ],
+ "Amazon S3 Lifecycle policies": [
+  "s3#lifecycle"
+ ],
+ "Amazon S3 Tables": [
+  "data-engineering#s3-tables-iceberg"
+ ],
+ "Amazon SES": [
+  "other-services#ses"
+ ],
+ "Amazon SNS": [
+  "messaging#sns"
+ ],
+ "Amazon SQS": [
+  "messaging#sqs"
+ ],
+ "Amazon SageMaker AI": [
+  "sagemaker"
+ ],
+ "Amazon SageMaker Clarify": [
+  "sagemaker#clarify"
+ ],
+ "Amazon SageMaker Data Wrangler": [
+  "sagemaker#data-wrangler"
+ ],
+ "Amazon SageMaker Ground Truth": [
+  "sagemaker#ground-truth"
+ ],
+ "Amazon SageMaker JumpStart": [
+  "sagemaker#jumpstart"
+ ],
+ "Amazon SageMaker Model Monitor": [
+  "sagemaker#model-monitor"
+ ],
+ "Amazon SageMaker Model Registry": [
+  "sagemaker#model-registry"
+ ],
+ "Amazon SageMaker Neo": [
+  "sagemaker#neo"
+ ],
+ "Amazon SageMaker Processing": [
+  "sagemaker#processing"
+ ],
+ "Amazon SageMaker Unified Studio": [
+  "sagemaker#unified-studio"
+ ],
+ "Amazon Security Lake": [
+  "threat-detection#security-lake"
+ ],
+ "Amazon Simple Email Service (Amazon SES)": [
+  "other-services#ses"
+ ],
+ "Amazon Simple Notification Service (Amazon SNS)": [
+  "messaging#sns"
+ ],
+ "Amazon Simple Queue Service (Amazon SQS)": [
+  "messaging#sqs"
+ ],
+ "Amazon Simple Storage Service (Amazon S3)": [
+  "s3"
+ ],
+ "Amazon Textract": [
+  "ai-managed-services#textract"
+ ],
+ "Amazon Timestream": [
+  "databases-specialized#timestream"
+ ],
+ "Amazon Titan": [
+  "genai-apps#nova-titan"
+ ],
+ "Amazon Transcribe": [
+  "ai-managed-services#transcribe"
+ ],
+ "Amazon Transcribe Medical": [
+  "ai-managed-services#transcribe-medical"
+ ],
+ "Amazon Translate": [
+  "ai-managed-services#translate"
+ ],
+ "Amazon VPC": [
+  "networking#vpc"
+ ],
+ "Amazon VPC IP Address Manager (IPAM)": [
+  "network-connectivity#ipam"
+ ],
+ "Amazon VPC Lattice": [
+  "network-connectivity#vpc-lattice"
+ ],
+ "Amazon Verified Permissions": [
+  "identity-directory#verified-permissions"
+ ],
+ "Amazon WorkSpaces": [
+  "other-services#workspaces"
+ ],
+ "Amazon WorkSpaces Secure Browser": [
+  "other-services#secure-browser"
+ ],
+ "Automated Forensics Orchestrator for Amazon EC2": [
+  "threat-detection#forensics-orchestrator"
+ ],
+ "EC2 Image Builder": [
+  "operations#image-builder"
+ ],
+ "Egress-only internet gateways": [
+  "network-connectivity#ipv6"
+ ],
+ "Elastic IP addresses": [
+  "network-connectivity#elastic-ip"
+ ],
+ "Elastic Load Balancing (ELB)": [
+  "networking#elb"
+ ],
+ "IAM": [
+  "iam"
+ ],
+ "IAM Access Analyzer": [
+  "identity-directory#access-analyzer"
+ ],
+ "IAM Identity Center": [
+  "identity-directory#identity-center"
+ ],
+ "Internet gateways": [
+  "networking#vpc"
+ ],
+ "Kiro": [
+  "ai#kiro"
+ ],
+ "Migration Evaluator": [
+  "migration#migration-evaluator"
+ ],
+ "NAT gateways": [
+  "network-connectivity#nat-gateway"
+ ],
+ "Network ACLs": [
+  "networking#nacl-rules"
+ ],
+ "Network Access Analyzer": [
+  "network-connectivity#network-access-analyzer"
+ ],
+ "Red Hat OpenShift Service on AWS (ROSA)": [
+  "operations#rosa"
+ ],
+ "Reserved Instances": [
+  "cost-management#reserved-instances"
+ ],
+ "Savings Plans": [
+  "cost-management#savings-plans"
+ ],
+ "Service Quotas": [
+  "observability#quota-alerts"
+ ],
+ "Service control policies (SCPs)": [
+  "governance#scp"
+ ],
+ "Strands Agents": [
+  "genai-apps#agent-patterns"
+ ],
+ "VMware Cloud on AWS": [
+  "migration#vmware"
+ ],
+ "VPC Flow Logs": [
+  "network-connectivity#flow-log-analysis"
+ ],
+ "VPC Reachability Analyzer": [
+  "network-connectivity#reachability-analyzer"
+ ],
+ "VPC endpoints": [
+  "networking#vpc-endpoints"
+ ],
+ "VPC peering": [
+  "network-connectivity#vpc-peering"
+ ]
+}
