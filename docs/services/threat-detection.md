@@ -54,6 +54,245 @@ flowchart TD
 | Network Firewall | IPS、次世代ファイアウォール | シグネチャやドメインで通信を止める | 機器ではなく、VPC のルートで通信を通すエンドポイント |
 | Shield | ISP や専門業者の DDoS 対策 | 大量の通信を手前で吸収する | Standard は全利用者に自動で適用される |
 
+## 使いどころと具体例 {#use-cases}
+
+どのサービスも単独で有効にできますが、実際には「見つけたら知らせ、決まった対応は自動で行い、残りを人が調べる」形で組み合わせます。最初に有効にするのは、多くの場合 GuardDuty と Security Hub CSPM です。
+
+### 使う場面 {#use-cases-fit}
+
+| 場面 | 具体例 | 使う機能 |
+| --- | --- | --- |
+| 盗まれたアクセスキーの悪用に気づく | ゲーム会社で、漏れたキーから深夜に GPU のインスタンスが 50 台起動される | [GuardDuty](#guardduty)、[検出結果](#guardduty-findings) |
+| 夜間の初動を自動にする | 担当が 5 人の会社が、暗号通貨の採掘を検出したら EC2 をすぐ隔離する | [EventBridge による自動化](#ir-eventbridge)、[EC2 の隔離](#ir-ec2-isolation) |
+| 多数のアカウントの準拠状況をそろえる | 60 アカウントの SaaS が、顧客の審査に CIS の準拠のスコアを示す | [Security Hub CSPM](#security-hub-cspm)、[組織と集約](#security-hub-org) |
+| コンテナイメージの CVE を出荷前に止める | 製造業の IoT 基盤が、重大な CVE のあるイメージをデプロイさせない | [Inspector の ECR](#inspector-ecr)、[コードのスキャン](#inspector-code) |
+| S3 のどこに個人情報があるか棚卸しする | 大学が、研究室ごとに作られた 900 のバケットから学生の情報を探す | [Macie](#macie)、[識別子](#macie-identifiers) |
+| 検出結果の前後に何が起きたかを調べる | EC2 のロールの認証情報が外で使われた検出結果から、攻撃者が触れた範囲を追う | [Detective](#detective) |
+| 複数のログを 1 年以上残し、SIEM に渡す | ネット証券が、フローログと DNS ログと検出結果を同じ形式で保管する | [Security Lake](#security-lake) |
+| 選挙速報の夜の DDoS に備える | ニュースサイトが、攻撃中に AWS の専門チームの支援を受ける | [Shield Advanced](#shield-advanced)、[SRT](#shield-srt) |
+| 新しい ALB にも WAF を必ず付ける | 12 アカウントのメディア企業が、作られた CloudFront に共通のルールを自動で付ける | [Firewall Manager](#firewall-manager) |
+| 外向きの通信を許可したドメインだけにする | 証券会社が、取引所と OS の更新サーバー以外への通信を止める | [Network Firewall](#network-firewall)、[ルールの評価](#nfw-rules) |
+| 監査人に AWS 側の SOC 2 を渡す | 会計 SaaS が、顧客の監査部門に AWS の報告書を提出する | [AWS Artifact](#artifact) |
+
+### 使わない方がよい場面 {#use-cases-avoid}
+
+| 場面 | 理由 | 代わりの選択肢 |
+| --- | --- | --- |
+| 攻撃をその場で止めたいのに、GuardDuty だけを有効にする | GuardDuty は検出だけで、ブロックしない | [WAF](certificates.md#waf)、[Network Firewall](#network-firewall)、[EventBridge での自動対応](#ir-eventbridge) |
+| 生のログを何年も検索したいのに、Security Hub に集める | Security Hub が集めるのは検出結果で、ログそのものではない | [Security Lake](#security-lake)、CloudTrail の証跡 |
+| これから監査の証拠集めを自動化したい | Audit Manager は新規受付を終了している | [Config の適合パック](governance.md#config-conformance-packs) |
+| RDS や DynamoDB の中の個人情報を Macie で直接探す | Macie の対象は S3 だけ | S3 へエクスポートしてから Macie で検査する |
+| 悪性のドメインの名前解決だけを止めたい | Network Firewall は VPC のルートを変え、エンドポイントの費用もかかる | Route 53 Resolver DNS Firewall（[比較](#nfw-why)） |
+| 月に数万 PV の小さなサイトに Shield Advanced | 1 年契約の月額の固定費がかかる。L3、L4 は Standard が無料で守る | [Shield Standard](#shield-standard) と [WAF](certificates.md#waf) のレートベースルール |
+
+### 例: スマホゲームの会社が盗まれたキーの悪用を夜中に止める {#use-case-game}
+
+**状況:** 月間 300 万人が遊ぶスマホゲームの会社です。タイトルと環境ごとに 25 アカウントがあり、運用の担当は 5 人で、夜間は誰も画面を見ていません。以前、開発者の PC から漏れたアクセスキーで、暗号通貨の採掘用のインスタンスを大量に起動されたことがあります。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    A["25 アカウントの GuardDuty"] --> D["委任管理者<br/>セキュリティアカウント"]
+    D --> EB["EventBridge"]
+    EB -- "重要度 7 以上の<br/>CryptoCurrency:EC2" --> SF["Step Functions"]
+    SF --> SSM["SSM Automation<br/>EC2 を隔離"]
+    SF --> SNS["SNS で担当に通知"]
+    EB -- "重要度 4 以上 7 未満" --> SNS
+    D --> DT["Detective で翌朝に調査"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| 有効にするリージョン | すべてのリージョンで、委任管理者と自動有効化 `ALL` を設定する | 攻撃者は使っていないリージョンで起動する（[複数アカウント](#guardduty-multi-account)） |
+| 更新の通知の頻度 | `FIFTEEN_MINUTES` | 採掘が続いているかを 15 分ごとに知る（[イベント連携](#guardduty-events)） |
+| 自動で隔離する条件 | 重要度 7 以上、型が `CryptoCurrency:EC2` で始まる | Medium まで自動にすると、本番のゲームサーバーを誤って止める |
+| 隔離の手順 | Auto Scaling から外す、隔離用の SG に置き換える、NACL で遮断、スナップショット | 追跡中の接続は SG では切れない（[EC2 の隔離](#ir-ec2-isolation)） |
+| マルウェアのスキャン | スナップショットの保持を有効にしておく | スキャンの前に有効にしないと証拠が残らない（[保護プラン](#guardduty-protection-plans)） |
+| 検出結果のエクスポート | KMS キー付きの S3。400 日後に削除 | GuardDuty の保持は 90 日なので、1 年分の調査に足りない |
+| SCP | `cloudtrail:StopLogging` と `cloudtrail:DeleteTrail` を拒否する | 攻撃者がログを止めるのを防ぐ（[準備](#ir-preparation)） |
+
+**なぜこのサービスか:**
+
+| 選択肢 | 選ばなかった理由 |
+| --- | --- |
+| CloudTrail のイベントに自分で CloudWatch アラームを書く | 「普段と違う」の判定を自分で作れない。脅威情報との照合もない |
+| エージェント型の IDS を全インスタンスに入れる | API の操作（盗まれたキーでの `RunInstances`）は見えない |
+
+**つまずきやすい点:**
+
+- Auto Scaling から外す前に隔離すると、不健全と判定されたインスタンスが終了され、証拠が消えます。
+- 自動化を本番に入れる前に、`create-sample-findings` で専用のアカウントに検出結果を起こし、Step Functions まで動くことを確かめます（[計画のテスト](#ir-testing)）。
+- 開発の検証で負荷試験ツールを動かすと、ポートスキャンの検出結果が出ます。抑制ルールは型とインスタンス ID で狭く作ります（[抑制ルール](#guardduty-suppression)）。
+
+### 例: 経費精算の SaaS が 60 アカウントの準拠状況をそろえる {#use-case-saas}
+
+**状況:** 顧客企業 3,000 社が使う経費精算の SaaS です。東京、大阪、バージニア北部に 60 アカウントがあります。大企業の顧客から、セキュリティの審査で「CIS の基準への準拠の状況」を毎年求められます。セキュリティの担当は 2 人です。
+
+**構成:**
+
+| 要素 | 設定 |
+| --- | --- |
+| 委任管理者 | セキュリティアカウント（管理アカウントは使わない） |
+| ホームリージョン | 東京。大阪とバージニア北部をリンクリージョンにする |
+| 中央設定のポリシー | 本番の OU に FSBP と CIS、開発の OU に FSBP だけ（[組織と集約](#security-hub-org)） |
+| 前提 | 全アカウント、全リージョンで AWS Config を有効にする |
+| 起票 | Security Hub の自動化ルールで、本番の Critical を Jira Cloud に起票する |
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| 自動化ルール 1 | 開発のアカウントの `INFORMATIONAL` を `SUPPRESSED` にする | 2 人で見る件数を減らす |
+| 自動化ルール 2 | 本番のアカウントの `HIGH` を `CRITICAL` に上げる | 顧客のデータがある所を先に直す（[自動化](#security-hub-automation)） |
+| EventBridge | `Workflow.Status` が `SUPPRESSED` のものを除いて SNS へ | 抑制したものを通知しない |
+| 審査に出す数値 | 本番の OU の CIS のスコア | `Passed` の割合なので、そのまま説明に使える |
+
+**なぜこのサービスか:** 60 アカウントの Config の結果を、担当 2 人が順に見ることはできません。CSPM の中央設定なら、本番の OU に入った新しいアカウントにも同じ標準が自動でかかり、顧客に「全本番環境で同じ基準を点検している」と説明できます。
+
+**つまずきやすい点:**
+
+- Config を有効にしていないリージョンがあると、そのリージョンのコントロールの結果が出ず、`Config.1` が失敗します。
+- 自動化ルールは、リンクリージョンでは作れません。東京で作ります。
+- ローカル設定のまま標準を変えると、既存のアカウントには反映されず、スコアがアカウントごとにばらつきます。
+
+### 例: 製造業の IoT 基盤がコンテナの脆弱性を出荷前に止める {#use-case-factory}
+
+**状況:** 全国 15 か所の工場の稼働データを集める基盤です。コンテナのイメージが 120 種類あり、月に 400 回デプロイします。EC2 のノードはインターネットへの経路のないサブネットにあり、工場の設備に合わせて半年以上更新しないイメージもあります。
+
+**構成:**
+
+```mermaid
+flowchart LR
+    DEV["開発者の push"] --> CI["CodePipeline<br/>SBOM Generator と Scan API"]
+    CI -- "Critical なし" --> ECR["ECR<br/>拡張スキャン"]
+    ECR --> EKS["EC2 のノード"]
+    ECR -- "新しい CVE" --> EB["EventBridge"]
+    EB --> SNS["担当に通知"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| CI での検査 | Scan API で Critical が 1 件でもあればビルドを失敗にする | ECR に入る前に止める（[Lambda とコードのスキャン](#inspector-code)） |
+| ECR の再スキャンの期間 | 既定（有効にした時期により 7、14、90 日）より長い 180 日などにする | 半年使い続けるイメージでも、最終利用日が更新されないと監視が切れる（[ECR のスキャン](#inspector-ecr)） |
+| EC2 のスキャン | ハイブリッド（既定） | SSM の管理下にないノードも、スナップショットから検査する |
+| VPC エンドポイント | `ssm`、`ssmmessages` など | インターネットへの経路がないので、エージェントが SSM に届かない（[EC2 のスキャン](#inspector-ec2)） |
+| 優先度 | Inspector のスコアで判断する | 外への経路がないノードでは、NVD の 9.8 でも下がる |
+
+**なぜこのサービスか:** オープンソースのスキャナーを CI に入れても、出荷後に公開された CVE は分かりません。Inspector は、新しい CVE が公開されたときに ECR のイメージを再評価するので、半年前に入れたイメージの弱点も見つかります。
+
+**つまずきやすい点:**
+
+- カスタマー管理キーで暗号化した Lambda 関数は、スキャンの対象外です。データの前処理に Lambda を使うなら、カバレッジを確かめます。
+- 抑制ルールは表示を隠すだけで、検出結果は閉じません。直さないと決めたものは、理由を残します。
+- ネットワーク到達性の評価は 12 時間ごとです。SG を誤って開けた直後に知りたいなら、Config のルールを併用します（[ネットワーク到達性](#inspector-network)）。
+
+### 例: 大学グループが S3 の学生の個人情報を棚卸しする {#use-case-university}
+
+**状況:** 大学 3 校と附属高校を運営する学校法人です。学生と生徒は合わせて 4 万人です。研究室や事務部門が自由に S3 のバケットを作ってきた結果、900 のバケットがあり、どこに学生の情報があるか誰も把握していません。
+
+**構成:**
+
+| 段階 | 使う機能 | 内容 |
+| --- | --- | --- |
+| 全体を見る | 自動検出 | 毎日サンプリングし、ヒートマップで危ないバケットを見つける（[検出の方法](#macie-discovery)） |
+| 詳しく見る | ジョブ | 入試と学籍のバケットを毎週、深さ 100% で検査する |
+| 自校の形式を足す | カスタムデータ識別子 | 学籍番号を検出する（[識別子と許可リスト](#macie-identifiers)） |
+| 知らせる | Security Hub CSPM と EventBridge | 機密データの検出結果も送るように設定する |
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| 正規表現 | `S[0-9]{8}` | 学籍番号の形式 |
+| キーワード、距離 | `学籍番号`、50 文字 | 形の似た型番や部品番号を拾わない |
+| 許可リスト | 大学の代表電話番号と、公開している窓口のメールアドレス | 公開情報を検出結果から外す |
+| 除外 | ログ専用のバケット | 個人情報がなく、費用だけがかかる |
+| 機密データ検出結果の保存 | S3 バケットと KMS キーを設定し、1 年で削除 | 既定の 90 日では、年度をまたいだ確認ができない（[検出結果](#macie-findings)） |
+| Security Hub CSPM への送信 | 機密データの検出結果も送る | 既定ではポリシーの検出結果しか送られない |
+
+**なぜこのサービスか:** 900 のバケットの中身を人が開けて確かめることはできません。Macie はバケットの一覧を自動で評価し、サンプリングで費用を抑えながら、学籍番号のような自校の形式も探せます。
+
+**つまずきやすい点:**
+
+- 研究室がカスタマー管理キーで暗号化したバケットは、キーポリシーで Macie のサービスリンクロールに `kms:Decrypt` を許可しないと、分類エラーになり何も検出されません。
+- 学務システムの DB にある情報は、Macie では見つかりません。S3 にエクスポートしたファイルだけが対象です。
+
+### 例: ニュースサイトが選挙速報の夜の DDoS に備える {#use-case-news}
+
+**状況:** 月間 2 億 PV のニュースサイトです。選挙速報の夜は平常時の 15 倍のアクセスになり、過去にその夜を狙ったアプリケーション層の攻撃を受けました。12 アカウントで 30 本の CloudFront を運用し、サポートプランは Enterprise です。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    FMS["Firewall Manager<br/>組織のポリシー"] --> CF["CloudFront 30 本"]
+    FMS --> WAF["共通のウェブ ACL"]
+    SA["Shield Advanced"] --> CF
+    SA --> R53["Route 53 のホストゾーン"]
+    HC["Route 53 ヘルスチェック<br/>/health"] --> SA
+    SA -- "異常時" --> SRT["SRT から連絡"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| Shield Advanced の契約 | 支払いアカウントで 1 契約 | 同じ一括請求ファミリーの 12 アカウントを 1 つの月額で対象にできる（[Shield Advanced](#shield-advanced)） |
+| 保護対象 | 30 本の CloudFront と Route 53 のホストゾーン | 指定したリソースしか保護されない |
+| Firewall Manager | Shield Advanced と WAF のポリシーを、自動修復ありで本番の OU に適用 | 新しい CloudFront も自動で保護と WAF の対象になる（[Firewall Manager](#firewall-manager)） |
+| ヘルスベース検出 | 各サイトの `/health` を見る Route 53 ヘルスチェックを関連付ける | 検出を早め、プロアクティブエンゲージメントの前提にする |
+| SRT の権限 | `AWSShieldDRTAccessPolicy` を付けたロールを `AssociateDRTRole` | 攻撃中に権限の設定から始めない（[SRT](#shield-srt)） |
+| WAF のログのバケット | SSE-S3 | KMS で暗号化したバケットは SRT が読めない |
+
+**なぜこのサービスか:** Standard でも L3、L4 の攻撃は緩和されますが、攻撃中に一緒にルールを考える相手がいません。選挙の夜のように止まると影響が大きい日がある会社では、SRT の支援と、攻撃で増えた費用のクレジットの申請が、月額の固定費に見合います。
+
+**つまずきやすい点:**
+
+- Firewall Manager を使わずに、新しい CloudFront を作るたびに手で保護を足す運用にすると、特集用に急いで作ったサイトが漏れます。
+- 新しいサイトは、平常時のトラフィックの基準がないと L7 の検出が遅れます。公開の前に通常の負荷を流します（[アプリケーション層の防御](#shield-l7)）。
+
+### 例: ネット証券が外向きの通信をドメインで絞り、ログを 1 年残す {#use-case-securities}
+
+**状況:** 口座数 80 万のネット証券です。30 の VPC を Transit Gateway でつないでいます。社内規程で、インターネットへの通信は取引所の API と OS の更新サーバーだけに限り、通信とセキュリティのログを 1 年保管し、外部の SIEM で監視する必要があります。
+
+**構成:**
+
+```mermaid
+flowchart LR
+    APP["アプリの VPC × 30"] --> TGW["Transit Gateway"]
+    TGW --> NFW["検査用 VPC<br/>Network Firewall"]
+    NFW --> NAT["NAT ゲートウェイ"]
+    NAT --> IGW["インターネット"]
+    NFW -. "アラートログ" .-> SL["Security Lake"]
+    SL --> SIEM["外部の SIEM"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| 評価順 | 厳密順 | 作成後に変えられない。書いた順に評価され、意図が読みやすい（[ルールの評価](#nfw-rules)） |
+| ステートレスの既定アクション | Forward | Pass にすると、ステートフルの検査もログも効かない |
+| ドメインの許可 | `api.exchange.example.net` と `.packages.example.com` だけを `pass`、他は既定のアクションで drop | 厳密順では、ドメインリストの暗黙の拒否が働かない |
+| `HOME_NET` | 30 の VPC の CIDR をすべて含める | 既定は検査用 VPC の CIDR だけ（[構成](#nfw-architecture)） |
+| Transit Gateway | 検査用 VPC のアタッチメントでアプライアンスモードを有効にする | 行きと帰りの通信を同じ AZ のエンドポイントに通す |
+| Security Lake のソース | VPC フローログ、Route 53 Resolver クエリログ、CloudTrail 管理イベント、Security Hub CSPM の検出結果 | 規程で求められる通信と操作の記録をそろえる |
+| 保持 | Security Lake のライフサイクルで 400 日で失効 | 1 年分に余裕を持たせる。S3 のライフサイクルは直接変えない（[Security Lake](#security-lake)） |
+| サブスクライバー | SIEM はデータアクセス（SQS）、社内の分析担当はクエリアクセス（Athena） | 用途ごとに受け取り方を分ける |
+
+**なぜこのサービスか:** セキュリティグループはドメイン名で許可できず、取引所の IP が変わるたびに書き換えることになります。Network Firewall なら TLS の SNI でドメインを判定できます。ログはサービスごとに形式が違うので、Security Lake で OCSF にそろえてから SIEM に渡します。
+
+**つまずきやすい点:**
+
+- アプライアンスモードを忘れると、帰りの通信が別の AZ のエンドポイントに入り、ステートフルの検査で落とされます。Transit Gateway に直接つなぐ Network Firewall のアタッチメントを使えば、検査用 VPC を自分で作らずに済み、アプライアンスモードも自動で有効になります。
+- ログを守ろうとして、Security Lake のバケットに Object Lock の既定の保持を付けると、配信が止まります。
+- `HOME_NET` を上書きし忘れると、`$HOME_NET` を使うルールが 30 の VPC の通信に一致せず、何も止まりません。
+
 ## GuardDuty {#guardduty}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
@@ -177,6 +416,8 @@ GuardDutyMalwareScanStatus = NO_THREATS_FOUND | THREATS_FOUND | UNSUPPORTED | AC
 ### Extended Threat Detection {#guardduty-extended}
 
 単独では目立たない複数の事象を、順序と時間で関連付けて **攻撃シーケンス** の検出結果にします。追加費用なしで自動的に有効です。
+
+**使う場面:** 毎日数十件の Medium の検出結果が出るオンライン証券で、どれが 1 つの攻撃の続きなのかを人が並べ替えずに、Critical の 1 件として受け取る。
 
 `AttackSequence:IAM/CompromisedCredentials` や `AttackSequence:S3/CompromisedData` のような名前で、重要度は最高の Critical になります。
 
@@ -352,6 +593,8 @@ GuardDuty、Inspector、Macie はそれぞれ別のコンソールに検出結�
 
 ### Security Hub の機能 {#security-hub-unified}
 
+**使う場面:** 200 件の未解決の検出結果を抱えた EC サイトで、「公開されていて、重大な CVE があり、強い権限のロールが付いている」EC2 から先に直す。
+
 | 機能 | 内容 |
 | --- | --- |
 | 露出の検出結果 | CSPM と Inspector などの結果を関連付け、悪用されうる状態を示す |
@@ -504,6 +747,8 @@ Code Security は [CodeGuru Security](#codeguru-security) の後継で、Amazon 
 
 ### ネットワーク到達性 {#inspector-network}
 
+**使う場面:** 社内システムの EC2 が 300 台ある会社で、誰かがセキュリティグループを広げた結果、インターネットから DB のポートに届くようになっていないかを定期的に確かめる。
+
 インターネットゲートウェイ、VPC ピアリング、VPN などの VPC の端から、EC2 の TCP や UDP のポートに届く経路を報告します。**12 時間ごと** に評価され、EC2 だけが対象です。
 
 - **例:** 09:00 にセキュリティグループで `0.0.0.0/0` の 22 番を開けると、次の評価までに検出されます。最大で 21:00 ごろです。すぐ知りたいなら [Config のルール](governance.md#config) を併用します。
@@ -632,6 +877,8 @@ S3 には、誰がいつ置いたか分からないファイルがたまりが�
 
 ログは製品ごとに形式が違うので、SIEM に取り込むたびに変換の作業が要ります。Security Lake は、AWS と他社のログを OCSF という共通の形式にそろえて 1 か所に置くことで、この変換を一度で済ませるためのものです。
 
+**使う場面:** 外部の SIEM に、CloudTrail、フローログ、WAF のログを形式ごとに変換して送っていた会社が、変換を OCSF の 1 つにそろえて、取り込みの作業を減らす。
+
 | 観点 | オンプレミスのログ収集基盤 | Security Lake |
 | --- | --- | --- |
 | 同じ点 | 各種ログを集め、長期に保管する | 同じ |
@@ -675,6 +922,8 @@ S3 には、誰がいつ置いたか分からないファイルがたまりが�
     2026 年 4 月 30 日から新しいアカウントで設定できません。既存の利用者は使い続けられますが、新しいリージョンやアカウントへは広げられず、新機能と新しいフレームワークは追加されません。AWS は代替として AWS Config の適合パックを案内しています。
 
 監査フレームワークに沿って証拠を自動収集し、評価レポートにまとめます。
+
+**使う場面:** すでに使っている会社が、カード会社の年次監査に向けて、PCI DSS の要件ごとに Config と CloudTrail の証拠を集める。新しく始めるなら Config の適合パックを使う。
 
 | 証拠のデータソース | 証拠の種類 | 頻度 |
 | --- | --- | --- |
@@ -933,6 +1182,8 @@ SNI の詐称に備える場合は、Route 53 の解決結果と照合する Res
 
 - **例:** ステートレスの既定アクションを `Pass` にすると、全通信がステートフルに届かず、アラートログが空になります。`Forward` に戻すと記録されます。
 
+**使う場面:** 社員 2,000 人の会社で、HTTPS の中に隠れたマルウェアのダウンロードを、外向きの通信を復号して検査する。
+
 TLS 検査の設定は、ACM の証明書を使って通信を復号し、ルールで検査したあと再暗号化します。インバウンド、アウトバウンド、両方を選べます。証明書の扱いは [証明書のページ](certificates.md) を参照してください。
 
 ## インシデント対応 {#incident-response}
@@ -1012,6 +1263,8 @@ flowchart TD
 `AWSSupport-ContainEC2Instance` は、SG の設定を S3 に保存してから隔離する、元に戻せる Automation ランブックです。
 
 ### 認証情報の漏えい {#ir-credentials}
+
+**使う場面:** 社外の公開リポジトリにアクセスキーを含む設定ファイルを push してしまった。キーの種類を先頭の 4 文字で見分け、無効化か、セッションの取り消しかを選ぶ。
 
 | キーの先頭 | 種類 | 対応 |
 | --- | --- | --- |

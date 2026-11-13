@@ -30,6 +30,232 @@
     - **Simple AD** は新規の顧客を受け付けていません。既存の顧客は使い続けられ、新しいディレクトリも作れます。
     - **CloudHSM の `hsm1.medium`** は 2026 年 3 月 31 日でサポートが終了しました。2025 年 4 月から新規に作れず、2026 年 1 月から `hsm2m.medium` への自動移行が始まっています。
 
+## 使いどころと具体例 {#use-cases}
+
+このページのサービスは、どれも「誰が、どこまで入れるか」を扱います。違うのは、入る先（AWS アカウント、Windows のドメイン、HSM、自作アプリ、社内の Web アプリ）です。入る先で選ぶと迷いにくくなります。
+
+| 場面 | 具体例 | 使う機能 |
+| --- | --- | --- |
+| 社員が多数のアカウントに入る | 社員 2,000 人の製造業が、40 アカウントに Entra ID で SSO する | [IAM Identity Center](#identity-center) |
+| 開発者の PC から長期キーをなくす | `~/.aws/credentials` を消し、`aws sso login` に切り替える | [セッション](#idc-sessions) |
+| チームが増えても権限セットを増やさない | 部署の属性で、停止してよい EC2 の範囲を分ける | [ABAC](#idc-abac) |
+| 既存の AD のパスワードで仮想デスクトップに入る | 市役所の職員が、庁内のパスワードで WorkSpaces に入る | [AD Connector](#ad-connector) |
+| SQL Server を Windows 認証のまま RDS に移す | 会計パッケージの SQL Server を RDS for SQL Server に移す | [Managed Microsoft AD](#managed-ad) |
+| 規制で鍵を占有の HSM に置く | 証券会社の Oracle の TDE の鍵を、FIPS 検証済みの HSM に置く | [CloudHSM](#cloudhsm) |
+| AWS サービスの暗号化を自分の HSM の鍵で | S3 や EBS の暗号化キーの素材を、自社の HSM に置く | [KMS の CloudHSM キーストア](#cloudhsm-key-store) |
+| アプリの細かい認可をコードの外に出す | 経費精算 SaaS の「課長は 10 万円まで承認できる」 | [Verified Permissions](#verified-permissions) |
+| VPN なしで社内の Web アプリに入る | 物流会社の配車担当が、自宅から配車管理の画面を開く | [Verified Access](#verified-access) |
+| 組織の外への公開を見つける | 誤って公開設定にしたバケットを 30 分以内に見つける | [外部アクセスの検出](#aa-external) |
+| 使っていない権限を棚卸しする | 90 日使われていないロールとアクセスキーを洗い出す | [未使用アクセスの検出](#aa-unused) |
+| 危険なポリシーの変更を CI で止める | PR で `"Principal": "*"` のバケットポリシーを不合格にする | [ポリシーの検証とチェック](#aa-policy-checks) |
+
+選び間違えやすい場面です。
+
+| 場面 | 向かない理由 | 代わりの選択肢 |
+| --- | --- | --- |
+| アプリの顧客のサインイン | Identity Center は従業員向けで、会員登録やソーシャルログインの機能がない | [Cognito](cognito.md) |
+| S3 や RDS の暗号化だけ | CloudHSM は台数、冗長化、HSM のユーザー管理を自分で行う。規制の要件がなければ手間に見合わない | [KMS](kms.md) |
+| AWS のリソースへの権限 | Verified Permissions はアプリの中の操作を判定する。AWS の API の認可はしない | [IAM](iam.md#policy-evaluation) |
+| 拠点のネットワーク全体を使う（ファイル共有、多数のプロトコル） | Verified Access はアプリ単位で、CIDR のエンドポイントは TCP だけ | [Client VPN](network-connectivity.md#client-vpn)、[Site-to-Site VPN](network-connectivity.md#site-to-site-vpn) |
+| これから新しく作る簡易ディレクトリ | Simple AD は新規の顧客を受け付けていない | [Managed Microsoft AD](#managed-ad) |
+
+### 例: 製造業の 40 アカウントに Entra ID で SSO する {#use-case-manufacturing-sso}
+
+**状況:** 社員 2,000 人の部品メーカーです。AWS を使うのは、工場の IoT チーム、生産管理、情報システム部の約 250 人です。アカウントは本番 15、開発 20、共通 5 の 40 個で、社員の名簿の正本は Entra ID にあります。
+
+**構成:**
+
+```mermaid
+flowchart LR
+    E["Entra ID<br/>社員の名簿の正本"] -->|"SAML でサインイン<br/>SCIM で同期"| IC["Identity Center<br/>委任管理者: セキュリティアカウント"]
+    IC --> PS["権限セット<br/>ReadOnly、Developer、ProdAdmin"]
+    PS --> D["開発 20 アカウント"]
+    PS --> P["本番 15 アカウント"]
+    E -. "緊急用: IAM の SAML" .-> P
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| ID ソース | 外部 IdP（SAML と SCIM） | 名簿を二重にしない。退職者は Entra ID で無効にするだけ（[ID ソース](#idc-identity-sources)） |
+| SCIM で同期するグループ | `aws-` で始まるグループだけ | 2,000 人全員を同期すると、割り当てのない人まで管理対象になる |
+| 権限セットのセッション | `ReadOnly` は `PT8H`、`Developer` は `PT4H`、`ProdAdmin` は `PT1H` | 強い権限ほど短くする（[権限セット](#idc-permission-sets)） |
+| ポータルのセッション | 既定の 8 時間 | 1 日 1 回のサインインで済む |
+| 委任管理者 | セキュリティアカウント | 日々の割り当てのために管理アカウントに入らない（[委任管理者](#idc-delegated-admin)） |
+| 緊急用の経路 | 本番の数アカウントに IAM の SAML フェデレーション | Identity Center の障害時にも入れる（[Identity Center との違い](iam.md#saml-vs-identity-center)） |
+
+**なぜこのサービスか:** IAM の SAML フェデレーションでは、40 アカウントそれぞれに SAML プロバイダーとロールを作ることになります。Identity Center なら、権限セットを 1 回直すだけで 40 アカウントのロールがそろいます。
+
+**つまずきやすい点:**
+
+- SCIM のアクセストークンは 1 年で切れます。切れると同期が止まり、Entra ID で無効にした退職者が AWS 側に残り続けます。残り 90 日の通知を、チケットに自動で起票します。
+- Entra ID の `NameID` がメールアドレスで、SCIM の Username が社員番号だと、サインインに失敗します。どちらかにそろえます。
+- 権限セットにカスタマー管理ポリシーを入れるなら、40 アカウントすべてに同じ名前で先に作ります。1 つでも欠けると、そのアカウントの割り当てが失敗します。
+
+### 例: 市役所の職員が庁内の AD で仮想デスクトップに入る {#use-case-municipality-workspaces}
+
+**状況:** 職員 3,000 人の市役所です。災害時とテレワーク用に WorkSpaces を 500 台用意します。職員のアカウントは庁内の Active Directory にあり、「職員のパスワードを庁外に保存しない」という方針があります。庁内と AWS は Direct Connect の 2 回線でつながっています。
+
+**構成:**
+
+```mermaid
+flowchart LR
+    U["職員の端末"] --> W["WorkSpaces<br/>500 台"]
+    W --> AC["AD Connector<br/>2 つの AZ のサブネット"]
+    AC -->|"Direct Connect 2 回線<br/>TCP/UDP 53、88、389"| AD["庁内の AD<br/>DC 2 台"]
+    AC -->|"UDP 1812"| R["庁内の RADIUS<br/>MFA"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| ディレクトリ | AD Connector | 職員の情報を AWS にキャッシュしない。方針をそのまま守れる |
+| サイズ | large | 始業前に数百人が一斉にサインインする。small は秒間の処理が少ない組織向け |
+| DNS サーバー | 庁内の DC 2 台の IP | LDAP と Kerberos の SRV レコードを引くため |
+| サービスアカウント | 庁内の AD に専用のアカウントを作り、読み取りと参加に必要な権限だけを委任 | Domain Admins を渡さない |
+| MFA | 庁内の RADIUS サーバーに UDP 1812 | テレワークでもパスワードだけで入らせない（[MFA と LDAPS](#ad-mfa-ldaps)） |
+
+**なぜこのサービスか:** Managed Microsoft AD に信頼を結ぶ方法もありますが、AWS 側にもう 1 つドメインを持つことになり、運用する人が要ります。必要なのは「庁内の AD で認証すること」だけなので、問い合わせを転送するだけの AD Connector で足ります。
+
+**つまずきやすい点:**
+
+- Direct Connect が 2 回線とも切れると、誰もサインインできません。AD Connector はキャッシュを持たないからです。Site-to-Site VPN を予備に用意します。
+- WorkSpaces は AD Connector と同じ VPC に置く必要があります。別の VPC に作ろうとすると、ディレクトリを選べません。
+- 庁内のパスワードの期限やロックの規則がそのまま効きます。テレワークの初日に、期限切れの職員が入れない問い合わせが集中しがちです。
+
+### 例: 証券会社の Oracle の鍵を占有の HSM に置く {#use-case-finance-cloudhsm}
+
+**状況:** 口座数 80 万の証券会社です。取引の DB は EC2 上の Oracle で、TDE を使います。社内の基準で「鍵は専用の FIPS 検証済み HSM に置き、クラウド事業者も触れないこと」と決まっています。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    O["Oracle on EC2<br/>2 つの AZ"] -->|"PKCS#11"| C["CloudHSM クラスター<br/>hsm2m.medium を 3 台、3 AZ"]
+    C --> B["自動バックアップ<br/>90 日保持"]
+    B -->|"copy-backup-to-region"| OS["大阪のバックアップ"]
+    C --> L["監査ログ<br/>CloudWatch Logs"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| モード | FIPS | 基準で必須。作成後に変えられないので、最初に決める（[クラスター](#cloudhsm-clusters)） |
+| HSM の数 | 3 台を 3 つの AZ に | AZ が 1 つ止まっても 2 台で動く |
+| バックアップの保持 | `Type=DAYS,Value=90` | 監査で 3 か月前の状態を求められる |
+| 大阪へのコピー | 週 1 回 `copy-backup-to-region` | 東京の広域障害に備える。コピーは保持ポリシーの対象外なので、手で消す |
+| クォーラム認証 | 管理者 3 人のうち 2 人（2 of 3） | 1 人の管理者だけでユーザーを消せないようにする（[HSM のユーザー](#cloudhsm-users)） |
+| Crypto User | TDE 専用の CU を 1 つ | アプリごとに CU を分け、鍵の利用者をはっきりさせる |
+
+**なぜこのサービスか:** KMS は多くの利用者で共有する HSM の集合で、Oracle が求める PKCS#11 の API もありません。基準の「占有」と「事業者も触れない」を満たすのは CloudHSM です（[KMS との比較](#cloudhsm-vs-kms)）。
+
+**つまずきやすい点:**
+
+- CU のパスワードをなくすと、AWS にも戻せません。鍵が使えなくなり、DB を復号できなくなります。パスワードは金庫と別の担当者の 2 か所で保管します。
+- 鍵の操作の記録を CloudTrail で探しても出てきません。HSM の中の操作は CloudWatch Logs の監査ログにあります。
+- 検証環境で 1 台だけにした構成を本番に持ち込むと、HSM の障害で取引の DB が止まります。
+
+### 例: 経費精算 SaaS の承認ルールを外に出す {#use-case-saas-verified-permissions}
+
+**状況:** 導入企業 400 社、利用者 12 万人の経費精算 SaaS です。会社ごとに承認の規則が違い、「課長は 10 万円まで、部長は 100 万円まで」「締めた月の経費は誰も変更できない」などがあります。規則の変更依頼が月に 50 件あり、そのたびにコードを直してデプロイしていました。
+
+**構成:**
+
+```mermaid
+sequenceDiagram
+    participant U as 利用者
+    participant A as 経費 API
+    participant V as Verified Permissions
+    U->>A: 経費 exp-42 を承認（ID トークン付き）
+    A->>V: IsAuthorizedWithToken（会社 A のポリシーストア）
+    V-->>A: ALLOW または DENY
+    A-->>U: 承認、または 403
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| ポリシーストア | 導入企業ごとに 1 つ（400 個） | 1 社の規則の誤りが他社に及ばない。既定の上限はリージョンあたり 30,000 |
+| ID ソース | Cognito のユーザープール | ストアに 1 つだけ。トークンの `sub` が主体になる |
+| 金額の規則 | `permit` に `when { resource.amount <= 100000 }` | 金額の上限を、コードではなくポリシーに書く |
+| 締めの規則 | `forbid` に `when { resource.locked == true }` | `permit` より優先されるので、例外を作れない |
+| 呼び出しの上限 | `IsAuthorizedWithToken` はストアあたり秒間 200 回 | 1 社の承認の集中が月末に来ても収まるかを確かめる |
+
+**なぜこのサービスか:** 規則がコードにあると、会社ごとの分岐が増え続け、監査で「この会社では誰が何を承認できるか」を説明できません。ポリシーとして外に出せば、規則の変更はデプロイなしで済み、規則そのものを監査の資料にできます。
+
+**つまずきやすい点:**
+
+- 新しい会社を一度に数十社登録すると、`CreatePolicyStore` が秒間 1 回の上限で失敗します。この上限は引き上げられないので、登録の処理に待ちと再試行を入れます。
+- 新しい操作（例: 経費の差し戻し）を追加しても、ポリシーがなければ既定で拒否されます。リリースの前にポリシーとスキーマを足します。
+
+### 例: 物流会社の配車画面を VPN なしで開く {#use-case-logistics-verified-access}
+
+**状況:** 全国 60 の営業所を持つ物流会社です。配車担当の 800 人が、配車管理の Web アプリ（VPC 内の内部 ALB）を使います。これまでは VPN で社内ネットワークに入っていましたが、VPN の先から倉庫管理の DB にも通信が届くことが監査で問題になりました。
+
+**構成:**
+
+```mermaid
+flowchart LR
+    U["配車担当のブラウザ"] --> VA["Verified Access<br/>インスタンス"]
+    T1["Identity Center<br/>参照名 idc"] --> VA
+    T2["Jamf<br/>参照名 jamf"] --> VA
+    VA --> G["グループ<br/>配車担当だけ"]
+    G --> E["エンドポイント<br/>内部 ALB、HTTPS"]
+    E --> APP["配車管理アプリ"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| ユーザーの信頼プロバイダー | Identity Center（参照名 `idc`） | 社員の SSO と同じ ID で判定する |
+| 端末の信頼プロバイダー | Jamf（参照名 `jamf`） | 会社が管理する端末だけを通す |
+| グループのポリシー | 配車担当のグループに属し、`context.jamf.risk == "LOW"` | 感染の疑いがある端末は、正しい人でも拒否する |
+| エンドポイント | 内部 ALB を HTTPS で | 配車管理の画面だけを公開し、DB には経路を作らない |
+| ログ | OCSF を CloudWatch Logs へ | 誰の、どの端末のリクエストを拒否したかを残す |
+
+**なぜこのサービスか:** VPN はつながった時点でネットワークの範囲に入れるので、倉庫管理の DB まで届いてしまいます。Verified Access はアプリ単位で、リクエストのたびに人と端末を確かめます（[VPN との比較](#verified-access-why)）。
+
+**つまずきやすい点:**
+
+- ポリシーを書く前にエンドポイントを公開すると、全員が拒否されます。ポリシーがなければ全拒否が既定です。
+- ポリシーで `context.okta` のように、参照名と違う名前を書くと、一致せず全員が拒否されます。
+- ポリシーを通ったのに画面が開かないときは、ALB のセキュリティグループがエンドポイントからの通信を許可しているか確認します。
+
+### 例: オンライン学習サービスの公開設定を見張る {#use-case-education-access-analyzer}
+
+**状況:** 小中学生 30 万人が使うオンライン学習サービスです。アカウントは 25 個で、東京と大阪の 2 リージョンを使います。教材の動画は公開してよい一方、児童の学習記録は外部に出せません。開発チームは 5 つあり、それぞれがバケットポリシーを書きます。
+
+**構成:**
+
+| 段階 | 使う機能 | 設定 |
+| --- | --- | --- |
+| PR のとき | `CheckNoPublicAccess`、`CheckAccessNotGranted` | CI で不合格なら、マージできない（[ポリシーの検証とチェック](#aa-policy-checks)） |
+| 運用中（外部） | 組織の外部アクセスの分析ツール | 東京と大阪の両方に、`--type ORGANIZATION` で作る |
+| 運用中（未使用） | 組織の未使用アクセスの分析ツール | 追跡期間 90 日 |
+| 通知 | EventBridge | Active の検出結果を、セキュリティ担当のチャットに送る |
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| 分析ツールを置くアカウント | 委任管理者のセキュリティアカウント | 管理アカウントに日々入らない |
+| アーカイブルール | 教材の `materials-public` バケットだけ | 意図した公開を毎回確認しなくて済む。新しい別のバケットの公開は引き続き検出する |
+| 未使用アクセスの除外 | タグ `purpose=break-glass` のロール | 緊急用のロールは普段使わないので、除外しないと検出され続ける |
+| CI のチェック | `CheckAccessNotGranted` に `s3:PutBucketPolicy` と `iam:PassRole` | 開発チームのロールに、危険な操作を足させない |
+
+**なぜこのサービスか:** 5 チームが書くポリシーを、人が全部読んで確かめるのは無理があります。Access Analyzer はポリシーを論理的に解くので、ログに出ていない「まだ使われていない穴」も見つけられます。
+
+**つまずきやすい点:**
+
+- 外部アクセスの分析ツールはリージョンごとです。東京だけに作ると、大阪のバケットの公開を見逃します。
+- アーカイブルールは新しい検出結果に効きます。ルールを作る前の結果は、手でルールを適用します。
+- 結果はポリシーの変更から最大 30 分かかります。CI のチェックと組み合わせて、公開する前に止めます。
+
 ## IAM Identity Center {#identity-center}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
@@ -274,6 +500,8 @@ Team 属性を渡すと、次のポリシーで同じチームのリソースだ
 
 組織インスタンスは他のリージョンに複製できます。
 
+**使う場面:** 24 時間稼働の EC サイトの運用チームが、東京の障害の間も大阪のリージョン経由で本番アカウントに入れるようにする。
+
 Identity Center は全アカウントへの入り口なので、止まると誰も入れなくなります。複製すると、プライマリのリージョンで障害が起きても、障害の前に割り当てた権限でアカウントに入れます。AWS マネージドアプリを利用者の近くのリージョンに置ける、という利点もあります。それでも入れない最悪の場合に備えて、別の経路（緊急用のアクセス）も用意します。
 
 | 条件 | 内容 |
@@ -380,6 +608,8 @@ flowchart TD
 ### 信頼関係 {#ad-trust}
 
 オンプレ AD との間に信頼を結ぶと、ユーザーはオンプレの認証情報で AWS のリソースを使えます。外部信頼とフォレスト信頼、一方向と双方向に対応します。
+
+**使う場面:** 病院グループが、院内の AD のアカウントのまま、AWS 上の Windows の EC2 と FSx for Windows File Server を使う。
 
 信頼は、オンプレミスの AD どうしで使うものと同じしくみです。ユーザーを AWS 側にコピーせず、「相手のドメインが認証した人を、こちらでも認める」と約束します。ユーザーの正本はオンプレに残るので、退職や異動の変更は 1 か所で済みます。
 
@@ -578,6 +808,8 @@ M of N の制御（クォーラム認証）を使うと、2 人以上の承認�
 ### KMS の CloudHSM キーストア {#cloudhsm-key-store}
 
 KMS の API や AWS サービスとの統合を保ったまま、鍵の素材を自分の CloudHSM に置く方法です。
+
+**使う場面:** 決済代行の会社が、規制の要件で鍵を占有の HSM に置きつつ、S3 と EBS の暗号化は KMS の画面と API のまま使う。
 
 | 条件 | 内容 | 誤ったときの症状 |
 | --- | --- | --- |
@@ -992,6 +1224,8 @@ SCP や RCP の明示的な拒否は、どの場合でも優先されます。
 ## データ境界 {#data-perimeter}
 
 「信頼できる ID が、信頼できるリソースに、想定されたネットワークからアクセスする」場合だけ許可する考え方です。組織を境界にします。
+
+**使う場面:** 保険会社が、盗まれた社員の認証情報を社外の PC で使われても、契約者データのバケットを読めないようにする。
 
 オンプレミスでは、データセンターの外壁とファイアウォールが「中と外」を分けていました。AWS の API はインターネットから届くので、その壁がありません。1 つのバケットポリシーの書き間違いや、盗まれた認証情報で、データは組織の外へ出ていけます。データ境界は、この「中と外」を ID、リソース、ネットワークの 3 つの条件で作り直すものです。
 

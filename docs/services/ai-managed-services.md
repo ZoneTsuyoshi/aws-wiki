@@ -57,11 +57,235 @@ flowchart TD
 
 **Bedrock の FM との違い:** マネージド AI サービスは「決まった作業を、決まった形式で、安定して」行います。FM は自由な指示に応えられますが、出力の形と再現性は自分で整える必要があります。詳しくは[マネージド AI サービスと Bedrock](#vs-bedrock)を参照してください。
 
+## 使いどころと具体例 {#use-cases}
+
+マネージド AI サービスが向くのは、「入力の種類と、ほしい出力の形が決まっている作業」を大量にこなす場面です。逆に、日本語の文書のように対応言語から外れる入力や、毎回違う指示に応える作業には向きません。
+
+まず、どんな業務でどのサービスを使うかの一覧です。
+
+| 場面 | 具体例 | 使うサービス |
+|---|---|---|
+| 紙や PDF の帳票を入力したい | 海外の取引先から届く英文の請求書を、月 2 万枚、会計システムに入れる | [Textract](#textract) の `AnalyzeExpense` |
+| 通話を記録して分析したい | カード会社のコールセンターで、1 日 8,000 件の通話を文字にして不満の多い用件を探す | [Transcribe](#transcribe)、[Comprehend](#comprehend) |
+| 投稿画像を審査したい | ゲームのコミュニティで、1 日 30 万枚のスクリーンショット投稿から不適切な画像を除く | [Rekognition](#rekognition) |
+| 利用者ごとにおすすめを変えたい | 動画配信のトップ画面の「あなたへのおすすめ」を会員ごとに並べる | [Personalize](#personalize) |
+| 案内を多言語にしたい | 市役所のごみ収集のお知らせを、英語、中国語、韓国語、ベトナム語で配る | [Translate](#translate) |
+| 文章を読み上げたい | 防災無線の文案や、注文確認の電話の自動音声を作る | [Polly](#polly) |
+| 決まった手続きを会話で受けたい | 宅配便の再配達を、電話とチャットで 24 時間受け付ける | [Lex](#lex) |
+| 英語の診療記録から薬や病名を取りたい | 米国の診療所グループで、退院サマリーから処方薬を一覧にする | [Comprehend Medical](#comprehend-medical) |
+| 医療データを共通形式で共有したい | 複数の病院の患者データを FHIR で保存し、地域の連携システムから読む | [HealthLake](#healthlake) |
+| AI のデータ利用を組織で止めたい | 金融グループの 40 アカウントで、AI サービスの改善への利用を一括で止める | [オプトアウトポリシー](#data-use) |
+
+次に、使わない方がよい場面です。
+
+| 場面 | 理由 | 代わりの選択肢 |
+|---|---|---|
+| 日本語の帳票を読み取りたい | Textract は日本語と縦書きに対応していない | Bedrock のマルチモーダルの FM、[Bedrock Data Automation](genai-apps.md#bda) |
+| 日本語の文から PII を消したい | Comprehend と Transcribe の PII 秘匿は日本語に対応していない | [Guardrails の機密情報フィルター](ai.md#guardrail-filters)（日本語に対応）、正規表現 |
+| 通話を「3 行で要約して」と頼みたい | 決まった形式の分析は得意だが、自由な指示での要約はしない | Transcribe で文字にしてから [Bedrock](ai.md#bedrock-runtime) |
+| 社内規定に答えるチャットを新しく作りたい | Kendra と Q Business は新規の受付を終了している | [Managed Knowledge Base](genai-apps.md#managed-kb)、[Amazon Quick](ai.md#quick) |
+| 行動データがまだ数百件しかない | Personalize の学習に必要な量に届かない | 人気順やカテゴリ順のルール |
+| 需要予測や不正検知を新しく作りたい | Forecast と Fraud Detector は新規の受付を終了している | [SageMaker AI](sagemaker.md)、[SageMaker Canvas](sagemaker.md#built-in-algorithms) |
+
+### 例: 商社の英文請求書の読み取り {#use-case-invoice}
+
+**状況:** 海外 12 か国の取引先と取引する商社です。英文の請求書が月 2 万枚、PDF で届きます。1 通は 1〜8 ページです。経理の担当者は 6 人で、今は全件を手で会計システムに入力しています。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    A["S3 に PDF を置く"] --> B["Lambda が<br/>StartExpenseAnalysis"]
+    B --> C["Textract"]
+    C -->|"完了"| D["SNS"]
+    D --> E["Lambda が<br/>GetExpenseAnalysis"]
+    E --> F{"TOTAL の信頼度<br/>95 以上?"}
+    F -- はい --> G["会計システムへ登録"]
+    F -- いいえ --> H["担当者が確認<br/>Step Functions で待機"]
+    H --> G
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+|---|---|---|
+| API | `StartExpenseAnalysis`（非同期） | 複数ページの PDF は[同期では受け付けない](#textract) |
+| 完了の通知 | SNS | ポーリングせずに次の処理を始める |
+| 自動登録のしきい値 | `TOTAL`、`DUE_DATE` の `Confidence` が 95 以上 | 金額の誤りは支払いの誤りになるので高めにする |
+| 抜き取り確認 | 自動登録分の 2% | しきい値が適切かを月次で確かめる |
+
+**なぜこのサービスか:** 請求書の合計、期日、明細は `AnalyzeExpense` が決まった項目名（`TOTAL` など）で返します。FM でも読めますが、2 万枚の出力の形をそろえる検証が要ります。人の確認の仕組みは、新規受付を終えた [A2I](#a2i) ではなく Step Functions で作ります。
+
+**つまずきやすい点:** 日本の取引先から日本語の請求書が混ざると、文字を正しく読めません。言語で振り分け、日本語は別の経路に回します。また、しきい値を 80 に下げると確認の件数は減りますが、金額の読み違いがそのまま登録されます。
+
+### 例: カード会社のコールセンターの通話分析 {#use-case-callcenter}
+
+**状況:** 会員 300 万人のクレジットカード会社です。コールセンターは 1 日 8,000 件、1 件平均 6 分の通話を受けます。録音は左右 2 チャンネル（左がオペレーター、右が顧客）の WAV です。通話にはカード番号や氏名が出てきます。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    A["録音を S3 に置く"] --> B["Transcribe<br/>ja-JP、チャンネル分離"]
+    B --> C["Guardrails の<br/>ApplyGuardrail で PII をマスク"]
+    C --> D["Comprehend<br/>DetectSentiment"]
+    C --> E["Bedrock で<br/>用件を 3 行に要約"]
+    D --> F["集計: 不満の多い用件"]
+    E --> F
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+|---|---|---|
+| `LanguageCode` | `ja-JP` | 言語が分かっているので自動判定にしない |
+| `ChannelIdentification` | 有効 | オペレーターと顧客の発言を分ける。[2 チャンネルまで](#transcribe) |
+| カスタム語彙 | 「リボ払い」「キャッシング枠」など 200 語 | 自社の商品名の誤認識を減らす |
+| PII の秘匿 | [Guardrails](ai.md#guardrail-policy-settings) の機密情報フィルターと、カード番号の正規表現を `ANONYMIZE` | Transcribe と Comprehend の PII 秘匿は日本語に対応していない |
+| 感情の分析 | Comprehend の `DetectSentiment`、`LanguageCode: ja` | 感情の判定は日本語に対応している |
+
+**なぜこのサービスか:** 音声を決まった形式で文字にするのは Transcribe の役目で、FM だけでは置き換えられません（[組み合わせの例](#vs-bedrock)）。感情の集計は件数が多く結果の形が決まっているので Comprehend、要約は自由な文章なので Bedrock と分けます。
+
+**つまずきやすい点:** 英語の通話向けの手順をそのまま使い、Transcribe の `ContentRedaction` を `ja-JP` のジョブに付けると、PII の秘匿ができません。また、Comprehend の対象別の感情とカスタム分類も日本語に対応していないので、「どの用件に不満か」は Bedrock の分類で補います。
+
+### 例: ゲームのコミュニティの投稿画像審査 {#use-case-moderation}
+
+**状況:** 月間 200 万人が遊ぶスマートフォンのゲームです。コミュニティにスクリーンショットを 1 日 30 万枚、イベントの日は 90 万枚投稿されます。審査の担当者は 1 交代 5 人です。利用者には中学生も含まれます。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    A["投稿画像を S3 に保存"] --> B["Lambda が<br/>DetectModerationLabels"]
+    B --> C{"最高の信頼度"}
+    C -- "90 以上" --> D["自動で非公開"]
+    C -- "60〜90" --> E["審査の担当者へ"]
+    C -- "60 未満" --> F["公開"]
+    E --> G["判断を記録して<br/>しきい値の見直しに使う"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+|---|---|---|
+| `MinConfidence` | 60 | 既定の 50 より少し上げ、担当者に回る件数を抑える |
+| 自動で非公開にする基準 | 90 以上 | 誤って消すと利用者の不満になるので、確実なものだけ |
+| 画像の渡し方 | S3 の参照 | API に直接渡すと 5 MB まで、S3 なら 15 MB まで |
+| 独自の判定 | Custom Moderation のアダプター | ゲーム特有の表現で誤検知が多いとき |
+
+**なぜこのサービスか:** 審査の基準となるラベルが最初から用意され、学習データを集めなくても始められます。全件を人が見ると 1 人 1 日 2 万枚近くになり、追いつきません。
+
+**つまずきやすい点:** ゲームの戦闘画面の「血」の表現が暴力として高い信頼度で返り、普通の攻略画像まで非公開になることがあります。最初の 2 週間は自動の非公開を止めて件数を数え、しきい値を決めてから有効にします。
+
+### 例: 動画配信のおすすめ表示 {#use-case-recommend}
+
+**状況:** 有料会員 80 万人、作品 1 万 2,000 本の動画配信サービスです。視聴の記録は 1 日 150 万件増えます。毎週 40 本の新作が追加されますが、今の「人気順」では新作が上位に出ません。
+
+**構成:**
+
+| 画面、配信 | レシピ | 使い方 |
+|---|---|---|
+| トップの「あなたへのおすすめ」 | User-Personalization-v2 | リアルタイム（キャンペーン） |
+| 検索結果の並べ替え | Personalized-Ranking-v2 | リアルタイム |
+| 「いま話題」 | Trending-Now | リアルタイム |
+| 週末のおすすめメール | User-Personalization-v2 | バッチ |
+
+```mermaid
+flowchart LR
+    A["視聴の記録"] -->|"毎日 INCREMENTAL"| B["Personalize<br/>データセット"]
+    B --> C["ソリューション<br/>週 1 回の再学習"]
+    C --> D["キャンペーン"]
+    D --> E["アプリのトップ画面"]
+    C --> F["バッチ推論"]
+    F --> G["おすすめメール"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+|---|---|---|
+| 初回のインポート | `FULL`、過去 1 年分 | 学習に必要な件数を満たす |
+| 毎日の追加 | `INCREMENTAL` | 1 日分の差分だけ入れる |
+| `explorationWeight` | 0.5 | 既定の 0.3 より上げて、履歴の少ない新作を多めに出す |
+| `explorationItemAgeCutOff` | 14 | 2 週間以内の新作を探索の対象にする |
+| `numResults` | 25 | トップ画面の 1 列に並ぶ数 |
+
+**なぜこのサービスか:** 会員ごとの並びを作るには行動データからの学習が必要で、ルールでは全員が同じ一覧になります（[ルールとの比較](#personalize)）。独自のアルゴリズムを作る必要はないので、SageMaker AI までは下りません。
+
+**つまずきやすい点:** `explorationWeight` を 1.0 近くまで上げると、新作ばかりが並び、定番の作品の視聴が減ります。A/B テストで視聴時間を比べてから値を決めます。
+
+### 例: 市役所の多言語のお知らせ {#use-case-municipality}
+
+**状況:** 人口 25 万人、外国籍の住民が 1 万 2,000 人いる市です。ごみ収集、税、防災のお知らせを、英語、中国語、韓国語、ベトナム語で配りたいと考えています。翻訳の担当者は 1 人で、月に 120 本のお知らせがあります。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    A["日本語のお知らせ"] --> B["Translate<br/>カスタム用語を適用"]
+    B --> C["職員が<br/>防災と税だけ確認"]
+    C --> D["Web と<br/>メール配信"]
+    C --> E["Polly で音声化<br/>英語、中国語、韓国語"]
+    E --> F["電話の案内、<br/>Web の読み上げ"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+|---|---|---|
+| カスタム用語 | 「燃やすごみ」「粗大ごみ」「住民税」など 300 語 | 市の用語の訳を毎回そろえる |
+| `Formality` | `FORMAL` | 行政の案内として丁寧な訳にする（対応しない言語では無視される） |
+| 送り方 | 段落ごとに `TranslateText` | 日本語 4,000 文字で 10,000 バイトを超える（[バイト数の例](#translate)） |
+| 人の確認 | 防災と税のお知らせは全件 | 誤訳の影響が大きい |
+| 読み上げ | Polly の英語、中国語（標準語）、韓国語 | Polly はベトナム語に対応していない |
+
+**なぜこのサービスか:** 汎用の翻訳は Translate で足り、用語の固定もカスタム用語でできます。文脈に合わせた言い換えが必要な文書だけ Bedrock に回します（[選び方](#vs-bedrock)）。
+
+**つまずきやすい点:** ベトナム語の音声も作ろうとして、Polly に対応する言語がないことに後から気づきます。ベトナム語は文字の配信に限るか、別の手段を検討します。カスタム用語は「必ず適用されるとは限らない」ので、重要な語は確認の対象にします。
+
+### 例: 宅配便の再配達受付 {#use-case-redelivery}
+
+**状況:** 1 日 60 万個を配る地域の宅配会社です。再配達の依頼は 1 日 4 万件で、夕方の 18〜20 時に半分が集中します。電話の受付担当者は 30 人で、夜は対応できません。
+
+**構成:**
+
+```mermaid
+sequenceDiagram
+    participant U as 利用者
+    participant C as Connect（電話）
+    participant L as Lex
+    participant F as Lambda
+    U->>C: 電話をかける
+    C->>L: 音声を渡す
+    L-->>U: 伝票番号をどうぞ
+    U->>L: 番号と希望の日時
+    L->>F: スロットがそろったので実行
+    F-->>L: 受付番号
+    L-->>U: 明日 19〜21 時で受け付けました
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+|---|---|---|
+| ロケール | `ja_JP` | 日本語の電話とチャット |
+| インテント | `RequestRedelivery`、`ChangeAddress`、`AMAZON.FallbackIntent` | 用件を絞り、それ以外は担当者へ回す |
+| スロット | 伝票番号（12 桁）、希望日、時間帯 | 再配達に必要な情報だけ |
+| `nluIntentConfidenceThreshold` | 0.7 | 自信のない判定は聞き返す |
+| `idleSessionTTLInSeconds` | 600 | 伝票を探す間に会話が切れないようにする |
+| フルフィルメントの Lambda | 3 秒で応答、配車システムへの登録は非同期 | Lambda の上限 30 秒を超えないようにする |
+
+**なぜこのサービスか:** 再配達は手順が決まっていて、必要な情報も伝票番号と日時だけです。決まった手続きを確実に進めるのは Lex の役目で、自由な質問への回答は Bedrock に任せます（[Lex か Bedrock か](#lex)）。
+
+**つまずきやすい点:** Lex V2 のカスタム語彙による音声認識の改善は英語だけで、日本語では使えません。12 桁の伝票番号を話し言葉で読み取ると誤りやすいので、電話のボタン入力（DTMF）も受け付けます。
+
 ## Amazon Comprehend {#comprehend}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 テキストから情報を取り出す NLP サービスです。入力は UTF-8 のテキストで、カスタム分類とカスタム固有表現は画像、PDF、Word も受け付けます。
+
+**使う場面:** 通販サイトに毎月届く 10 万件のレビューの感情を集計し、`NEGATIVE` が急に増えた商品を担当者に知らせる。
 
 **提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
@@ -82,7 +306,7 @@ flowchart TD
 | キーフレーズ | 重要な語句 | |
 | 言語の判定 | 主な言語 | `ja` |
 | 感情 | positive、negative、neutral、mixed | レビューの分析 |
-| 対象別の感情 | 語ごとの感情 | 「料理はよいが接客は悪い」 |
+| 対象別の感情 | 語ごとの感情。英語のみ | "The food was great but the service was slow." |
 | PII | 検出と位置の特定、マスク | 英語とスペイン語 |
 | カスタム分類 | 自分のラベルで分類 | 問い合わせの振り分け |
 | カスタム固有表現 | 独自の語を抽出 | 契約番号 |
@@ -119,7 +343,7 @@ aws comprehend detect-pii-entities --language-code en \
 
 - **文書サイズの例:** 12 KB のレビューを `DetectSentiment` に送ると、上限の 5 KB を超えて失敗します。3 つに分けるか、非同期ジョブを使います。同じ 12 KB でも `DetectEntities` なら上限の 100 KB に収まります。
 - **バッチの例:** 60 件は `25 + 25 + 10` で 3 回の呼び出しです。1 回に 60 件を入れると失敗します。
-- **感情の例:** 「料理はよいが接客は悪い」は全体では `MIXED` になりえます。料理と接客を別々に知りたいなら、対象別の感情を使います。
+- **感情の例:** 「料理はよいが接客は悪い」は全体では `MIXED` になりえます。料理と接客を別々に知りたいなら、対象別の感情を使います。ただし対象別の感情は英語だけなので、日本語のレビューは Bedrock の分類などで補います。
 - **`LanguageCode` の例:** PII の検出は `en` か `es` です。日本語の文は対象外なので、[Guardrails](ai.md#guardrail-filters) などを検討します。
 - **`Score` の例:** PII の `Score` が 0.62 の検出は、0.9 以上だけ自動でマスクする運用なら人の確認に回します。
 
@@ -223,6 +447,8 @@ sequenceDiagram
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 文書から文字と構造を取り出します。単純な OCR と違い、表やフォームの関係も分かります。
+
+**使う場面:** 米国の保険会社で、英文の保険金請求書から「請求額」「事故日」を Queries で取り出し、査定の画面に自動で入れる。請求書を読む構成は[商社のシナリオ](#use-case-invoice)を参照してください。
 
 **従来の OCR と手入力とくらべる**と、次のようになります。
 
@@ -341,6 +567,8 @@ aws textract start-document-analysis \
 
 医師の口述や患者との会話など、医療の音声向けです。HIPAA の対象ですが、利用者の責任もあります。診断の代わりにはなりません。
 
+**使う場面:** 米国の外来クリニックで、医師が診察後に口述した所見を文字にし、カルテの下書きにする。
+
 **提供単位:** Transcribe と同じくリージョン単位で、VPC の外のサービスです。
 
 - **言語の例:** 対応は米国英語（`en-US`）です。日本語の診察の音声には使えません。
@@ -351,6 +579,8 @@ aws textract start-document-analysis \
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
 ニューラル機械翻訳です。
+
+**使う場面:** 越境 EC の商品説明 5 万件を英語と中国語に一括で翻訳し、ブランド名はカスタム用語で訳さずに残す（[自治体のシナリオ](#use-case-municipality)）。
 
 **提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
@@ -427,6 +657,8 @@ aws polly synthesize-speech --engine neural --voice-id Takumi \
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 画像と動画を分析します。
+
+**使う場面:** フリマアプリで出品写真の不適切な内容を検出する、本人確認で免許証の顔写真と自撮りを `CompareFaces` で比べる（[投稿審査のシナリオ](#use-case-moderation)）。
 
 **提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
@@ -524,6 +756,8 @@ rek.detect_moderation_labels(
     Kendra は 2026-06-30 にメンテナンスモードに入り、2026-07-30 から新規顧客を受け付けていません。バグ修正とセキュリティ更新は続きます。公式は [Bedrock Managed Knowledge Base](genai-apps.md#managed-kb) への移行を勧めています。
 
 機械学習を使う社内検索です。キーワードではなく自然文の質問で検索できます。
+
+**使う場面:** 既に Kendra を使っている会社が、そのインデックスを GenAI Enterprise Edition にして RAG の検索に使い続ける。新しく作るなら Managed Knowledge Base です。
 
 従来の全文検索エンジンは、質問の語を含む文書を返します。「育休」で検索しても「育児休業」としか書かれていない文書は漏れることがあります。Kendra は質問の意味から文書と答えの箇所を探すために作られました。現在は、検索した結果を FM に渡して回答まで作る RAG が主流になり、公式の移行先も Bedrock の Knowledge Bases です（[RAG の考え方](genai-apps.md#knowledge-bases-why)）。
 

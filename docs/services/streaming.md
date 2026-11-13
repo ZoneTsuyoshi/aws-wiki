@@ -37,11 +37,254 @@ flowchart TD
   E --> G["SQL で調べる<br/>Athena"]
 ```
 
+## 使いどころと具体例 {#use-cases}
+
+4 つのサービスは役割が分かれている。すぐ反応する、または複数のアプリで読むなら Kinesis Data Streams、保存先へ届けるだけなら Firehose、ためたものを SQL で調べるなら Athena、言葉であいまいに探すなら OpenSearch Service である。
+
+ここでは、場面ごとの選び方と、架空のサービスでの組み方を示す。設定の詳細は各節へのリンク先にある。
+
+### 使う場面 {#use-cases-fit}
+
+| 場面 | 具体例 | 使う機能 |
+| --- | --- | --- |
+| 秒単位で不正に反応する | オンラインゲームで、1 秒に 50 回の攻撃操作を送るチートを数秒以内に見つける | [Kinesis Data Streams](#kinesis-data-streams)、[拡張ファンアウト](#enhanced-fan-out) |
+| 同じデータを複数のチームが読む | 同じ行動ログを、不正検知、ランキング、分析の 3 チームが別々に読む | [消費者と拡張ファンアウト](#enhanced-fan-out) |
+| バグを直した後で読み直す | 集計のバグを直し、3 日前からのレコードを処理し直す | [保持期間](#retention)、[シャードイテレーター](#shard-iterators) |
+| 機器ごとに順序を守る | 工場の設備センサーで、同じ設備の温度の記録を時刻順に処理する | [パーティションキー](#partition-key) |
+| 流量が読めない | 生放送の視聴ログで、番組によって流量が 20 倍変わる | [キャパシティモード](#capacity-modes) |
+| 一定時間ごとに集計する | IoT で、設備ごとの 5 分間の平均温度を出す | [Lambda とストリーム](#lambda-streams)の `TumblingWindowInSeconds` |
+| ログを保存先に届けるだけ | ニュースサイトのアクセスログを、5 分ごとに S3 へ Parquet で保存する | [Data Firehose](#firehose)、[その他の機能](#firehose-features) |
+| 届けるついでに整形する | ログから個人のメールアドレスを消してから S3 に置く | [Lambda による変換](#firehose-transform) |
+| ためたログを SQL で調べる | 自治体のサイトで、3 年分の CloudFront のログから月ごとのアクセス数を出す | [Athena](#athena)、[S3 上のログを問い合わせる](#athena-logs) |
+| 分析者の使いすぎを止める | 1 クエリのスキャン量を 100 GB で打ち切る | [ワークグループ](#athena-workgroups) |
+| 商品をあいまいに探す | 家具の EC サイトで、「北欧 ソファ 2人掛け」の検索に関係の近い順で答える | [OpenSearch Service](#opensearch)、[データの入れ方](#opensearch-ingestion) |
+| アプリのログを検索して画面で見る | SaaS の障害調査で、直近 10 日のログを数秒で検索する | [開発者が知っておく用語と設定](#opensearch-concepts) |
+
+### 使わない方がよい場面 {#use-cases-avoid}
+
+| 場面 | 理由 | 代わりの選択肢 |
+| --- | --- | --- |
+| 1 件ずつ独立した仕事を多数のワーカーで分け合う | Kinesis はシャードを 1 つの消費者が順に読む。失敗した 1 件だけを後回しにしにくい | [SQS](messaging.md#sqs) |
+| 1 秒未満で保存先に届けたい | Firehose はバッファの分だけ遅れる | Kinesis Data Streams と Lambda で直接書く |
+| アプリの画面から 1 件をミリ秒で取る | Athena は非同期で、結果が返るまで秒単位かかる。スキャン量で払う | [DynamoDB](dynamodb.md) |
+| 数百人が開くダッシュボードを Athena の直接クエリで動かす | 開くたびにスキャンの料金がかかり、同時実行の上限にも当たる | [Redshift](data-engineering.md#redshift)、[Quick Sight の SPICE](data-engineering.md#quick-sight) |
+| OpenSearch を唯一の保存先にする | 正本のデータベースではない。トランザクションや結合に向かない | 正本は [RDS、Aurora](databases.md) や DynamoDB に置き、OpenSearch に同期する |
+| 1 日数 MB のログを保存する | ストリームのシャード時間などの固定の費用が、データ量に見合わない | アプリから S3 に直接書くか、CloudWatch Logs |
+
+### 例: オンラインゲームのチート検知 {#use-case-game}
+
+**状況:** 同時接続 30 万人の対戦ゲーム。プレイヤーの操作ログが 1 件 0.5 KB で、平常は毎秒 2 万件、新シーズンの開始日には毎秒 6 万件になる。同じログを、チート検知（数秒以内）、ランキング（1 分ごと）、分析用の S3 保存の 3 つで使う。運用は 3 人。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    G[ゲームサーバー] --> K[Kinesis Data Streams<br/>On-demand]
+    K -- 拡張ファンアウト --> L1[Lambda: チート検知]
+    K --> L2[Lambda: ランキング]
+    K --> F[Data Firehose]
+    F --> S[(S3: Parquet)]
+    L1 --> B[(DynamoDB: 停止リスト)]
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| キャパシティモード | On-demand Standard | 平常 10 MB/秒、ピーク 30 MB/秒。過去 30 日のピークの 2 倍まで受けられる（[キャパシティモード](#capacity-modes)） |
+| パーティションキー | プレイヤー ID | 同じプレイヤーの操作の順序を守り、30 万人に散らす |
+| 保持期間 | 72 時間 | 週末に集計のバグが見つかっても月曜に読み直せる |
+| チート検知の読み方 | 拡張ファンアウトの消費者を登録し、Lambda に指定する | 他の 2 つの読み取りと枠を分け合わず、遅延は約 70 ms |
+| チート検知の `BatchSize`、ウィンドウ | 100、1 秒 | 検知の遅れを最大 1 秒に抑える |
+| `MaximumRetryAttempts`、`BisectBatchOnFunctionError` | 3、`true` | 壊れたログ 1 件でシャードを止めない（[値を入れた例](#lambda-streams-examples)） |
+
+**なぜこのサービスか:** 同じログを 3 つの処理が別々の速さで読み、後から読み直したい。SQS は 1 件を 1 つの消費者が処理して消すので、3 つに配るには SNS とキューが 3 本要り、読み直しもできない。Firehose だけでは数秒以内の検知のコードを差し込めない。
+
+**つまずきやすい点:**
+
+- 新シーズンの開始日に、過去 30 日のピークの 2 倍を超えると、約 15 分間エラーが出ることがある。既知の日なら事前に Provisioned で十分なシャードにするか、On-demand Advantage のウォーム容量で備える。
+- パーティションキーをサーバー ID にすると、人気のサーバーのシャードだけが詰まる（[パーティションキー](#partition-key)）。
+- 拡張ファンアウトの消費者は登録直後は `CREATING` で、すぐには使えない。
+
+### 例: 食品工場の設備センサー {#use-case-factory}
+
+**状況:** 全国 6 工場、設備 1,200 台の食品メーカー。設備ごとに 1 秒に 1 回、温度と振動を 0.2 KB で送る。設備ごとの 5 分平均が基準を超えたら保全担当に知らせる。流量は 24 時間ほぼ一定で、費用を読みやすくしたい。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    D[設備の送信機] --> K[Kinesis Data Streams<br/>Provisioned 2 シャード]
+    K --> L[Lambda: 5 分ごとの集計]
+    L --> T[(DynamoDB: 5 分平均)]
+    L -- 基準超え --> N[SNS: 保全担当へ]
+    K --> F[Data Firehose]
+    F --> S[(S3)]
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| シャード数 | 2 | 1,200 件/秒は件数で 2 シャード、サイズは 240 KB/秒で 1 シャード。多い方を取る（[シャード数の計算](#shard-calculation)） |
+| パーティションキー | 設備 ID | 設備ごとの順序を守る |
+| `TumblingWindowInSeconds` | 300 | 5 分ごとの窓で集計する |
+| `ParallelizationFactor` | 1 | 1 シャード 600 件/秒なら 1 本で追いつく |
+| 保持期間 | 24 時間（既定） | 生データは Firehose で S3 に残すので、ストリームで長く持たない |
+| `IteratorAgeMilliseconds` のアラーム | 1 時間 | 集計の遅れに早く気づく |
+
+**なぜこのサービスか:** 設備ごとの順序と時間窓の集計が要り、流量が一定なので Provisioned で費用を読める。新規の取り込みで既存の Kafka の資産もないので、Lambda や Firehose とつなぎやすい Kinesis にする（[Kinesis と MSK の違い](data-engineering.md#msk-vs-kinesis)）。
+
+**つまずきやすい点:**
+
+- 1 件 0.2 KB と小さいので、サイズだけで計算すると 1 シャードと誤る。件数の上限 1,000 件/秒で詰まる。
+- タンブリングウィンドウの集計はシャードごとなので、同じ設備が別のシャードに入らないよう、キーは設備 ID で固定する。
+- 工場が増えて設備が 2,500 台になると、件数で 3 シャードが必要になる。`UpdateShardCount` は 2 倍までなので 2 → 3 は 1 回でできる（[リシャーディング](#resharding)）。
+
+### 例: ニュースサイトのアクセスログの保存 {#use-case-news}
+
+**状況:** 月間 1 億 PV のニュースサイト。アクセスログが平常で毎秒 2 MB、速報の直後は毎秒 8 MB になる。記者と編集者は、前日までの記事ごとの閲覧数を朝に見られればよい。データ基盤の担当は 1 人。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    W[Web サーバー] --> F[Data Firehose<br/>Direct PUT]
+    F --> L[Lambda: IP の末尾を消す]
+    L --> C[形式の変換: Parquet]
+    C --> S[(S3: dt=日付/)]
+    S --> A[Athena]
+    F -. 失敗 .-> E[(S3: errors/)]
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| バッファ | 128 MB、900 秒 | 朝に見られればよいので、大きなファイルにまとめて Athena を速くする（[バッファ](#firehose-buffering)） |
+| 形式の変換 | Parquet。スキーマは Glue Data Catalog | 記事 ID と日時の列だけ読むので、スキャン量が減る |
+| プレフィックス | `logs/dt=!{timestamp:yyyy-MM-dd}/` | Hive 形式にして、日付で絞れるようにする |
+| `CustomTimeZone` | `Asia/Tokyo` | 日本時間の日付で分ける（[配信の失敗の扱い](#firehose-failure)） |
+| `ErrorOutputPrefix` | `errors/!{firehose:error-output-type}/!{timestamp:yyyy-MM-dd}/` | 変換の失敗を種類ごとに分けて残す |
+| Athena のパーティション | 射影（`date` 型） | `MSCK REPAIR TABLE` を毎日流さなくて済む（[パーティションの設定](#athena-partitions)） |
+
+**なぜこのサービスか:** 処理は「整形して届ける」だけで、独自の消費者のコードは要らない。Kinesis Data Streams にすると、読み出し、まとめ、書き込み、再試行を自分で書くことになり、1 人では保守しにくい。
+
+**つまずきやすい点:**
+
+- 東京の Direct PUT の既定は 1 MiB/秒で、平常の毎秒 2 MB でも超える。Firehose が自動で引き上げるが、速報の毎秒 8 MB ではスロットリングが起こり得るので、事前に申請する（[Amazon Data Firehose](#firehose)）。
+- Glue のスキーマに新しい列を足し忘れると、その列は Parquet に入らない。エラーにならないので、後で気づく。
+- 変換の Lambda のタイムアウトを既定の 3 秒のままにすると、変換が失敗し、データが `errors/` にたまる。
+
+### 例: 市役所の Web サイトのアクセス分析 {#use-case-city}
+
+**状況:** 人口 40 万人の市の公式サイト。CloudFront の標準ログを S3 に 3 年分ためている。広報課が月に 2〜3 回、「どのページがよく見られたか」「大雨の日にアクセスがどれだけ増えたか」を調べる。予算は年度で固定で、分析用のサーバーは置きたくない。
+
+**構成:**
+
+| 部品 | 役割 |
+| --- | --- |
+| CloudFront の標準ログ（v2） | S3 に `{yyyy}/{MM}/{dd}` のフォルダに分けて出す |
+| Glue Data Catalog | ログのテーブル定義を持つ |
+| Athena のワークグループ `koho` | 広報課のクエリを分け、上限をかける |
+| SNS | 月の合計のスキャン量が目安を超えたら担当者に知らせる |
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| ログの出力形式 | Parquet | 必要な列だけ読むので、スキャン量が減る。変換には別に料金がかかる |
+| パーティション | 射影。年、月、日を `integer` 型 | 3 年で約 1,100 日分の登録を不要にする（[パーティションの設定](#athena-partitions)） |
+| クエリごとのデータ制限 | 50 GB | 日付の条件を書き忘れた 3 年分のスキャンを止める（[ワークグループ](#athena-workgroups)） |
+| ワークグループ全体のデータ制限 | 1 か月 2 TB で SNS に通知 | 予算の残りに担当者が早めに気づく |
+| `EnforceWorkGroupConfiguration` | `true` | 結果の置き場を広報課のバケットにそろえる |
+
+**なぜこのサービスか:** 調べるのは月に数回で、料金はスキャンした量で決まる。常に動く DWH やサーバーを置くより、使わない月の費用が小さくなりやすい。ログはすでに S3 にあるので、取り込みの作業もない（[S3 上のログを問い合わせる](#athena-logs)）。
+
+**つまずきやすい点:**
+
+- 従来の標準ログ（レガシー）は日付のフォルダに分かれていない。v2 に切り替える前の 3 年分は別のプレフィックスに置き、別のテーブルにする。
+- `{yyyy}/{MM}/{dd}` は Hive 形式ではないので、`MSCK REPAIR TABLE` では読み込めない。射影か `ALTER TABLE ADD PARTITION` を使う。
+- 射影の `storage.location.template` が実際のパスと違うと、エラーなしで 0 件になる。
+- クエリごとの制限で止まったクエリも、止まるまでのスキャン分は課金される。
+
+### 例: 家具 EC サイトの商品検索 {#use-case-search}
+
+**状況:** 商品 40 万点の家具 EC サイト。商品の正本は DynamoDB にあり、在庫や価格が 1 日 5 万回更新される。「北欧 ソファ 2人掛け」のような言葉で探し、色や価格帯で絞り込みたい。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    A[商品管理画面] --> D[(DynamoDB: products)]
+    D -- Streams --> I[OpenSearch Ingestion]
+    D -. 初回は PITR のエクスポート .-> I
+    I --> O[OpenSearch Service<br/>3 AZ のドメイン]
+    U[検索 API] --> O
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| 取り込み | OpenSearch Ingestion の DynamoDB のパイプライン | 変換の Lambda を書かずに同期する（[データの入れ方](#opensearch-ingestion)） |
+| DynamoDB の前提 | Streams を `NEW_IMAGE` で有効、初回の全件のために PITR も有効 | パイプラインが変更を読み、最初は全件をエクスポートする |
+| プライマリシャード | 2 | 商品データは約 20 GiB で、1 年で 2 倍の 40 GiB を見込む。40 × 1.1 ÷ 30 ≈ 1.5 で 2（[開発者が知っておく用語と設定](#opensearch-concepts)） |
+| レプリカ | 1 | 1 ノードが落ちても検索を続ける |
+| 専用マスターノード | 3 台 | 過半数を保てる |
+| `category`、`color` のマッピング | `keyword` | 絞り込みとファセットに使う。文字列の既定は `text` になる |
+
+**なぜこのサービスか:** DynamoDB はキーで引く設計で、部分一致や関連度の順の検索に向かない。正本は DynamoDB のまま、検索用の写しを OpenSearch に持つ（[データストアの選び方](#specialized-store)）。
+
+**つまずきやすい点:**
+
+- DynamoDB Streams は 24 時間しか持たない。初回のエクスポートに 24 時間以上かかると、その間の変更の一部を失う。パイプラインの OCU を十分にする。
+- 価格を最初の商品で整数、次の商品で小数にすると、型の自動判定に失敗して取り込めない。マッピングを先に決める。
+- パイプラインと DynamoDB のテーブルは同じアカウント、同じリージョンに置く。
+
+### 例: 勤怠管理 SaaS のログ検索 {#use-case-saas-logs}
+
+**状況:** 契約企業 3,000 社の勤怠管理 SaaS。アプリのログが 1 日 200 GB 出る。障害の問い合わせでは、直近 10 日のログを企業 ID とエラーの文言で数秒以内に探したい。90 日より前のログは画面で見る必要がなく、S3 に残せばよい。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    A[ECS のアプリ] --> F[Data Firehose]
+    F --> O[OpenSearch Service]
+    F -- 全データのバックアップ --> S[(S3)]
+    O --> H[ホット: 10 日]
+    H --> W[UltraWarm: 90 日まで]
+    W --> X[削除]
+    S --> AT[Athena: 古いログの調査]
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| Firehose のバッファ | 5 MB、60 秒 | 障害の調査で 1 分の遅れまでは許す |
+| `RetryOptions.DurationInSeconds` | 3,600 | OpenSearch の一時的な不調でも 1 時間は送り直す |
+| S3 のバックアップ | 全データ | 届かなかった分も、90 日より前のログも S3 に残る |
+| インデックス | 1 日 1 つ（`app-logs-2026.11.13`） | 古い日を丸ごと移動、削除できる |
+| プライマリシャード | 1 日あたり 5 | 200 × 1.1 ÷ 50 ≈ 4.4。書き込みが多いので 1 シャード 50 GiB を目安にする |
+| Index State Management | 10 日で UltraWarm、90 日で削除 | 直近だけを速いストレージに置く |
+
+**なぜこのサービスか:** 文言での検索と、企業ごとの絞り込みを数秒で返す必要がある。Athena でも S3 のログは検索できるが、毎回のスキャンに時間がかかり、問い合わせのたびに料金がかかる。直近は OpenSearch、古いものは Athena と分けると、両方の得意を使える（[S3 上のログを問い合わせる](#athena-logs)）。
+
+**つまずきやすい点:**
+
+- CloudWatch Logs に出したログは、Firehose 経由で OpenSearch へ配信できない。アプリから直接 Firehose に送るか、サブスクリプションフィルターを使う。
+- 1 回の `_bulk` がインスタンスの HTTP リクエストの上限を超えると拒否される。Firehose のバッファの上限（100 MB）とインスタンスの上限を合わせる。
+- UltraWarm に移したインデックスは読み取り専用になる。後から書き足す運用はできない。
+
 ## Kinesis Data Streams {#kinesis-data-streams}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 順序付きのレコードをためて、複数の消費者が読めるようにするサービス。読んでもレコードは消えず、保持期間の間は何度でも読み直せる。
+
+**使う場面:** 対戦ゲームで、プレイヤーの操作ログを、チート検知、ランキング、分析保存の 3 つが別々の速さで読む（[例](#use-case-game)）。
 
 提供単位はリージョンで、AZ は選ばない。VPC の外のサービスで、VPC 内からはインターフェイスエンドポイントか NAT を経由して呼ぶ（[リソースの提供単位](resource-scope.md#two-axes)）。
 
@@ -144,6 +387,8 @@ Kafka のパーティションと同じ考え方である。違う点は、ブ�
 
 キーは「順序を守りたい単位」と「負荷を散らす単位」を同時に決める。同じキーは必ず同じシャードに入るので順序が守られるが、1 つのキーに集中するとシャードを増やしても散らない。
 
+**使う場面:** 食品工場で、設備 ID をキーにして、同じ設備の温度の記録を時刻順に集計する（[例](#use-case-factory)）。
+
 ```mermaid
 flowchart TD
   K["PartitionKey = u-1"] --> H["MD5 ハッシュ<br/>0〜2^128−1 の値"]
@@ -192,6 +437,8 @@ for row in rows:
 既定は 24 時間で、最大 8,760 時間（365 日）。下限は 24 時間で、これより短くできない。
 
 保持期間は、消費者が止まったり間違えたりしたときに、やり直せる時間の長さである。長くすれば安全だが、24 時間を超えた分は料金が増える。
+
+**使う場面:** 決済サービスで、週末に集計のバグが見つかっても、月曜に金曜夜からのレコードを読み直せるよう 72 時間にする。
 
 ```bash
 aws kinesis increase-stream-retention-period --stream-name clicks --retention-period-hours 72
@@ -248,6 +495,8 @@ if res["FailedRecordCount"] > 0:
 | On-demand Advantage | 自動。ウォーム容量を設定可能 | 固定料金なし。最低利用量あり | 常に大量に流す |
 
 モードは「容量を自分で計算する手間」と「料金の読みやすさ」の交換である。Provisioned は計算とリシャーディングが要るが、シャード時間で費用が決まる。On-demand は計算が要らないが、流した量で費用が変わる。
+
+**使う場面:** 生放送の配信サービスで、番組によって視聴ログの流量が 20 倍変わるので On-demand にする。24 時間一定の工場のセンサーなら Provisioned にする。
 
 - On-demand の新規ストリームは 4 MB/秒の書き込み、8 MB/秒の読み取りから始まる。
 - 過去 30 日のピークの 2 倍まで対応する。これを超える急増では、約 15 分間エラーが出る場合がある。
@@ -333,6 +582,8 @@ while it:
 
 消費者が複数で遅延が問題なら、拡張ファンアウトを使う。`RegisterStreamConsumer` で登録する。
 
+**使う場面:** ネット証券で、約定のストリームを 6 つのシステムが読み、不正な注文の検知だけは 1 秒以内に反応させたい。
+
 共有スループットでは、1 本のシャードの読み取り枠を全員で分け合う。消費者を足すほど 1 人あたりの枠が減り、ほかのチームの読み取りの影響も受ける。拡張ファンアウトは、消費者ごとに専用の枠を割り当て、互いの影響をなくすための仕組みである。その分、追加の料金がかかる。
 
 ```mermaid
@@ -367,6 +618,8 @@ aws kinesis register-stream-consumer \
 ### KCL {#kcl}
 
 自前の消費者を作るなら **Kinesis Client Library（KCL）** が便利。シャードの割り当てとチェックポイントを管理し、その情報を DynamoDB のリーステーブルに保存する。テーブルの容量が足りないと、イテレーターの期限切れを招くことがある。
+
+**使う場面:** 配車サービスで、車両の位置を読む Java の常駐アプリを ECS で 8 台動かし、1 台が落ちたら残りがそのシャードを引き継ぐ。
 
 `GetRecords` だけで消費者を作ると、どのワーカーがどのシャードを読むか、ワーカーが落ちたら誰が引き継ぐか、どこまで読んだか、リシャーディングで親子のシャードをどう読むか、をすべて自分で書くことになる。KCL はこれらをまとめて引き受ける。Kafka のコンシューマーグループと、オフセットの記録に当たる。
 
@@ -585,6 +838,8 @@ flowchart TD
 
 ストリーミングデータをためて、宛先に **届ける** マネージドサービス。自前の消費者コードやシャード管理が要らない。
 
+**使う場面:** ニュースサイトで、アクセスログを 15 分ごとに Parquet にまとめて S3 に置く。消費者のコードは書かない（[例](#use-case-news)）。
+
 ログを S3 や OpenSearch に保存するだけなら、処理のコードは要らない。ところが Kinesis Data Streams だけで作ると、読み出し、まとめ、宛先への書き込み、失敗時の再試行を自分で書くことになる。Firehose は、この「届けるだけ」の部分を引き受けるためのものである。
 
 宅配便の集荷にたとえると、荷物（レコード）を一定の量か時間までためてから、まとめて届ける。届け先が留守なら持ち帰って再配達し、それでも届かなければ、S3 以外の宛先なら S3 に保管する。その代わり、届くまでにバッファの分だけ遅れる。
@@ -678,6 +933,8 @@ S3 へのバックアップは次の 2 通り。
 ### Lambda による変換 {#firehose-transform}
 
 宛先に届く前に Lambda でレコードを変換できる。
+
+**使う場面:** 通販のアクセスログから、メールアドレスや電話番号のような個人情報を消してから保存する。
 
 ```python
 import base64
@@ -788,6 +1045,8 @@ flowchart TD
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 S3 のデータに標準 SQL で問い合わせるサーバーレスのサービス。インフラの管理が要らず、実行したクエリの分だけ払う。ログ分析やアドホックな調査に使う。
+
+**使う場面:** 市役所の広報課が、月に数回、S3 にためた 3 年分のアクセスログからよく見られたページを SQL で出す（[例](#use-case-city)）。
 
 ログの調査は、障害の後や月末など、ときどきしか行わない。そのために分析用のクラスターやデータウェアハウスを常に動かすと、使わない時間も費用がかかり、データを読み込む作業も要る。Athena は、データを S3 に置いたまま、問い合わせたときだけ計算するためのものである。
 
@@ -966,6 +1225,8 @@ WITH (
 
 チーム、用途ごとに分けて、設定とコストを管理する単位。IAM でワークグループ単位のアクセスも制御できる。
 
+**使う場面:** 大学の研究室で、学生用のワークグループに 1 クエリ 20 GB の上限を付け、条件の書き忘れで予算を使い切るのを防ぐ。
+
 | 設定 | 内容 |
 | --- | --- |
 | クエリごとのデータ制限 | 1 つのクエリのスキャン量の上限（10 MB〜7 EB）。超えると **クエリをキャンセル** する |
@@ -1003,6 +1264,8 @@ aws athena update-work-group --work-group analysts --configuration-updates \
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 OpenSearch の検索と分析のクラスターを管理するサービス。全文検索、ログ分析、リアルタイムのアプリケーション監視、クリックストリーム分析に使う。OpenSearch Dashboards で可視化できる。
+
+**使う場面:** 家具の EC サイトで、「北欧 ソファ 2人掛け」の検索に関係の近い順で答え、色と価格帯で絞り込ませる（[例](#use-case-search)）。
 
 RDB で「本文に『シューズ』を含む」を探すと、`LIKE '%シューズ%'` で全行を読むことになる。OpenSearch は、書き込むときに単語ごとの索引（転置インデックス）を作っておくので、検索のときは索引を引くだけで済む。本の巻末の索引から、言葉の載っているページを引くのと同じである。その代わり、書き込みのたびに索引を作る手間とディスクがかかる。
 

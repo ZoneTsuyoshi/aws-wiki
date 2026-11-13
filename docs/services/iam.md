@@ -41,6 +41,232 @@ flowchart LR
 
 ネットワークの中にいれば信用する、という境界の考え方は使いません。AWS の API はインターネットからも届くので、リクエストごとに ID と権限で判定します。
 
+## 使いどころと具体例 {#use-cases}
+
+IAM と STS は、AWS を使う限りどの場面にも出てきます。迷うのは「どの仕組みで認証情報を渡し、どこで線を引くか」です。よくある場面と、選ぶ機能を並べます。
+
+| 場面 | 具体例 | 使う機能 |
+| --- | --- | --- |
+| 社員がコンソールに入る | 社員 3,000 人の会社が、社内 IdP のアカウントで AWS に入る | [SAML 2.0 の具体例](#saml) |
+| CI/CD からデプロイする | ネットスーパーの GitHub Actions が、`main` のジョブだけ本番にデプロイする | [フェデレーション](#federation)（OIDC） |
+| AWS の外のサーバーから呼ぶ | 全国 300 店舗の店内サーバーが、毎晩の売上ファイルを S3 に送る | [プログラムからのアクセス](#programmatic-access)（IAM Roles Anywhere） |
+| AWS の中のアプリに権限を渡す | 注文 API の Lambda が、`Orders` テーブルだけを読み書きする | [Lambda の実行ロール](#lambda-execution-role)、[最小権限](#least-privilege) |
+| 第三者の SaaS に読ませる | コスト分析の SaaS に、請求と EC2 の一覧だけを読ませる | [ExternalId](#external-id) |
+| 開発者にロールを作らせる | ゲーム会社のイベントチームが、Lambda 用のロールを自分で作る | [権限境界の設定](#permissions-boundary)、[iam:PassRole](#passrole) |
+| 危険な操作に MFA を求める | 病院のバックアップの削除は、1 時間以内に MFA を通した人だけにする | [条件](#conditions)、[MFA](#mfa) |
+| 別のアカウントに納品する | 制作会社が、動画配信会社のバケットに完成した動画を置く | [クロスアカウントアクセス](#cross-account) |
+| 1 つのロールを多数のテナントで使う | 会員管理 SaaS の 1,000 テナントを、1 つのロールとタグで分ける | [セッションタグ](#session-tags)、[セッションポリシー](#session-policies) |
+| 共有の管理者ロールの操作を追う | 運用チーム 5 人が同じ `OpsAdmin` に入っても、誰の操作かを分ける | [ソースアイデンティティ](#source-identity) |
+| 自作 API を IAM で守る | 在庫 API を、注文サービスのロールだけが呼べるようにする | [SigV4](#sigv4)、[マイクロサービス間の認証](#microservices-auth) |
+| 全アカウントで使えるリージョンを絞る | 国内の金融機関が、東京と大阪以外のリージョンを禁止する | [権限境界と SCP](#boundaries-scp) |
+
+IAM だけで解こうとすると、かえって複雑になる場面もあります。
+
+| 場面 | IAM が向かない理由 | 代わりの選択肢 |
+| --- | --- | --- |
+| 一般の利用者のサインイン | IAM ユーザーは会員登録、パスワード再設定、ソーシャルログインの機能を持たない。利用者ごとに作る設計でもない | [Cognito](cognito.md) |
+| 30 アカウントを使う社員のアクセス | アカウントごとに SAML プロバイダーとロールを作ると、30 か所の管理になる | [IAM Identity Center](identity-directory.md#identity-center) |
+| 「この注文を編集できるのは作成者だけ」 | IAM は業務データの中身（作成者が誰か）を知らない | [アプリケーションレベルの認可](cognito.md#app-authorization)、[Verified Permissions](identity-directory.md#verified-permissions) |
+| DB のパスワードや外部 API のキーの保管 | IAM が扱うのは AWS の認証情報だけで、他の秘密の保管とローテーションはしない | [Secrets Manager](secrets.md#secrets-manager) |
+| Windows のログオンやファイル共有の権限 | IAM は AWS の API の権限で、OS やファイルサーバーは対象外 | [Directory Service](identity-directory.md#directory-service) |
+
+社員が SAML でコンソールに入る例は [SAML 2.0 の具体例](#saml) で詳しく扱っているので、ここでは他の場面を取り上げます。
+
+### 例: ネットスーパーの CI/CD から長期キーをなくす {#use-case-ec-cicd}
+
+**状況:** 会員 50 万人のネットスーパーです。開発者は 8 人で、1 日に 10 回ほど GitHub Actions から本番にデプロイします。これまでは IAM ユーザーのアクセスキーを GitHub のシークレットに置いていて、監査で「1 年以上ローテーションしていないキーがある」と指摘されました。
+
+**構成:**
+
+```mermaid
+sequenceDiagram
+    participant J as GitHub Actions のジョブ
+    participant G as GitHub の OIDC
+    participant S as STS
+    participant C as CloudFormation
+    J->>G: ID トークンを要求
+    G-->>J: sub = repo:example-shop/web:ref:refs/heads/main
+    J->>S: AssumeRoleWithWebIdentity（30 分）
+    S-->>J: deploy-prod ロールの一時認証情報
+    J->>C: SAM でスタックを更新
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| 信頼ポリシーの `aud` | `sts.amazonaws.com` | GitHub の既定の値。これだけでは他の組織と区別できない |
+| 信頼ポリシーの `sub` | `repo:example-shop/web:ref:refs/heads/main` | `main` のジョブだけに絞る。PR のジョブは本番に触れない |
+| `DurationSeconds` | `1800` | デプロイは最長 20 分。余裕を見て 30 分 |
+| 許可ポリシー | `cloudformation:*` を `stack/shop-*` に、`iam:PassRole` を `role/shop-lambda-*` に | デプロイに要る範囲だけにする（[iam:PassRole](#passrole)） |
+
+**なぜこの方式か:** アクセスキーは無効にするまで使えるので、GitHub 側から漏れると気づくまで悪用されます。OIDC なら認証情報は 30 分で切れ、GitHub のシークレットに置く値もなくなります。
+
+**つまずきやすい点:**
+
+- `pull_request` のイベントで動くジョブは、environment を参照していなければ、`sub` が `repo:example-shop/web:pull_request` になります。`main` に絞ったロールは引き受けられず、`Not authorized to perform sts:AssumeRoleWithWebIdentity` になります。PR では検証用の別のロールを使います。
+- 楽をしようと `sub` を `repo:example-shop/*` にすると、同じ組織の別のリポジトリから本番にデプロイできてしまいます。
+
+### 例: 300 店舗の店内サーバーから S3 に送る {#use-case-retail-roles-anywhere}
+
+**状況:** 全国 300 店舗のドラッグストアです。各店に Linux の店内サーバーが 1 台あり、閉店後の 23:00 に売上の CSV（1 店あたり約 20 MB）を S3 に送ります。情報システム部は 4 人で、300 台のキーを手で入れ替える余力はありません。
+
+**構成:**
+
+```mermaid
+flowchart LR
+    CA["社内の CA<br/>店舗ごとに証明書を発行"] --> SV["店内サーバー<br/>CN=store-0123"]
+    SV -->|"証明書で署名した<br/>CreateSession"| RA["IAM Roles Anywhere<br/>トラストアンカー、プロファイル"]
+    RA -->|"一時認証情報"| SV
+    SV -->|"PutObject"| S3["S3 sales-upload<br/>store-0123/ だけ"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| 証明書の Subject の CN | `store-0123`（店番号） | セッションの `aws:PrincipalTag/x509Subject/CN` に入り、ポリシーで使える |
+| ロールの許可ポリシー | `s3:PutObject` を `arn:aws:s3:::sales-upload/${aws:PrincipalTag/x509Subject/CN}/*` に | 1 つのロールで、各店が自分のフォルダーにしか書けない |
+| 信頼ポリシー | `rolesanywhere.amazonaws.com` に `sts:AssumeRole`、`sts:TagSession`、`sts:SetSourceIdentity`。`aws:SourceArn` をトラストアンカーに | 他のトラストアンカー経由の引き受けを防ぐ |
+| セッションの長さ | 3,600 秒 | 送信は数分で終わる。範囲は 900〜43,200 秒で、プロファイルの値とリクエストの値の短いほうになる |
+
+**なぜこの方式か:** 300 台にアクセスキーを置くと、ローテーションも漏えい時の無効化も 300 台分の作業になります。証明書なら、漏れた 1 台の証明書を失効させるだけで済み、その店のフォルダー以外には書けません。
+
+**つまずきやすい点:**
+
+- 証明書の期限が一斉に切れると、300 店の送信が同じ夜に止まります。期限の 30 日前に更新する仕組みを先に作ります。
+- 店内サーバーの時計がずれると、署名の時刻の確認で失敗します（[SigV4](#sigv4)）。NTP で合わせます。
+- 失効を確かめるには、CRL を取り込むか、自動の失効確認を有効にします。どちらもしないと、盗まれた証明書でも認証情報を取れます。
+
+### 例: コスト分析 SaaS が顧客のアカウントを読む {#use-case-saas-external-id}
+
+**状況:** 顧客 1,200 社に AWS の費用を可視化する SaaS です。顧客の各アカウントの請求データと EC2 の一覧を、1 日 4 回読み取ります。顧客の多くは「アクセスキーを外部に渡すこと」を社内規程で禁じています。
+
+**構成:**
+
+```mermaid
+sequenceDiagram
+    participant J as SaaS の収集ジョブ
+    participant S as STS
+    participant R as 顧客 A の CostReader
+    J->>S: AssumeRole（ExternalId = 顧客 A 用の値）
+    S->>R: 信頼ポリシーの Principal と ExternalId を確認
+    S-->>J: 15 分の一時認証情報
+    J->>R: 請求データと EC2 の一覧を読む
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| `ExternalId` | SaaS が顧客ごとに生成した UUID（36 文字） | 顧客に決めさせると、他の顧客の値を当てられる |
+| 信頼ポリシーの `Principal` | SaaS のアカウントの収集用ロール 1 つの ARN | アカウント全体にすると、SaaS の社内の別のロールからも入れる |
+| 許可ポリシー | `ce:GetCostAndUsage` と `ec2:Describe*` だけ | 読み取りに限り、書き込みは一切渡さない |
+| `DurationSeconds` | `900` | 1 回の収集は 5 分ほど。最短にする |
+| `RoleSessionName` | `costsaas-<顧客 ID>` | 顧客の CloudTrail に、どの収集かが残る |
+
+**なぜこの方式か:** アクセスキーを預かる方式だと、SaaS 側で漏えいが起きたときに 1,200 社分のキーが一度に危険になります。ロールなら、顧客は信頼ポリシーを消すだけでいつでも止められます。
+
+**つまずきやすい点:**
+
+- 顧客がロールの ARN を間違えて登録すると、`AccessDenied` になります。SaaS の画面で `AssumeRole` を試し、結果をその場で見せます。
+- [混乱した代理問題](#external-id) を防ぐのは `ExternalId` です。ロール ARN を秘密の値のように扱っても、防げません。
+
+### 例: ゲーム会社の開発者に自分でロールを作らせる {#use-case-game-boundary}
+
+**状況:** スマホゲーム 3 タイトルを運営する会社です。開発者は 60 人で、イベントのたびに Lambda を追加し、月に約 30 個のロールが要ります。これまでは基盤チーム 3 人に依頼し、作成まで 2 日待っていました。
+
+**構成:**
+
+| 仕組み | 中身 | 決める人 |
+| --- | --- | --- |
+| 開発者のポリシー | `iam:CreateRole` は `role/game-app-*` で、境界 `GameDevBoundary` を付けるときだけ許可 | 基盤チーム |
+| 権限境界 `GameDevBoundary` | DynamoDB と S3 の `game-*`、SQS、CloudWatch Logs だけ | 基盤チーム |
+| 作られるロール | 許可ポリシーは開発者が自由に付ける | 開発者 |
+| `iam:PassRole` | `role/game-app-*` を `lambda.amazonaws.com` にだけ渡せる | 基盤チーム |
+
+**設定値:**
+
+- 境界を付けずに `CreateRole` を呼ぶと拒否されるよう、`iam:PermissionsBoundary` の条件を付けます（[権限境界の設定](#permissions-boundary)）。
+- `iam:DeleteRolePermissionsBoundary` と、`GameDevBoundary` への `iam:CreatePolicyVersion` は `Deny` にします。境界を外したり広げたりできないようにするためです。
+- ロール名の接頭辞を `game-app-` にそろえ、`Resource` でまとめて絞れるようにします。
+
+**なぜこの方式か:** SCP はアカウント全体に効くので、「開発者が作るロールだけ」を絞れません。権限境界なら、基盤チームは境界の線だけを管理し、日々の作成は開発者に任せられます。
+
+**つまずきやすい点:**
+
+- 開発者が KMS で暗号化したテーブルを使うと、境界に `kms:Decrypt` がないので失敗します。拒否メッセージに `no permissions boundary allows` と出るので、境界の不足と分かります（[アクセス拒否メッセージ](#access-denied-messages)）。
+- 開発者が `AdministratorAccess` を付けても、使えるのは境界との重なりだけです。「付けたのに動かない」という問い合わせが最初は増えます。
+
+### 例: 病院のバックアップの削除に MFA を求める {#use-case-medical-mfa}
+
+**状況:** 12 の病院を運営する医療法人が、電子カルテのバックアップ（画像を含めて約 40 TB）を S3 に置いています。運用者は 6 人です。院内の規程で「バックアップの削除と、アクセス権の変更は二要素認証を通した人だけ」と決まっています。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    O["運用者<br/>Identity Center で通常作業"] --> Q{"削除やポリシー変更?"}
+    Q -- いいえ --> N["RecordsOperator<br/>読み取りとアップロード"]
+    Q -- はい --> A["RecordsAdmin を引き受け<br/>MFA のコードを渡す"]
+    A --> B{"バケットポリシー<br/>MFA から 1 時間以内?"}
+    B -- はい --> OK["削除を実行"]
+    B -- いいえ --> X["Deny"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| `RecordsAdmin` の信頼ポリシー | `aws:MultiFactorAuthPresent` が `true` | MFA なしでは引き受けられない |
+| `RecordsAdmin` の `MaxSessionDuration` | 3,600 秒 | 削除の作業は短い。強い権限を長く持たせない |
+| バケットポリシーの `Deny` | `s3:DeleteObject`、`s3:PutBucketPolicy` を、`BoolIfExists` で `aws:MultiFactorAuthPresent` が `false` のとき | 長期のアクセスキーにはキー自体がないので、`Bool` では止められない（[GetSessionToken と MFA](#mfa)） |
+| もう 1 つの `Deny` | `aws:MultiFactorAuthAge` が `3600` を超えるとき | 朝に通した MFA のセッションを、夕方まで使わせない |
+
+**なぜこの方式か:** IAM の条件なら、規程の「二要素認証を通した人だけ」をそのまま書けます。誤操作だけでなく改ざんまで防ぐなら、S3 の [Object Lock](s3.md#object-lock) を組み合わせます。
+
+**つまずきやすい点:**
+
+- `Bool` で書くと、古いバッチの IAM ユーザーのキーからの削除が通ってしまいます。監査で見つかりやすい誤りです。
+- MFA の端末を 1 つだけにすると、なくした日に誰も削除できません。セキュリティキーを 2 本登録し、1 本を金庫に置きます。
+
+### 例: 制作会社から動画配信会社へ納品する {#use-case-media-cross-account}
+
+**状況:** 月間 1,000 万再生の動画配信会社です。外部の制作会社 15 社が、毎週合計 200 本（1 本約 5 GB）の完成動画を納品します。制作会社もそれぞれ AWS アカウントを持ち、自社のバケットから納品用のバケットへコピーします。
+
+**構成:**
+
+```mermaid
+flowchart LR
+    subgraph P["制作会社 A のアカウント"]
+        R["delivery ロール"]
+        SB["自社のバケット"]
+    end
+    subgraph V["配信会社のアカウント"]
+        IB["incoming バケット<br/>partner-a/ だけ書ける"]
+        K["KMS キー"]
+    end
+    SB -->|"読む"| R
+    R -->|"PutObject<br/>バケットポリシーで許可"| IB
+    R -.->|"GenerateDataKey<br/>キーポリシーで許可"| K
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| バケットポリシー | 制作会社 A の `delivery` ロールに、`s3:PutObject` を `incoming/partner-a/*` だけ | 他社のフォルダーを上書きさせない |
+| オブジェクト所有者 | バケット所有者の強制 | 他社が置いたオブジェクトも配信会社のものになる（[オブジェクト所有者](s3.md#object-ownership)） |
+| KMS のキーポリシー | `delivery` ロールに `kms:GenerateDataKey` | キーポリシーに許可がないと、IAM で許可しても暗号化できない |
+| 制作会社側の IAM ポリシー | 相手のバケットへの `s3:PutObject` と、キーへの `kms:GenerateDataKey` | クロスアカウントは両側の許可が要る |
+
+**なぜこの方式か:** ロールの引き受けにすると、そのセッションは制作会社の自社のバケットを読む権限を失います。両方のバケットに同時に触るので、リソースベースポリシーを選びます（[クロスアカウントアクセス](#cross-account)）。
+
+**つまずきやすい点:**
+
+- キーポリシーの許可を忘れると、`PutObject` が `AccessDenied` になります。バケットポリシーを何度見直しても直りません。
+- 制作会社が増えるたびにバケットポリシーが長くなり、上限に近づきます。数十社になるなら、S3 Access Points を社ごとに分けます。
+
 ## プリンシパルと権限の定義 {#principals}
 
 プリンシパルは、AWS にリクエストを送る主体です。
@@ -273,6 +499,8 @@ flowchart TD
 
 `Action` と `Resource` だけでは「何に、何をするか」しか書けません。同じ操作でも「MFA を通したか」「社内のネットワークからか」「自分のチームのリソースか」で、許すかどうかを変えたい場面があります。条件は、この文脈をリクエストごとに見るための仕組みです。
 
+**使う場面:** 経理システムの請求書のバケットを、本社の VPC エンドポイント経由のときだけ読めるようにする（`aws:SourceVpce`）。
+
 | 文脈 | 現実のたとえ | 条件キーの例 |
 | --- | --- | --- |
 | 本人確認の強さ | 金庫室は、社員証に加えて暗証番号も要る | `aws:MultiFactorAuthPresent` |
@@ -468,6 +696,8 @@ AWS サービスがサービスプリンシパルでアクセスしてくる場�
 セッションに付けるキーと値の組で、ポリシーからは `aws:PrincipalTag` として参照します。ABAC の基本部品です。
 
 役割ごとにロールを作る方式（RBAC）では、チームやテナントが増えるたびにロールとポリシーが増えます。セッションタグを使うと、1 つのロールと 1 つのポリシーのまま、引き受けるときに渡した属性で範囲を変えられます。
+
+**使う場面:** 会員管理 SaaS で、サインインしたテナントの ID をタグにして、1 つのロールのまま 1,000 テナントのデータを分ける（[マルチテナントの分離](secrets.md#tenant-sessions)）。
 
 | 観点 | RBAC（ロールを増やす） | ABAC（セッションタグ） |
 | --- | --- | --- |
@@ -828,6 +1058,8 @@ boto3 の順序は次のとおりです。
 
 EC2 にロールを渡すための入れ物です。1 つのインスタンスプロファイルに入るロールは 1 つだけです。
 
+**使う場面:** 画像変換の EC2 が、アップロード用のバケットを読み、変換後のバケットに書く。キーをインスタンスに置かずに済む。
+
 EC2 の中のアプリは、AWS の外のサーバーと同じく、自分では認証情報を持っていません。インスタンスプロファイルを付けると、EC2 がロールを引き受け、その一時認証情報を IMDS 経由でアプリに渡します。オンプレミスで言えば、サーバーにパスワードファイルを置く代わりに、サーバー自体に身分証を発行する形です。
 
 コンソールでロールを作ると同名のプロファイルが自動で作られますが、CLI や SDK では別々に作成します。権限を変えるときはプロファイルを置き換えます。プロファイルからロールを外すと、反映に最大 1 時間かかることがあります。
@@ -858,6 +1090,8 @@ AWS API へのリクエストは Signature Version 4（SigV4）で署名しま�
 4. 署名を計算し、`Authorization` ヘッダーまたはクエリ文字列に入れる。
 
 一時認証情報の場合はセッショントークンも含めます。署名は秘密鍵そのものを送らずに、本人確認、改ざん検知、リプレイ対策を実現します。リクエストは原則としてタイムスタンプから 5 分以内に AWS に届く必要があります。
+
+**使う場面:** SDK を入れられない工場の組み込み機器から、IAM 認証の API Gateway に計測値を送る。署名を自分で組み立てる。
 
 パスワードを毎回送る方式だと、途中で盗み見られたときにそのまま使われます。SigV4 では、シークレットキーは手元から出ません。送るのは「このリクエストの内容と時刻をキーで計算した値」だけで、AWS は同じ計算をして一致を確かめます。
 
@@ -1333,6 +1567,8 @@ flowchart LR
 
 ロールの `MaxSessionDuration` で、1〜12 時間（3,600〜43,200 秒）を設定します。既定は 1 時間です。
 
+**使う場面:** 毎晩 4 時間かかる会計の集計バッチを、ロールチェーンなしの 1 つのセッションで動かす。
+
 ```bash
 aws iam update-role --role-name ReportReader --max-session-duration 14400
 aws sts assume-role --role-arn arn:aws:iam::111122223333:role/ReportReader \
@@ -1403,6 +1639,8 @@ sts.assume_role(
 | `sts:SetSourceIdentity` | 信頼ポリシーと呼び出し側の許可 | 設定を許す権限 |
 | `sts:SourceIdentity` | 信頼ポリシー | 引き受け時に値を要求する |
 | `aws:SourceIdentity` | 後続の操作の条件 | セッションの値で制御する |
+
+**使う場面:** 運用チーム 5 人が共有の `OpsAdmin` に入る証券会社のシステムで、監査のために誰の操作かを CloudTrail に残す。
 
 たとえば、共有の管理者ロールに複数の人が入っても、`SourceIdentity=alice` で誰の操作かを追えます。信頼ポリシーに `sts:SetSourceIdentity` がないと、`AssumeRole` は失敗します。
 

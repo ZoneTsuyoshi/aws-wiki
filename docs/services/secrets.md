@@ -68,11 +68,238 @@ flowchart TD
     D -- いいえ --> F["Parameter Store"]
 ```
 
+## 使いどころと具体例 {#use-cases}
+
+3 つのサービスは、「値が漏れたら困るか」「値を定期的に変えるか」「変えたときに利用者へ影響するか」で選び分けます。よくある場面を並べます。
+
+| 場面 | 具体例 | 使う機能 |
+| --- | --- | --- |
+| DB のパスワードを定期的に変える | 家電の EC サイトが、注文 DB のアプリ用ユーザーのパスワードを毎月変える | [ローテーション](#rotation) |
+| RDS のマスターパスワードを人に見せない | 新しい RDS を作るとき、マスターパスワードを RDS に管理させる | [ローテーション](#rotation)（マネージドローテーション） |
+| 外部サービスの API キーを置く | 物流会社が、配送業者の API キーを 1 か所で管理する | [Secrets Manager](#secrets-manager)、[クロスアカウントでの利用](#secrets-cross-account) |
+| Lambda から秘密を安く速く読む | 秒間 100 回呼ばれる関数が、DB のパスワードを毎回 API で取らない | [Lambda 拡張](#lambda-extension) |
+| 環境ごとの接続先を分ける | 開発と本番で、同じコードが別の API の URL を読む | [階層](#parameter-hierarchy)、[環境ごとの設定](#environment-config) |
+| 拠点ごとの設定を配る | 全国 300 店舗の店内サーバーが、自店のプリンターや税率の設定を読む | [階層](#parameter-hierarchy)、[階層と取得](#parameter-retrieval) |
+| 最新の AMI ID をハードコードしない | 工場の監視サーバーを、毎月の最新の Amazon Linux で作り直す | [パブリックパラメータ](#public-parameters) |
+| 新機能を一部の利用者から出す | 動画配信の新しいプレイヤーを、30 分かけて全員に広げる | [機能フラグ](#feature-flags)、[デプロイ戦略](#deployment-strategies) |
+| 障害時にすぐ機能を止める | ゲームのガチャ画面に不具合が出たら、再デプロイなしで閉じる | [機能フラグ](#feature-flags)、[ロールバック](#appconfig-rollback) |
+| ログから個人情報を消す | クリニックの予約システムのログに、患者のメールを残さない | [サニタイズとマスキング](#sanitization-masking) |
+| テナントごとに秘密を分ける | 学習塾向け SaaS の大口の塾にだけ専用の DB を用意する | [マルチテナントのデータアクセス](#multi-tenant) |
+
+選び間違えやすい場面です。
+
+| 場面 | 向かない理由 | 代わりの選択肢 |
+| --- | --- | --- |
+| ローテーションしない一般の設定値を Secrets Manager に置く | シークレット単位の月額がかかり、件数が多いと Parameter Store のスタンダードより高くなりやすい | [Parameter Store](#parameter-store) |
+| 利用者に影響する設定を Parameter Store で書き換える | 書いた瞬間に全員に届き、事前の検証も自動の切り戻しもない | [AppConfig](#appconfig) |
+| 80 KB の証明書チェーンや大きなファイル | Secrets Manager は 65,536 バイト、Parameter Store は 8 KB まで | S3 と [KMS](kms.md) で暗号化し、参照先だけを Parameter Store に置く |
+| AWS の認証情報（アクセスキー）を保管して配る | 保管しても長期のキーであることは変わらない。漏れたら使われ続ける | [IAM ロールと一時認証情報](iam.md#programmatic-access) |
+| Lambda の環境変数にパスワードを書く | 関数の設定を読める人に平文で見える | 環境変数には名前だけを書き、値は Secrets Manager から取る（[環境ごとの設定](#environment-config)） |
+
+### 例: 家電の EC サイトの DB パスワードを毎月変える {#use-case-ec-db-rotation}
+
+**状況:** 会員 120 万人の家電の EC サイトです。注文 API は ECS のタスク 30 個と、決済の後処理の Lambda です。DB は Aurora MySQL で、社内の基準で「アプリが使う DB のパスワードは 90 日以内に変える」と決まっています。注文は 24 時間受けるので、ローテーションで止めることはできません。
+
+**構成:**
+
+```mermaid
+flowchart LR
+    ECS["ECS のタスク 30 個<br/>キャッシュ 5 分"] --> SM["Secrets Manager<br/>prod/shop/db-app"]
+    L["Lambda<br/>拡張の TTL 300 秒"] --> SM
+    R["ローテーション Lambda<br/>交代ユーザー"] --> SM
+    R -->|"app と app_clone を交互に"| DB["Aurora MySQL"]
+    SU["prod/shop/db-superuser"] --> R
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| 戦略 | 交代ユーザー | ローテーションの直後でも、前のユーザーで接続できる（[ローテーション](#rotation)） |
+| スケジュール | `cron(0 17 1 * ? *)`、`Duration` は `3h` | 毎月 1 日 17:00 UTC、つまり日本時間の 2 日 2:00 から 3 時間。注文が少ない時間帯（[ローテーションのスケジュール](#rotation-schedule)） |
+| ECS のキャッシュ | `secret_refresh_interval=300` | 古い値を使う時間を最長 5 分にする（[取得とクライアント側キャッシュ](#retrieval-caching)） |
+| Lambda | Parameters and Secrets Lambda Extension、`SECRETS_MANAGER_TTL=300` | 呼び出しの回数に関係なく、実行環境ごとに 5 分に 1 回の取得で済む |
+| ローテーション Lambda のネットワーク | DB と同じプライベートサブネット、Secrets Manager のインターフェイスエンドポイント | NAT なしで Secrets Manager と DB の両方に届く（[Lambda ローテーションの動き](#lambda-rotation-steps)） |
+
+**なぜこのサービスか:** Parameter Store にはローテーションの仕組みがありません。RDS のマネージドローテーションはマスターユーザー用なので、アプリ用のユーザーは Lambda のローテーションで変えます。
+
+**つまずきやすい点:**
+
+- 交代ユーザーには、ユーザーを作れる権限を持つ `superuser` のシークレットが別に要ります。用意しないと、最初のローテーションが `setSecret` で失敗します。
+- cron に日本時間の `2` 時を書くと、実際には日本時間の 11 時に動き、昼の注文の最中にローテーションが走ります。
+- シングルユーザーを選ぶと、切り替えの瞬間に古いパスワードの接続が拒否され、注文 API に短時間のエラーが出ます。
+
+### 例: 物流会社が配送業者の API キーを複数のアカウントで使う {#use-case-logistics-api-keys}
+
+**状況:** 全国に配送する物流会社です。提携する配送業者 6 社の API キーを使って、集荷の依頼と配送状況の取得をします。システムは 12 のアカウントに分かれていて、これまでは各アカウントに同じキーを手でコピーしていました。キーを更新するたびに、1 つか 2 つのアカウントで更新を忘れていました。
+
+**構成:**
+
+```mermaid
+flowchart LR
+    subgraph SEC["共通のセキュリティアカウント"]
+        S["carriers/<業者名>/api-key<br/>リソースポリシー"]
+        K["カスタマー管理キー"]
+        OS["大阪のレプリカ"]
+    end
+    A1["集荷アカウントの<br/>pickup ロール"] -->|"ARN で GetSecretValue"| S
+    A2["追跡アカウントの<br/>tracking ロール"] -->|"ARN で GetSecretValue"| S
+    A1 -.->|"kms:Decrypt"| K
+    S -->|"複製"| OS
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| 暗号化キー | カスタマー管理キー | AWS 管理キーの `aws/secretsmanager` は、キーポリシーを変えられず他のアカウントに使えない |
+| リソースポリシー | `pickup` と `tracking` のロールの ARN に `GetSecretValue`。`--block-public-policy` 付き | 読める相手を 2 つのロールに限り、誤った公開を止める（[リソースポリシー](#secret-resource-policy)） |
+| 読む側の指定 | シークレットの ARN | 名前だけだと自分のアカウントを探して `ResourceNotFoundException` になる |
+| 他リージョンへの複製 | `ap-northeast-3`。大阪にも別のカスタマー管理キーを指定 | 東京の障害でも、大阪のシステムがキーを読める（[他リージョンへの複製](#secret-replication)） |
+| 削除の復旧期間 | 既定の 30 日 | 業者との契約を終えて消したあとに、まだ使っていたシステムが見つかっても戻せる |
+
+**なぜこのサービスか:** 1 か所で更新すれば、12 アカウントのシステムが次の取得で新しいキーを読みます。誰がいつ読んだかも CloudTrail に残ります。配送業者のキーは業者の画面で発行し直す必要があるので、自動のローテーションではなく、更新を 1 か所に集めることが狙いです。
+
+**つまずきやすい点:**
+
+- 3 つの許可（読む側の IAM、リソースポリシー、キーポリシー）のうち、キーポリシーだけ忘れると `Access to KMS is not allowed` になります（[クロスアカウントでの利用](#secrets-cross-account)）。
+- リソースポリシーにロールを足すとき、`PutResourcePolicy` は置き換えです。新しいロールだけを書いて送ると、既存のロールが読めなくなります。
+
+### 例: 300 店舗のドラッグストアの設定を Parameter Store で配る {#use-case-retail-store-config}
+
+**状況:** 全国 300 店舗のドラッグストアです。各店の店内サーバーが、レシートプリンターの設定、店舗の営業時間、ポイントの倍率などを読みます。店ごとの値が約 20 個、全店共通の値が約 30 個です。店内サーバーは IAM Roles Anywhere で認証しています（[IAM の例](iam.md#use-case-retail-roles-anywhere)）。
+
+**構成:**
+
+```text
+/prod/stores/common/point-rate
+/prod/stores/common/tax-rate
+/prod/stores/store-0123/printer/model
+/prod/stores/store-0123/open-hours
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| ティア | スタンダード | 300 × 20 + 30 = 6,030 個で、10,000 個に収まる。値はどれも 4 KB 未満（[ティア](#parameter-tiers)） |
+| ロールの許可 | `ssm:GetParametersByPath` を `parameter/prod/stores/common/*` と `parameter/prod/stores/${aws:PrincipalTag/x509Subject/CN}/*` に | 1 つのロールで、各店は自店と共通の値しか読めない |
+| 取得のタイミング | 起動時と、毎朝 8:00 から 0〜300 秒のランダムな待ちのあと | 300 台が同時に読むと、40 TPS の上限を超える |
+| 取得の方法 | `Recursive=true` とページネーター | 1 回に返るのは 10 件まで（[階層と取得](#parameter-retrieval)） |
+| 変更の確認 | パラメータの変更（`Parameter Store Change`）を EventBridge で受け、本部のチャットに通知する | いつ、どの店の値が変わったかを店長に伝える。イベントはベストエフォートで、誰が変えたかは CloudTrail で確かめる |
+
+**なぜこのサービスか:** どれも漏れても大きな被害のない設定値で、ローテーションは要りません。スタンダードなら追加料金がかかりません。利用者（来店客）に一斉に影響する値でもないので、AppConfig の段階展開までは要りません。
+
+**つまずきやすい点:**
+
+- 店ごとの 20 個は 2 ページ、共通の 30 個は 3 ページなので、1 回の取得で約 5 回の呼び出しになります。300 台が 8:00 ちょうどに読むと 1,500 回が数秒に集中し、`ThrottlingException` になります。ランダムな待ちを入れると、300 秒に散って約 5 TPS で済みます。
+- `/prod/stores/common/` を読める権限があると、`Recursive=true` で配下のすべてが読めます。秘密にしたい値を `common` の下に置かないようにします。
+
+### 例: 動画配信の新しいプレイヤーを段階的に出す {#use-case-video-feature-flag}
+
+**状況:** 月間 1,000 万再生の動画配信サービスです。視聴画面の新しいプレイヤー（低遅延の再生方式）を出します。過去に、新しい画面を全員に一度に出して再生エラーが急増し、戻すまで 40 分かかったことがあります。視聴画面の設定は、Lambda の BFF が読んでアプリに返します。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    F["フラグ newPlayer<br/>enabled=true"] --> V{"JSON スキーマの検証"}
+    V -- 正常 --> D["Linear20PercentEvery6Minutes<br/>6 分ごとに 20%"]
+    D --> B["ベイク 30 分"]
+    A["再生エラー率のアラーム"] -.->|"ALARM"| RB["自動で前の設定に戻す"]
+    D -.-> A
+    B -.-> A
+    B -- 問題なし --> OK["全員に配布完了"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| 設定プロファイル | 機能フラグ。`newPlayer` に `enabled` と `bufferSeconds` の属性 | 新しい再生方式の待ち時間も、再デプロイなしで調整できる（[機能フラグ](#feature-flags)） |
+| デプロイ戦略 | `AppConfig.Linear20PercentEvery6Minutes` | 30 分かけて広げ、最初の 20% で問題を見つける（[デプロイ戦略](#deployment-strategies)） |
+| 環境のアラーム | 再生エラー率が 2% を 3 分続けて超えたら `ALARM` | 配布中とベイク中に鳴れば、自動で戻る（[アラームとロールバック](#alarm-rollback)） |
+| 取得 | AppConfig Agent の Lambda 拡張。ポーリング間隔は既定の 45 秒 | 呼び出しのたびに API を呼ばず、料金と待ち時間を抑える（[AppConfig Agent](#appconfig-agent-settings)） |
+| 緊急停止 | `AppConfig.AllAtOnce` で `enabled=false` を配る手順を用意 | 戻すときは、段階的に戻す必要がない |
+
+**なぜこのサービスか:** Parameter Store の値を書き換えると、全員に即座に届きます。前回の 40 分の障害は、気づくのも戻すのも人だったことが原因でした。AppConfig なら、配る範囲を少しずつ広げ、アラームで自動的に戻せます。
+
+**つまずきやすい点:**
+
+- `FinalBakeTimeInMinutes` を 0 にした独自の戦略を使うと、100% に届いた直後に鳴ったアラームでは戻りません。
+- アラームを読むロールに `cloudwatch:DescribeAlarms` がないと、エラーが急増しても戻りません。最初の配布の前に、わざとアラームを鳴らして戻るかを試します。
+
+### 例: クリニックの予約システムのログから患者情報を消す {#use-case-clinic-log-masking}
+
+**状況:** 40 院のクリニックをまとめる医療法人の予約システムです。月に約 15 万件の予約があり、Lambda のログに患者の氏名、メールアドレス、電話番号が混ざっていることが監査で見つかりました。院内の規程では、ログを見る開発者に患者の情報を見せてはいけません。
+
+**構成:**
+
+| 層 | 仕組み | 役割 |
+| --- | --- | --- |
+| 1 枚目 | アプリの `sanitize` と許可リスト | ログに書く項目を、予約 ID、診療科、処理時間だけにする（[アプリケーションでの処理](#app-masking)） |
+| 2 枚目 | CloudWatch Logs のデータ保護ポリシー | アプリの漏れを取り込み時にマスキングする（[CloudWatch Logs のデータ保護](#cloudwatch-data-protection)） |
+| 閲覧 | `logs:Unmask` | 情報セキュリティ担当の 2 人のロールだけに許可する |
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| マネージドデータ識別子 | `EmailAddress` | メールアドレスは国を問わず検出できる |
+| カスタムデータ識別子 | 日本の携帯電話番号の正規表現（例: `0[789]0-?\d{4}-?\d{4}`） | 電話番号のマネージドデータ識別子は日本の番号に対応していない |
+| 患者の識別 | 患者番号を HMAC にした値だけをログに書く | 同じ患者の問い合わせを追えるが、番号そのものは残さない |
+| ポリシーの範囲 | アカウント全体のポリシー | 新しい関数のロググループにも、作った時点から効く |
+
+**なぜこのサービスか:** アプリの処理だけでは、例外のスタックトレースや外部ライブラリのログに値が混ざるのを防ぎきれません。データ保護ポリシーは取り込み時に効くので、Logs Insights やサブスクリプションフィルターなど、どの出口でもマスクされた値しか見えません。
+
+**つまずきやすい点:**
+
+- 氏名のマネージドデータ識別子 `Name` は、ラテン文字の氏名だけが対象です。「山田 太郎」は検出されないので、氏名はアプリの許可リストで出さないようにします。
+- ポリシーを入れる前に取り込んだログは、マスクされずに残っています。過去の分は保持期間を短くするか、別に保護します。
+
+### 例: 学習塾向け SaaS でテナントごとに DB の秘密を分ける {#use-case-education-tenant-secrets}
+
+**状況:** 全国 600 の学習塾が使う、成績と出欠の管理 SaaS です。ほとんどの塾は共有の DB を使い、生徒数の多い大手の 20 塾だけが専用の DB を持つブリッジの形です（[マルチテナントのデータアクセス](#multi-tenant)）。開発者のバグで、ある塾の処理が別の塾の DB に接続することを防ぎたいと考えています。
+
+**構成:**
+
+```mermaid
+sequenceDiagram
+    participant A as 成績 API
+    participant S as STS
+    participant M as Secrets Manager
+    A->>S: AssumeRole（TenantId=juku-017 のタグ）
+    S-->>A: juku-017 用の一時認証情報
+    A->>M: tenants/juku-017/db を取得
+    M-->>A: 許可
+    A->>M: tenants/juku-042/db を取得
+    M-->>A: AccessDenied
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| シークレットの名前とタグ | `tenants/juku-017/db`、タグ `TenantId=juku-017` | 名前とタグの両方で、どの塾のものか分かる |
+| ロールの許可 | `secretsmanager:GetSecretValue` を、`aws:ResourceTag/TenantId` が `${aws:PrincipalTag/TenantId}` と一致するときだけ | 1 つのロールで 20 塾の秘密を分ける（[動的なセッションによる分離](#tenant-sessions)） |
+| タグを決める元 | 検証済みの JWT の `custom:tenant_id` | リクエストの本文の値を信用しない |
+| `DurationSeconds` | `900` | 1 回の処理は数秒。最短にする |
+| キャッシュのキー | テナント ID とシークレットの名前の組 | 別の塾の接続情報をキャッシュから返さない |
+
+**なぜこのサービスか:** 20 塾の DB のパスワードは、塾ごとにローテーションと監査が要ります。Secrets Manager ならタグで権限を分けられ、塾ごとに誰がいつ読んだかも残ります。共有の DB を使う 580 塾は、[セッションタグと DynamoDB の条件](#tenant-sessions) で分けます。
+
+**つまずきやすい点:**
+
+- Lambda 拡張は関数の実行ロールで取得します。テナント用のセッションを使わないので、拡張を通すとタグでの分離が効きません。テナントごとの秘密は、テナントのセッションの SDK で取得します。
+- 塾の名前を `RoleSessionName` に入れると、長い名前で 64 文字の上限を超えて失敗します。短いテナント ID を使います。
+
 ## Secrets Manager {#secrets-manager}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 シークレットの暗号化、取得、ローテーション、監査を担います。値は文字列かバイナリで、複数の値は JSON にまとめるのが推奨です。
+
+**使う場面:** 決済代行のサービスが、加盟店ごとの API の秘密鍵を 1 か所に集め、どのサーバーがいつ読んだかを CloudTrail で監査する。
 
 コードに埋め込んだ資格情報を、API の呼び出しに置き換えるためのサービスです。値がコードの外にあるので、パスワードを変えてもアプリを作り直す必要がありません。その代わり、取得のたびに API の料金と待ち時間がかかるので、キャッシュと組み合わせます。
 
@@ -95,6 +322,8 @@ flowchart TD
 - **誤ると:** 秒間 2,000 リクエストの API がリクエストごとに `GetSecretValue` を呼ぶと、料金は回数に比例して増え、1 回あたりの応答も遅くなる。キャッシュすると呼び出しは TTL ごとに 1 回で済む。
 
 ### バージョンとステージングラベル {#version-labels}
+
+**使う場面:** ローテーションの直後に新しいパスワードで接続できなかったバッチが、`AWSPREVIOUS` の値で 1 回だけ再試行する。
 
 パスワードを変える途中では、「新しい値はまだ試していない」「古い値もしばらく使われる」という状態が生じます。ラベルは、どの値がどの段階にあるかを示し、1 回の付け替えで切り替えや切り戻しをするための仕組みです。
 
@@ -324,6 +553,8 @@ flowchart TD
 ### SecureString {#securestring}
 
 `SecureString` は、値を KMS で暗号化します。パラメータ名は平文のままです。
+
+**使う場面:** 社内の勤怠システムが、ローテーションの要らない社外の地図 API のキーを、追加料金なしのスタンダードで暗号化して置く。
 
 | ティア | 暗号化の方法 | 呼ばれる KMS API |
 | --- | --- | --- |
@@ -1071,6 +1302,8 @@ Intelligent-Tiering は、次のどれかに当たれば Advanced に、それ�
 ### パラメータポリシー {#parameter-policies}
 
 Advanced のみ使えます。1 つのパラメータに複数を設定できます。
+
+**使う場面:** 取引先から 1 年期限で受け取った接続用のトークンを置き、期限の 15 日前に担当者へ通知が届くようにする。
 
 ```json
 [

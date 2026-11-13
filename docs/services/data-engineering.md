@@ -61,6 +61,259 @@ flowchart LR
 
 部品を分けた代わりに、つなぎ方を自分で決める必要があります。迷ったら、データは S3 に Parquet か Iceberg で置き、Data Catalog に登録する、という土台から始めます。
 
+## 使いどころと具体例 {#use-cases}
+
+どのサービスを使うかは、仕事のどの段階を担うかで決まります。変換は Glue か EMR、多くの人が見る集計は Redshift、権限は Lake Formation、つなぎ方は MWAA や Step Functions です。
+
+ここでは、場面ごとの選び方と、架空のサービスでの組み方を示します。設定の詳細は各節へのリンク先にあります。
+
+### 使う場面 {#use-cases-fit}
+
+| 場面 | 具体例 | 使う機能 |
+| --- | --- | --- |
+| 夜間に大量のファイルを変換する | ドラッグストア 300 店舗の POS の CSV を、毎晩 Parquet に変換する | [ETL ジョブ](#glue-jobs)、[ジョブのブックマーク](#glue-bookmarks) |
+| 他社から届くファイルの形が変わる | 卸から届く商品マスタの列が、予告なく増える | [クローラー](#glue-crawlers) |
+| 不良なデータを入口で止める | 保険の契約データで、証券番号の欠けた行を DWH に入れない | [Data Quality](#glue-data-quality) |
+| 既存の Spark、Hive をそのまま移す | 部品メーカーのオンプレミスの Hadoop 20 台で動く夜間ジョブを移す | [EMR](#emr) |
+| 毎朝多くの人が同じ集計を見る | 300 店舗の店長が、毎朝 8 時に前日の売上を見る | [Redshift](#redshift)、[マテリアライズドビュー](#redshift-materialized-views) |
+| 人によって見せる列と行を変える | 病院グループで、研究者には氏名を隠し、各病院の事務には自院の行だけを見せる | [Lake Formation](#lake-formation)、[権限](#lake-formation-permissions) |
+| グループ会社とコピーせず共有する | 持株会社の中央アカウントの売上を、5 社のアカウントが読む | [クロスアカウント共有](#lake-formation-cross-account)、[データ共有](#redshift-data-sharing) |
+| SaaS のデータを取り込む | 営業の CRM の商談を、毎時の増分で S3 に入れる | [AppFlow](#appflow) |
+| 既存の Kafka を移す | カード会社の決済イベントの Kafka を、クライアントのコードを変えずに移す | [MSK](#msk) |
+| 時間の窓と状態で判定する | 同じカードで 1 分間に 5 回以上の決済を検知する | [Managed Service for Apache Flink](#flink) |
+| S3 のデータを行の単位で更新する | 宅配の荷物の状態を、1 日 900 万回の変更で最新に保つ | [Apache Iceberg](#iceberg)、[S3 Tables](#s3-tables) |
+| 多数のジョブの依存を管理する | 80 本の Airflow の DAG を、サーバーの運用なしで動かす | [MWAA](#mwaa)、[オーケストレーションの比較](#orchestration) |
+
+### 使わない方がよい場面 {#use-cases-avoid}
+
+| 場面 | 理由 | 代わりの選択肢 |
+| --- | --- | --- |
+| 注文の登録のような 1 行ずつの更新 | Redshift は列指向の DWH で、OLTP に向きません | [RDS、Aurora](databases.md)、[DynamoDB](dynamodb.md) |
+| 数 MB のファイルを数十秒で変換する | Spark の起動を待つ時間と DPU の費用が、処理の小ささに見合いません | [Lambda](lambda.md)（[変換エンジン](#choosing-transform)） |
+| Spark の経験者がいないチームで EMR on EC2 を選ぶ | ノード、スケーリング、Spot の設計と調整が要ります | Glue か [EMR Serverless](#emr-serverless) |
+| 画像や PDF のような非構造データに権限を付ける | Lake Formation は Data Catalog のテーブルが対象です | S3 Access Grants（[始めるときの設定](#lake-formation-setup)） |
+| ジョブが 3 本だけのパイプラインに MWAA を入れる | 環境の料金が常にかかり、Airflow の保守も要ります | [Glue ワークフロー](#glue-workflows)、[Step Functions](step-functions.md) |
+| 新しく AWS Data Pipeline を選ぶ | 新規の顧客は利用できません | Glue、Step Functions、MWAA（[Data Pipeline の現状](#data-pipeline)） |
+
+### 例: ドラッグストアの店舗別売上 {#use-case-retail}
+
+**状況:** 全国 300 店舗のドラッグストアです。各店の POS が、毎晩 0 時に前日の明細を CSV で S3 に置きます。1 日約 300 万行、1 GB です。店長 300 人と本部の 40 人が、毎朝 8 時に前日の売上と在庫の回転を見ます。データ担当は 2 人です。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    P[店舗の POS] --> R[(S3: raw/ CSV)]
+    R --> G[Glue ジョブ<br/>Parquet に変換]
+    G --> DQ{Data Quality}
+    DQ -- 合格 --> C[(S3: curated/ Parquet)]
+    DQ -- 不合格 --> X[(S3: 隔離)]
+    C --> RS[Redshift Serverless<br/>COPY]
+    RS --> MV[マテリアライズドビュー]
+    MV --> QS[Quick Sight: SPICE]
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| Glue のワーカー | `G.1X` を 5 台、実行クラス `FLEX` | 1 GB の変換は 20 分ほどで終わる。朝までに終わればよいので Flex にする（[ETL ジョブ](#glue-jobs)） |
+| ジョブのタイムアウト | 60 分 | 無限ループでも 5 DPU × 1 時間で止まる |
+| ブックマーク | `job-bookmark-enable` | 前日に届いたファイルだけを読む（[ジョブのブックマーク](#glue-bookmarks)） |
+| Data Quality のルール | `IsComplete "store_id"`、`RowCount > 2000000` | 店舗コードの欠けや、POS の送信漏れを止める |
+| Redshift Serverless | ベース 32 RPU、最大 128 RPU | 朝の 1〜2 時間に集中する。夜と休日は計算の料金がかからない（[Redshift Serverless](#redshift-serverless)） |
+| 分散キー、ソートキー | `store_id`、`sold_at` | 店舗マスタとの結合と、日付の範囲の絞り込みを速くする |
+| SPICE の更新 | 毎朝 6 時 30 分に 1 回 | 340 人が開いても Redshift への問い合わせは増えない（[Quick Sight](#quick-sight)） |
+
+**なぜこのサービスか:** 毎朝 340 人が同じ集計を見るので、Athena で毎回スキャンするより、Redshift に集計を作っておき、SPICE に取り込む方が速く、費用も読みやすくなります。変換は Glue にして、Spark のクラスターを持たずに済ませます（[データの置き場と SQL エンジン](#choosing-query)）。
+
+**つまずきやすい点:**
+
+- 古い POS が Shift_JIS の CSV を送ってくると、日本語の商品名が文字化けします。取り込みの前に UTF-8 に変換します（[Data Catalog](#glue-data-catalog)）。
+- 店舗が送り直しで同じファイル名に上書きすると、最終更新時刻が変わり、ブックマークがその店の 1 日分を二重に処理します。送り直しは別のファイル名にしてもらいます。
+- 店舗ごとに `COPY` を 300 回並べて流すと、直列になって遅くなります。1 回の `COPY` でプレフィックスごと読みます（[COPY と UNLOAD](#redshift-copy)）。
+
+### 例: 病院グループの診療データの分析 {#use-case-hospital}
+
+**状況:** 8 つの病院を持つ医療法人です。電子カルテから匿名化前の診療データを毎晩 S3 に出し、1,500 万行あります。研究者 40 人には氏名と電話番号を見せず、各病院の事務 30 人には自院の行だけを見せます。経営企画の 5 人は全病院の集計を見ます。院内の規程で、権限の付与と変更の記録を残す必要があります。
+
+**構成:**
+
+```mermaid
+sequenceDiagram
+    participant R as 研究者
+    participant A as Athena
+    participant L as Lake Formation
+    participant S as S3
+    R->>A: SELECT * FROM clinical.visits
+    A->>L: 権限の確認
+    L-->>A: 氏名、電話番号を除いた列と一時認証情報
+    A->>S: 許可された範囲を読む
+    A-->>R: 氏名、電話番号のない結果
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| `IAMAllowedPrincipals` の `Super` | 外す | 残すと、IAM で S3 を読めるロールは全員読める（[始めるときの設定](#lake-formation-setup)） |
+| LF タグ | `domain=clinical`、`pii=high` か `pii=none` | テーブルが増えても、タグを付けるだけで権限の対象になる（[LF タグ](#lake-formation-lf-tags)） |
+| 研究者の付与 | `domain=clinical` の `SELECT`。列は `patient_name`、`phone` を除く | 個人を特定できる列を見せない |
+| 各病院の事務 | 行フィルター `hospital_id = 'H03'` を病院ごとに 8 つ | 自院の行だけを見せる（[権限](#lake-formation-permissions)） |
+| Athena のワークグループ | 研究者用と事務用に分ける | 結果の置き場と暗号化を分け、誰が問い合わせたかを分けて追う |
+| 記録 | CloudTrail で Lake Formation の付与と取り消しを残す | 規程の監査に出す |
+
+**なぜこのサービスか:** S3 の権限はファイルの単位で、「この列だけ隠す」「この病院の行だけ」は表せません。列を抜いたコピーを病院の数だけ作ると、コピーの間で中身が食い違い、更新の手間も増えます。Lake Formation なら、1 つのテーブルに列と行の権限を付けられます。
+
+**つまずきやすい点:**
+
+- 研究者のロールに S3 の `s3:GetObject` も付けていると、Athena を通さずにファイルを直接読めてしまいます。Lake Formation は統合したエンジンでだけ効くので、S3 の直接の権限は付けません。
+- データベースの `DESCRIBE` を付け忘れると、研究者のコンソールにデータベースが表示されません。
+- LF タグを IAM のタグと同じものと考え、IAM ポリシーの条件で絞ろうとしても効きません。
+
+### 例: カード会社の不正利用の検知 {#use-case-card}
+
+**状況:** 会員 600 万人のクレジットカード会社です。決済のイベントが平常で毎秒 800 件、年末のセールで毎秒 4,000 件流れます。決済の基盤はすでに Kafka のクライアントで書かれていて、変えたくありません。「同じカードで 1 分間に 5 回以上」の決済を 10 秒以内に見つけ、確認の通知を出します。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    P[決済システム] --> T1[MSK: payments<br/>12 パーティション]
+    T1 --> F[Managed Service for<br/>Apache Flink]
+    F --> T2[MSK: alerts]
+    T2 --> L[Lambda: 確認の通知]
+    T1 --> C[MSK Connect: S3 シンク]
+    C --> S[(S3)]
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| MSK | Provisioned、3 AZ、ブローカー 3 台 | 既存の Kafka のクライアントと Kafka Connect をそのまま使う（[MSK](#msk)） |
+| パーティションのキー | カード番号をハッシュした値 | 同じカードのイベントを 1 つのパーティションに集め、Flink で同じ状態に入れる |
+| 保持とストレージ | 7 日、レプリケーション係数 3 | 1 件 1 KB で 1 日約 70 GB。70 × 7 × 3 ≈ 1.5 TB、1 台 500 GB に余裕を足す |
+| 認証 | IAM、ポート 9098 | 認可も IAM でそろえる |
+| Flink の `Parallelism`、`ParallelismPerKPU` | 12、2 | パーティション数に合わせる。6 KPU と管理用の 1 KPU を払う（[Managed Service for Apache Flink](#flink)） |
+| `CheckpointInterval` | 60,000 ミリ秒（既定） | 障害時に戻るのは最大で約 60 秒前 |
+
+**なぜこのサービスか:** 「1 分間に 5 回」は、過去のイベントを覚えておく状態が要ります。Lambda ではバッチをまたぐ状態を自分で持つことになり、再起動で消えたり二重に数えたりします。取り込みは、既存の Kafka の資産を使うために Kinesis Data Streams ではなく MSK にします（[Kinesis Data Streams と MSK の違い](#msk-vs-kinesis)）。
+
+**つまずきやすい点:**
+
+- Apache Flink の Kafka のソースは、1 つのパーティションを 1 つのサブタスクが読むのが一般的な動きです。ソースの並列度をパーティション数より大きくすると、読むパーティションのないサブタスクが出て、増やした分が読み込みの速さに効きません。
+- チェックポイントから再開すると、最大約 60 秒分を再処理し、同じ確認の通知が 2 回出ることがあります。通知の側で、カードと時間枠の組で重複を除きます。
+- セキュリティグループで 9094 だけを開けていると、IAM 認証のクライアントの接続がタイムアウトします。
+
+### 例: 部品メーカーの Hadoop の移行 {#use-case-manufacturing}
+
+**状況:** 社員 2,000 人の自動車部品メーカーです。生産ラインの検査データが 1 日 300 GB 増え、オンプレミスの Hadoop 20 台で毎晩 2 時間の Spark と Hive のジョブを動かしています。保守の契約が切れるので、コードをほぼそのまま AWS に移します。分析のチームには Hadoop の経験者が 3 人います。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    SF[Step Functions: 毎晩 1 時] --> E[EMR on EC2 クラスターを作る]
+    E --> P[プライマリ 1 台: On-Demand]
+    E --> CO[コア 2 台: On-Demand]
+    E --> TA[タスク 0〜30 台: Spot]
+    S1[(S3: 検査データ)] --> TA
+    TA --> S2[(S3: 解析結果)]
+    S2 --> END[ステップ完了でクラスターを終了]
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| データの置き場 | 入力と出力は S3、HDFS は中間データだけ | クラスターを毎晩作って消せる（[HDFS と S3](#emr-hdfs-vs-s3)） |
+| タスクノード | インスタンスフリートで 3 種類のタイプ、すべて Spot | 1 つのタイプの中断の影響をまとめて受けない（[クラスターのノード](#emr-nodes)） |
+| マネージドスケーリング | 2〜32 台、On-Demand は 2 台まで | プライマリは対象外。コアの 2 台を超える分は Spot で増やす（[スケーリングと終了](#emr-scaling)） |
+| Application Master | ノードラベルで `CORE` に限定 | Spot の中断でジョブごと失敗させない |
+| 調査用のクラスターの自動終了 | `IdleTimeout=3600` | 日中に作った調査用を消し忘れても 1 時間で止まる |
+| ログ | S3 に出す | 終了後も失敗の原因を調べられる |
+
+**なぜこのサービスか:** 既存の Spark と Hive のコード、独自の設定、SSH での調査の手順をそのまま持ち込めます。Glue でも Spark は動きますが、アプリケーションやバージョンを選ぶ自由度が低く、Hive のジョブの書き直しが要ります。経験者がいるので、ノードの設計も自分たちで決められます。
+
+**つまずきやすい点:**
+
+- 結果を `hdfs://` に書いたままステップを終えると、クラスターの終了で消えます。出力先は必ず `s3://` にします。
+- コアノードを Spot にすると、中断で HDFS の中間データを失い、ジョブが失敗します。
+- AZ の障害には 1 つのクラスターでは耐えません。データは S3 にあるので、別の AZ のサブネットで作り直す手順を用意します。
+
+### 例: 宅配会社の荷物の状態の管理 {#use-case-logistics}
+
+**状況:** 1 日 150 万個の荷物を扱う宅配会社です。荷物ごとに「集荷」「到着」「持ち出し」「配達完了」などの状態が平均 6 回変わり、1 日 900 万件の変更が届きます。分析チームは「今の状態の一覧」と「昨日の 17 時時点の状態」の両方を Athena で見たいと考えています。保守の作業はできるだけしたくありません。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    A[配達アプリ] --> F[Data Firehose]
+    F --> ST[(S3: 変更のログ)]
+    SC[EventBridge Scheduler: 毎時] --> SF[Step Functions]
+    SF --> AM[Athena: MERGE INTO]
+    ST --> AM
+    AM --> T[(S3 Tables: parcels)]
+    T --> Q[Athena、EMR で分析]
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| テーブル形式 | S3 Tables の Iceberg テーブル | 圧縮、スナップショットの管理、不要なファイルの削除が既定で動く（[S3 Tables](#s3-tables)） |
+| パーティション | `day(picked_up_at)` | 集荷日で絞るクエリが多い。列を別に持たずに済む（[Apache Iceberg](#iceberg)） |
+| 更新 | 毎時、`MERGE INTO` で最新の状態に上書き | 1 時間分の約 40 万件を、荷物番号で突き合わせる |
+| スナップショットの最大経過時間 | 168 時間 | 1 週間前の時点まで戻って比べられる。既定の 120 時間では 5 日まで |
+| テーブル名、列名 | すべて小文字 | 大文字を含むと Athena で見えないことがある |
+
+**なぜこのサービスか:** Hive 形式のテーブルでは、1 行の更新のためにパーティションのファイルを書き直すことになります。Iceberg なら `MERGE INTO` で行の単位で更新でき、`FOR TIMESTAMP AS OF` で過去の時点も読めます。データは S3 に置いたままなので、Athena と EMR の両方から使えます。
+
+**つまずきやすい点:**
+
+- 同じ荷物が 1 時間に 2 回変わると、`MERGE INTO` の元のデータで 1 つの行に 2 行が一致し、エラーになります。元のデータを荷物番号ごとに最新の 1 行に絞ってから突き合わせます。
+- 分析用のロールに `s3:GetObject` しかないと、テーブルバケットを読めません。`s3tables` の権限を付けます。
+- スナップショットの最大経過時間を過ぎた時点には、タイムトラベルで戻れません。
+
+### 例: 名刺管理 SaaS の解約予兆の分析 {#use-case-saas}
+
+**状況:** 社員 300 人の B2B SaaS 企業で、名刺管理のサービスを 5,000 社に提供しています。営業の CRM に 100 万件の商談、問い合わせ管理の SaaS に問い合わせ、自社の Aurora に利用ログがあります。これらを毎朝つなぎ、解約しそうな顧客の一覧を営業に渡します。EC2 で自前の Airflow を動かし、DAG が 80 本ありますが、担当者が 1 人で、Airflow の更新に手が回りません。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    CRM[CRM の SaaS] --> AF[AppFlow]
+    HD[問い合わせの SaaS] --> AF
+    AF --> S[(S3: raw/)]
+    AU[(Aurora: 利用ログ)] --> Z[ゼロ ETL 統合]
+    Z --> RS[Redshift]
+    M[MWAA: 80 本の DAG] --> G[Glue ジョブ]
+    S --> G
+    G --> RS
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| CRM のフローの転送方式 | スケジュール 1 時間、増分 | 100 万件のうち毎時変わる約 5,000 件だけを送る（[AppFlow](#appflow)） |
+| AppFlow の変換 | 担当者の電話番号をマスク | 分析用のバケットに生の番号を置かない |
+| MWAA の環境クラス | `mw1.medium` | DAG が 80 本で、`mw1.small` の目安の 50 を超える（[MWAA](#mwaa)） |
+| ワーカー | 最小 1、最大 5 | 朝の集中時だけ増やす |
+| DAG のスケジュール | `pendulum` で `Asia/Tokyo` の `start_date` | UTC のままだと 9 時間ずれる |
+| Aurora からの取り込み | Redshift へのゼロ ETL 統合 | 利用ログの複製のジョブを作らない（[データを取り込む他の方法](#redshift-ingestion)） |
+
+**なぜこのサービスか:** 80 本の DAG をそのまま持ち込めるのは MWAA で、Step Functions に移すには全部を書き直すことになります。SaaS の API の認証やページングのコードは、AppFlow に任せて自作しません。
+
+**つまずきやすい点:**
+
+- CRM の OAuth のトークンが失効すると、AppFlow のフローが失敗し続けます。失敗を EventBridge で拾い、担当者に通知します。
+- MWAA はインターネットへの経路のない VPC に置くと、`requirements.txt` の依存を PyPI から取れず、DAG がインポートエラーになります。依存を `plugins.zip` に同梱します。
+- Airflow のメジャーバージョンを上げるときは、新しい環境を作って移します。同じ環境のまま v2 から v3 には上げられません。
+
 ## AWS Glue {#glue}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
@@ -112,6 +365,8 @@ Athena、EMR、Redshift Spectrum が同じカタログを参照できます。Ap
 ### クローラー {#glue-crawlers}
 
 データストアを読み、スキーマを推定して Data Catalog のテーブルとパーティションを作ります。ストリーミングのソースには使えません。ストリーミングのテーブルは手動で定義します。
+
+**使う場面:** 食品卸から毎日届く商品マスタの CSV で、予告なく増える列を、人が定義を書き直さずにカタログへ反映します。
 
 他社や他部署から届くファイルは、列が予告なく増えたり、フォルダが日々増えたりします。そのたびに人がテーブル定義を書き直すと、追いつきません。クローラーは定義の作成と更新を自動にします。その代わり、推定が外れると意図しないテーブルが増えるので、下の設定で範囲を絞ります。
 
@@ -314,6 +569,8 @@ job.commit()                             # 状態を更新する
 
 複数のジョブとクローラーを 1 つの単位として実行し、追跡します。
 
+**使う場面:** 通信教育の会社で、毎月 1 日に受講者データの重複除去と住所の正規化を並べて動かし、両方が成功したらクローラーを走らせます。
+
 ジョブを cron でそれぞれの時刻に起動すると、前のジョブが遅れたときに、次のジョブが未完成のデータを読みます。ワークフローは「前が成功したら次」という依存で起動し、全体を 1 回の実行として追えるようにします。
 
 ```mermaid
@@ -352,6 +609,8 @@ flowchart LR
 ストリーミングデータのスキーマを一元管理し、互換性を強制します。Avro、JSON Schema、Protobuf に対応します。MSK、Kinesis Data Streams、Flink、Lambda と連携します。
 
 プロデューサーとコンシューマーの間でスキーマを契約にできます。互換性のない変更は登録の時点で拒否されるので、壊れたデータが流れる前に止まります。
+
+**使う場面:** フードデリバリーで、注文イベントを 5 つのチームが読むので、必須の列を勝手に足す変更を登録の時点で止めます。
 
 システム間連携の「インターフェース仕様書」を、機械が確かめられる形にしたものです。仕様書だけだと、送る側が列を変えたことに、受ける側は本番でエラーが出るまで気づきません。
 
@@ -421,6 +680,8 @@ Rules = [
 
 コードを書かずにデータを整形する、視覚的なツールです。アナリストやデータサイエンティストが主な利用者です。
 
+**使う場面:** 自治体の統計の担当者が、毎月届く人口の Excel から変換した CSV の日付の形式をそろえ、同じ手順を翌月も使います。
+
 提供単位はリージョンで、VPC の外のサービスです（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 | 用語 | 意味 |
@@ -449,6 +710,8 @@ Rules = [
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 Spark、Hive、Presto、HBase などのオープンソースを動かすビッグデータ基盤です。Glue より設定の自由度が高く、アプリケーションやバージョンを細かく選べます。
+
+**使う場面:** 部品メーカーで、オンプレミスの Hadoop の夜間ジョブを、コードをほぼ変えずに毎晩作って消すクラスターへ移します（[例](#use-case-manufacturing)）。
 
 オンプレミスの Hadoop クラスターは、計算とデータ(HDFS)が同じサーバーに載っています。そのため、データが増えると計算が要らなくても台数を足し、クラスターは止められません。EMR はデータを S3 に置けるようにして、クラスターを「ジョブのときだけ作る計算機」に変えられるようにしています。
 
@@ -581,6 +844,8 @@ aws emr-containers create-virtual-cluster --name analytics \
 
 EMR の Spark をそのまま使いたいが、台数やノードの種類は考えたくない、という場合のための形態です。資源は自動で増減するので、利用者が決めるのは費用の上限だけになります。
 
+**使う場面:** 保険会社で、月に 2 回だけ動く保険料の再計算の Spark ジョブを、クラスターを持たずに動かします。
+
 | 用語 | 意味 |
 | --- | --- |
 | アプリケーション | ランタイムとリリースの単位。チームや環境ごとに分けられる |
@@ -614,6 +879,8 @@ aws emr-serverless update-application --application-id "$APP_ID" \
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 列指向で超並列（MPP）のデータウェアハウスです。大きなテーブルの結合と集計に向きます。行単位の更新を大量に行う OLTP には向きません。
+
+**使う場面:** ドラッグストアで、300 店舗の店長が毎朝開く前日の売上の集計を、数秒で返します（[例](#use-case-retail)）。
 
 業務の DB は「1 件の注文を速く書く」ために作られています。そこで「3 年分の売上を地域別に集計する」と、全行を読むので遅く、業務の処理も邪魔します。Redshift は、データを列ごとに保存し、多数のノードに分けて同時に処理することで、集計を速くします。
 
@@ -835,6 +1102,8 @@ MAXFILESIZE 256 MB;
 
 S3 のファイルをロードせずに、Redshift の SQL で読みます。ローカルのテーブルとも結合できます。
 
+**使う場面:** 通販で、直近 13 か月の売上は Redshift に置き、5 年前までの注文は S3 に置いたまま、年ごとの比較に使います。
+
 めったに見ない古いデータまで DWH に入れると、そのぶん容量とロードの時間を払い続けます。Spectrum は、よく使うデータは Redshift に、たまに使うデータは S3 に置いたまま、1 つの SQL で両方を読めるようにします。
 
 ```sql
@@ -995,6 +1264,8 @@ flowchart TD
 
 クエリの結果を事前計算して保存します。同じ結合や集計を繰り返すダッシュボードに向きます。
 
+**使う場面:** 全国チェーンの居酒屋で、100 億行の注文から作る日別、店舗別の売上を、ダッシュボードが 1 万行だけ読めばよい形にしておきます。
+
 ```sql
 CREATE MATERIALIZED VIEW daily_sales
 AUTO REFRESH YES
@@ -1024,6 +1295,8 @@ REFRESH MATERIALIZED VIEW daily_sales;
 ### データ共有 {#redshift-data-sharing}
 
 データをコピーせず、ライブのまま別のクラスターやワークグループと共有します。アカウントやリージョンをまたげます。Provisioned と Serverless の間でも共有できます。
+
+**使う場面:** 持株会社で、中央の ETL 用のクラスターが更新する売上を、5 つの子会社の Serverless がそれぞれの費用で読みます。
 
 部署ごとに DWH を持つと、夜間に `UNLOAD` と `COPY` でデータを配る仕事が生まれ、配った先のデータは翌朝まで古いままです。データ共有は、データの置き場は 1 つのまま、読む計算資源だけを部署ごとに分けます。重いクエリを流す部署があっても、他の部署は遅くなりません。
 
@@ -1120,6 +1393,8 @@ RDS と Aurora でも考え方は同じです。PostgreSQL は `pg_locks` と `p
 [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 Data Catalog と S3 上のデータに、データベースのような権限モデルを与えるサービスです。S3 バケットポリシーと IAM を組み合わせる代わりに、テーブル、列、行で権限を付けられます。
+
+**使う場面:** 病院グループで、研究者には氏名を隠し、各病院の事務には自院の行だけを見せます（[例](#use-case-hospital)）。
 
 #### なぜ必要か {#lake-formation-why}
 
@@ -1290,6 +1565,8 @@ aws lakeformation grant-permissions \
 
 SaaS と AWS の間でデータを転送する、コード不要のサービスです。
 
+**使う場面:** B2B SaaS 企業で、CRM の商談を毎時の増分で S3 に取り込み、解約の予兆の分析に使います（[例](#use-case-saas)）。
+
 SaaS ごとに API の認証、ページング、レート制限の扱いが違うので、取り込みのスクリプトを自作すると、SaaS の数だけ保守が増えます。AppFlow はその接続の部分を部品として用意し、設定だけで定型の転送を動かせるようにします。
 
 提供単位はリージョンで、VPC の外のサービスです。PrivateLink に対応した SaaS とは非公開の経路で接続できます（[リソースの提供単位](resource-scope.md#two-axes)）。
@@ -1320,6 +1597,8 @@ SaaS ごとに API の認証、ページング、レート制限の扱いが違�
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 Apache Kafka を実行するマネージドサービスです。Kafka の API とツールをそのまま使えます。
+
+**使う場面:** カード会社で、Kafka のクライアントで書かれた決済の基盤を、コードを変えずに AWS に移します（[例](#use-case-card)）。
 
 Kafka は社内で広く使われていますが、ブローカーのパッチ、故障したサーバーの交換、ディスクの監視など、運用の手間が大きいソフトです。MSK は、アプリから見た Kafka は変えずに、その運用を AWS に任せるためのサービスです。
 
@@ -1425,6 +1704,8 @@ Apache Flink のアプリケーションを実行するサービスです。ウ�
 [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
 Apache Airflow のマネージドサービスです。DAG（有向非巡回グラフ）を Python で書き、依存関係を定義します。
+
+**使う場面:** EC2 で自前の Airflow を動かしてきた会社が、80 本の DAG をそのまま移し、スケジューラーの保守をやめます。
 
 オンプレミスのジョブ管理ツールで行っていた「順序、待ち合わせ、再実行、実行履歴」を、オープンソースの Airflow で行います。Airflow 自体の運用(スケジューラー、ワーカー、メタデータの DB)は手間がかかるので、それを AWS に任せる形です。既存の Airflow の DAG をそのまま持ち込めるのが、Step Functions との大きな違いです。
 
@@ -1570,6 +1851,8 @@ Amazon Quick は、Quick Sight のほか、AI エージェント、Quick Flows�
 
 複数の組織が、元のデータを見せ合わずに共同で分析するサービスです。
 
+**使う場面:** 旅行会社と航空会社が、互いの会員の名簿を渡さずに、両方を使う会員の人数と地域の分布だけを出します。
+
 提供単位はリージョンで、VPC の外のサービスです（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 | 項目 | 内容 |
@@ -1600,6 +1883,8 @@ Amazon Quick は、Quick Sight のほか、AI エージェント、Quick Flows�
 提供単位は S3 と同じくリージョンで、VPC の外です（[リソースの提供単位](resource-scope.md#scope-regional-outside)）。
 
 S3 のファイルの上に、テーブルの機能を載せるオープンテーブル形式です。
+
+**使う場面:** 宅配会社で、1 日 900 万件の荷物の状態の変更を、S3 のテーブルに行の単位で反映します（[例](#use-case-logistics)）。
 
 従来の Hive 形式のテーブルは「このフォルダの中のファイル全部がテーブル」という約束だけで、DB が当然持っている更新、トランザクション、履歴がありません。Iceberg は、どのファイルがテーブルのどの版に属するかをメタデータのファイルで管理し、S3 のファイルのまま DB に近い操作をできるようにします。
 

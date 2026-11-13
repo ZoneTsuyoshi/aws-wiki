@@ -6,6 +6,192 @@ ACM と AWS Private CA は TLS 証明書を発行、管理するサービスで�
 
 [![証明書と WAF の配置](../assets/diagrams/certificates-tls.png)](../assets/diagrams/certificates-tls.png)
 
+## 使いどころと具体例 {#use-cases}
+
+このページの 3 つのサービスは、Web の入口で一緒に使われることが多いものです。ACM は「本物のサイトだと示す」、Private CA は「社内の相手を証明書で見分ける」、WAF は「入ってくるリクエストの中身で止める」役割です。
+
+### 使う場面 {#use-cases-fit}
+
+| 場面 | 具体例 | 使う機能 |
+| --- | --- | --- |
+| 公開サイトを HTTPS にする | 会員 50 万人のネットスーパーが、ALB の前の CloudFront で `www` を公開する | [ACM](#acm)、[リージョンのルール](#region-rules) |
+| 証明書の期限切れを起こしたくない | 店舗ごとにサブドメインを持つ美容室の予約サイトが、更新を人の手から外す | [自動更新](#auto-renewal)、[DNS 検証](#domain-validation) |
+| 決められた認証局の証明書を使う | ネット銀行が、社内規程で指定された CA の証明書を ALB で使う | [インポート](#import)、[更新の監視](#renewal-monitoring) |
+| 社内だけの名前に証明書を付ける | 社員 2,000 人の製造業が、`hr.internal.example.com` の社内 ALB を HTTPS にする | [Private CA](#private-ca) |
+| 端末や取引先を証明書で認証する | 物流会社が、倉庫のハンディ端末だけに出荷 API を使わせる | [mTLS](#mtls)、[Private CA](#private-ca) |
+| SQL インジェクションや XSS を止める | 自治体の電子申請のフォームを、既知の攻撃の形から守る | [マネージドルールグループ](#waf-actions-details) |
+| ログインの総当たりを止める | オンライン英会話のログイン画面で、1 つの IP からの大量の試行を止める | [レートベースルール](#rate-based-rules) |
+| 発売開始のボットを減らす | チケット販売サイトの購入ボタンに、人かどうかの確認を挟む | [CAPTCHA、Challenge](#waf-actions-details) |
+| 特定の国からのアクセスを止める | 国内向けの地域ポイントのサイトで、海外からの不正な登録を止める | [ウェブ ACL](#web-acl) の地理的一致 |
+| 手元で HTTPS を試す | 開発者が、ローカルの API サーバーを `https://localhost` で動かす | [自己署名証明書](#self-signed) |
+
+### 使わない方がよい場面 {#use-cases-avoid}
+
+| 場面 | 理由 | 代わりの選択肢 |
+| --- | --- | --- |
+| EC2 の nginx に、通常の ACM の公開証明書を直接置きたい | 通常の公開証明書は秘密鍵を取り出せない | 前に ALB か CloudFront を置く。または[エクスポート可能な証明書か ACME](#integrated-services) |
+| 一般の利用者向けのサイトに Private CA の証明書 | 利用者のブラウザが CA を信頼していないので警告が出る | ACM の公開証明書 |
+| NLB や EC2 の前で WAF を使いたい | WAF を関連付けられない（[アタッチできる場所](#waf-resources)） | 前に CloudFront か ALB を置く。L3、L4 なら [Network Firewall](threat-detection.md#network-firewall) |
+| 大量の通信で回線を埋める DDoS | WAF は HTTP のリクエストを 1 件ずつ見る仕組み | [Shield](threat-detection.md#shield) |
+| 契約プランごとに API の呼び出し回数を決める | WAF のレート制限は攻撃を止めるためのもので、正確な回数を保証しない | API Gateway の使用量プラン（[似た機能との比較](#waf-comparison)） |
+| IP とポートだけで十分な制限 | WAF を置くと、リクエスト数に応じた費用とルールの管理が増える | [セキュリティグループ](networking.md) |
+
+### 例: ネットスーパーが CloudFront と ALB で HTTPS を公開する {#use-case-grocery}
+
+**状況:** 会員 50 万人のネットスーパーです。夕方 17 時から 19 時に注文が集中し、平常時の 8 倍になります。アプリは東京の ALB の後ろの ECS で動き、画像は CloudFront で配ります。インフラの担当は 2 人で、証明書の更新に人手をかけたくありません。
+
+**構成:**
+
+```mermaid
+flowchart LR
+    U["会員"] -- "HTTPS<br/>us-east-1 の証明書" --> CF["CloudFront"]
+    CF -- "HTTPS<br/>東京の証明書" --> ALB["ALB（東京）"]
+    ALB --> ECS["ECS"]
+    D["Route 53"] -. "検証の CNAME" .-> CF
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| 証明書の数 | `us-east-1` に 1 枚、東京に 1 枚 | CloudFront 用は `us-east-1` にしか作れない（[リージョンのルール](#region-rules)） |
+| ドメイン名 | `example.com` と `*.example.com` | ワイルドカードは `example.com` 自体を含まない |
+| 検証 | DNS 検証。CNAME は Route 53 に置いたまま | 残しておけば 198 日ごとの更新が自動で進む |
+| キーのアルゴリズム | `RSA_2048` | 古いスマートフォンのブラウザも会員にいるため |
+| ビューワープロトコルポリシー | `redirect-to-https` | `http://` で来た会員を `https://` へ転送する |
+| 監視 | `DaysToExpiry` が 30 を下回ったら SNS に通知 | 自動更新が止まったことに 1 か月前に気づく |
+
+**なぜこのサービスか:** 外部の CA の証明書を買って入れると、更新のたびにインポートし直す作業が残ります。ACM の公開証明書は、統合サービスで使う限り追加料金がなく、更新も自動です。
+
+**つまずきやすい点:**
+
+- DNS の整理で「用途の分からない CNAME」として検証のレコードを消すと、次の更新で失敗します。レコードに説明のタグやコメントを残します。
+- 東京で証明書を作っても、CloudFront の選択肢には出ません。
+- CloudFront からオリジンへの区間を `https-only` にするなら、ALB にも信頼された CA の証明書が要ります。自己署名だと 502 になります（[転送時の TLS](#tls-in-transit)）。
+
+### 例: ネット銀行が指定の CA の証明書を持ち込む {#use-case-netbank}
+
+**状況:** 口座数 120 万のネット銀行です。社内規程で、公開サイトの証明書は特定の CA から発行すると決まっています。証明書は ALB 3 台で使い、更新は年 1 回です。期限切れは、全利用者がログインできなくなる重大な事故として扱います。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    CA["指定の CA"] --> OP["運用担当が<br/>証明書を受け取る"]
+    OP -- "import-certificate<br/>--certificate-arn" --> ACM["ACM（東京）"]
+    ACM --> ALB["ALB 3 台"]
+    ACM -- "期限切れが近い<br/>イベント" --> EB["EventBridge"]
+    EB --> SNS["SNS で通知"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| 証明書 | ACM にインポートする | ACM が発行していないので、自動更新はない（[インポート](#import)） |
+| 再インポート | `--certificate-arn` で既存の ARN を指定する | ARN と ALB の関連付けを保つ |
+| 通知 | `ACM Certificate Approaching Expiration` を EventBridge で受け、SNS へ | インポートした証明書は 45 日前から毎日届く（[更新の監視](#renewal-monitoring)） |
+| 通知の開始日 | `PutAccountConfiguration` で 60 日前に早める | 社内の承認と CA の発行に 3 週間かかるため |
+| 秘密鍵 | パスフレーズを外して PEM でインポートし、手元の平文の鍵は消す | ACM は暗号化された鍵を受け付けない（[インポートの条件](#import-requirements)） |
+
+**なぜこのサービスか:** ALB に証明書を付けるには ACM を通します。インポートでも、3 台の ALB は同じ ARN を参照するので、1 回の再インポートで全台が切り替わります。
+
+**つまずきやすい点:**
+
+- `--certificate-arn` を付け忘れると、別の ARN の新しい証明書ができ、ALB は古い証明書のままです。期限の日に切れます。
+- `--certificate-chain` を省くと、一部の端末で中間証明書が足りず、信頼できない証明書と表示されます。
+- 期限切れのあとは `DaysToExpiry` のメトリクスが出なくなります。アラームの「データ不足」も通知の対象にします。
+
+### 例: 物流会社が倉庫の端末だけに出荷 API を使わせる {#use-case-logistics}
+
+**状況:** 全国 40 か所の倉庫で、ハンディ端末 3,000 台が出荷 API を呼びます。端末を盗まれたり、退職者が私物の PC から API を呼んだりするのを防ぎたいと考えています。端末は 1 年に 1 回、本社で入れ替えの点検をします。
+
+**構成:**
+
+| 要素 | 内容 |
+| --- | --- |
+| CA の階層 | ルート CA の下に、端末用と社内サーバー用の 2 つの下位 CA（[Private CA](#private-ca)） |
+| 端末の証明書 | 端末用の下位 CA から `IssueCertificate` で発行し、端末に入れる |
+| 出荷 API | API Gateway の REST API のカスタムドメインで mTLS を有効にする（[mTLS](#mtls)） |
+| トラストストア | 端末用の下位 CA とルート CA の証明書を S3 に置く |
+| 社内の管理画面 | 社内サーバー用の下位 CA から ACM で要求し、内部 ALB に付ける |
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| CA のモード | 汎用 | 端末の証明書は 7 日より長くしたい。ACM で要求する社内サーバー用も汎用が必要（[Private CA の設定](#private-ca-settings)） |
+| 端末の証明書の期間 | 395 日 | 年 1 回の点検で入れ替え、1 か月の余裕を持たせる |
+| 失効 | CA で CRL を有効にし、Lambda オーソライザーで端末の証明書を失効リストと照合する | API Gateway は失効を確かめないので、盗まれた端末を止めるにはオーソライザーが要る |
+| 既定のエンドポイント | `execute-api` を無効にする | mTLS を迂回されないようにする |
+
+**なぜこのサービスか:**
+
+| 選択肢 | 選ばなかった理由 |
+| --- | --- |
+| API キーだけ | キーは端末から抜き出してコピーできる。証明書の秘密鍵も抜き出せるが、失効で個別に止められる |
+| オンプレミスの社内 CA | CA の秘密鍵の保護と冗長化を、情報システム部の 3 人で担うのは重い |
+
+**つまずきやすい点:**
+
+- `IssueCertificate` の証明書は自動で更新されません。点検の日に入れ替えを忘れた端末は、395 日目に出荷 API を呼べなくなります。発行日を台帳で管理します。
+- トラストストアには、発行した下位 CA からルート CA までのチェーンをすべて入れます。ルート CA を入れ忘れると、端末の証明書の検証が失敗します。
+- CRL に載せただけでは、API Gateway は盗まれた端末を拒否しません。オーソライザーでの照合を忘れないようにします。
+- 端末用と社内サーバー用の CA を分けないと、社内サーバーの証明書で出荷 API に入れてしまいます。
+
+### 例: チケット販売サイトが発売開始の買い占めを抑える {#use-case-ticket}
+
+**状況:** コンサートのチケットを販売するサイトです。人気公演の発売開始の 10 時ちょうどに、平常時の 30 倍のアクセスが来ます。その多くがボットで、本当のファンが買えないという苦情が続いています。サイトは CloudFront と ALB で公開しています。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    A["リクエスト"] --> R0["優先度 0: マネージドルール<br/>既知の攻撃を Block"]
+    R0 --> R1["優先度 1: /login のレート制限<br/>IP ごとに 5 分 100 回"]
+    R1 --> R2["優先度 2: /purchase に CAPTCHA"]
+    R2 --> DEF["既定のアクション: Allow"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| スコープ | `CLOUDFRONT`、`us-east-1` に作る | 送信元 IP をそのまま見られる。ALB に付けると IP が CloudFront になる（[レートベースルール](#rate-based-rules)） |
+| `/login` のレート制限 | `Limit` 100、`EvaluationWindowSec` 300、集約は `IP` | 人が 5 分に 100 回ログインすることはない |
+| `/purchase` | CAPTCHA、イミュニティ 1,800 秒 | 発売の 30 分の間に、何度もパズルを出さない |
+| 新しいルールの入れ方 | 発売の 1 週間前から Count で動かし、`CountedRequests` を確認 | 本当のファンを止めないことを確かめる（[監視](#waf-monitoring)） |
+| ログ | `aws-waf-logs-ticket` の S3 バケット。`authorization` ヘッダーは redaction | 調査に使い、トークンは残さない（[ログ](#waf-logging)） |
+
+**なぜこのサービスか:** ボットの購入は、1 件ずつ見れば正しい形の HTTPS です。セキュリティグループや Shield では止められず、リクエストの中身と回数を見る WAF の役割です。
+
+**つまずきやすい点:**
+
+- スマートフォンのアプリの API にも CAPTCHA を付けると、アプリはパズルを表示できず、正常な購入が失敗します。CAPTCHA はブラウザ向けのパスだけに付けます。
+- 大学や会社のように、多くの人が 1 つの IP から来ることがあります。レートの上限を下げすぎると、同じ IP の人がまとめて止まります。
+- 発売の直前にルールを変えると、レートのカウントがリセットされ、最大 1 分ほど制限が止まることがあります。前日までに確定させます。
+
+### 例: オンライン学習サービスが教材のアップロードを通す {#use-case-elearning}
+
+**状況:** 全国 600 校が使う学習管理システムで、先生が教材の PDF をアップロードし、生徒が課題を提出します。ALB に WAF を付けたところ、10 KB を超える課題の提出が 403 になると問い合わせが来ました。
+
+**構成:** ALB に関連付けたウェブ ACL で、`AWSManagedRulesCommonRuleSet` を使っています。このルールグループは、8 KB を超える本文を `SizeRestrictions_BODY` で止めます（[ルールのアクションの詳細](#waf-actions-details)）。
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+| --- | --- | --- |
+| `SizeRestrictions_BODY` | ルールアクションのオーバーライドで Count にする | 一致したことをラベルとして残し、ここでは止めない |
+| 後に置くルール | ラベル `awswaf:managed:aws:core-rule-set:SizeRestrictions_Body` があり、パスが `/upload` と `/submit` 以外なら Block | 大きな本文は、アップロードのパスでだけ許す |
+| アップロードの経路 | 大きな教材は、S3 の署名付き URL で直接アップロードさせる | ALB の WAF は本文の先頭 8 KB しか検査できない（[容量と本文の検査](#waf-capacity-body)） |
+
+**なぜこのサービスか:** マネージドルールを丸ごと外すと、ほかのパスの攻撃も素通りします。ラベルを使えば、ルールグループの守りを残したまま、例外を 1 つのパスに閉じ込められます。
+
+**つまずきやすい点:**
+
+- 例外のパスでは、8 KB より後ろにある攻撃の文字列は検査されません。アップロードしたファイルは、アプリ側で形式を確かめます。
+- オーバーライドを Count にしたまま、後のルールを足し忘れると、大きな本文はどのパスでも通ります。
+
 ## AWS Certificate Manager {#acm}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
@@ -166,6 +352,8 @@ EC2 上のサーバーに直接置くには、エクスポート可能な公開�
 
 他の CA が発行した証明書は ACM にインポートできます。
 
+**使う場面:** グループ会社の規程で、決められた CA の証明書しか使えない。買った証明書を ALB で使うために、ACM へ取り込む（[ネット銀行の例](#use-case-netbank)）。
+
 ```bash
 aws acm import-certificate \
   --certificate fileb://cert.pem \
@@ -263,6 +451,8 @@ openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 90 \
 openssl x509 -in cert.pem -noout -subject -dates -ext subjectAltName
 ```
 
+**使う場面:** スマートフォンのアプリの開発で、手元の API サーバーを `https://localhost` で動かし、本番と同じく HTTPS で通信を確かめる。
+
 CA に署名を依頼する場合は、CSR を作ります。
 
 ```bash
@@ -279,6 +469,8 @@ openssl req -new -newkey rsa:2048 -nodes \
 - **誤ると:** `subjectAltName` を省くと、現代のブラウザは CN だけでは名前を確認しないので、`localhost` でも一致しないと表示される。
 
 ### SSH キーと EC2 キーペア {#ssh-keys}
+
+**使う場面:** 検証用の EC2 に、開発者 3 人が自分の PC から SSH で入る。各自が `ssh-keygen` で作った公開鍵を登録し、秘密鍵は各自の PC から出さない。
 
 EC2 キーペアでは、公開鍵を EC2 が持ち、秘密鍵は自分で保管します。AWS は秘密鍵を保存しないので、なくすと取り戻せません。
 
@@ -633,6 +825,8 @@ CloudFront の場合は、ディストリビューション設定でウェブ AC
 | 階層 | どこでも | 階層の最後に置く |
 | 料金 | 高い | 低い |
 
+**使う場面:** 社内のサービスメッシュで、コンテナ同士の mTLS に 1 日で切れる証明書を使う。失効の仕組みを持たずに、盗まれた証明書の影響を短く抑えられるので、短期証明書モードを選ぶ。
+
 CA 1 つあたりの証明書は累計 100 万枚です。Private CA の証明書は、ACM の枚数の上限には数えません。
 
 - **種類の例:** ルート CA の下に、本番用と開発用の 2 つの下位 CA を作る。下位 CA が侵害されても、ルートは無事なので下位だけを失効できる。
@@ -643,6 +837,8 @@ CA 1 つあたりの証明書は累計 100 万枚です。Private CA の証明�
 ## WAF の設定の詳細 {#waf-settings}
 
 ### スコープと関連付け {#waf-scope}
+
+**使う場面:** 東京で動く会員サイトの ALB と、同じ会員向けの REST API に、共通のウェブ ACL を 1 つ付けて、ルールの変更を 1 か所で済ませる。
 
 - 1 つのリソースには、1 つのウェブ ACL だけ付けられる。
 - 1 つのウェブ ACL は複数のリソースに付けられる。
@@ -716,6 +912,8 @@ CAPTCHA と Challenge は HTTPS でブラウザからアクセスするときに
 - **誤ると:** ウェブ ACL あたりのレートベースルールは 10 個まで。
 
 ### ログ {#waf-logging}
+
+**使う場面:** 不正な注文の問い合わせが来たとき、どの IP からどのルールで止めたか、または通したかを後から調べる。サンプルは一部しか残らないので、調査にはログを使う。
 
 | 送信先 | 名前の条件 |
 | --- | --- |

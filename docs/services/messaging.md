@@ -99,11 +99,264 @@ API Gateway の統合タイムアウト（REST API の既定は 29 秒）を超�
 - **例:** 帳票の作成に 180 秒かかる処理を同期で呼ぶと、29 秒の時点でクライアントに 504 が返る。関数は動き続けるが、結果は呼び出し元に届かない。
 - **例（非同期）:** `POST /reports` は `SendMessage` して `202` と受付 ID をすぐ返す。クライアントは `GET /reports/ID` で状態を確認し、180 秒後に完了を受け取る。
 
+## 使いどころと具体例 {#use-cases}
+
+どれを使うかは、ほぼ 3 つの問いで決まる。消費者は 1 種類か複数か。内容で宛先を変えるか。受け手が止まったときにためておく必要があるか。
+
+ここでは、場面ごとの選び方と、架空のサービスでの組み方を示す。設定の詳細は各節へのリンク先にある。
+
+### 使う場面 {#use-cases-fit}
+
+| 場面 | 具体例 | 使う機能 |
+| --- | --- | --- |
+| 急に注文が増える | ネットスーパーで、夕方 17 時台の注文が平常の 10 倍になり、在庫引当が追いつかない | [SQS](#sqs)、[Lambda から使うときの設定](#sqs-lambda-settings) |
+| 時間のかかる処理を後に回す | 会計 SaaS で、月末に 1 件 3 分かかる請求書 PDF をまとめて作る | [同期と非同期](#sync-async)、[可視性タイムアウト](#visibility-timeout) |
+| 発生順を守る | ネット銀行で、同じ口座の入金と出金を発生した順に残高へ反映する | [標準と FIFO](#standard-fifo) |
+| 再送による二重実行を防ぐ | 決済代行で、通信エラー後の再送で同じ決済が 2 回走らないようにする | [FIFO の設定の詳細](#fifo-settings) |
+| 1 つの出来事を複数の部署へ | 通販の「出荷済み」を、顧客へのメール、配送業者への連携、売上の集計に同時に伝える | [ファンアウト](#fanout) |
+| 宛先ごとに必要なものだけ渡す | 物流センターで、冷蔵品の出荷だけを温度管理チームへ送る | [フィルターポリシー](#filter-policies) |
+| 中身の値で振り分ける | 会計 SaaS で、100 万円以上の取引だけを不正チェックへ回す | [ルールとイベントパターン](#eventbridge-rules) |
+| AWS の出来事に反応する | 社内システムで、EC2 が止まったらチャットに通知する | [イベントバス](#event-buses) |
+| 時刻を決めて 1 回だけ動かす | オンライン英会話で、レッスン開始 30 分前に受講者へリマインドを送る | [スケジュール](#eventbridge-schedule) |
+| 誤った処理をやり直す | ポイントサービスで、下流のバグで 1 時間分の付与を誤り、直した後で流し直す | [アーカイブとリプレイ](#archive-replay) |
+| ファイルが置かれたら処理する | 動画配信で、投稿された元動画を変換の待ち行列に入れる | [S3 イベント通知](#s3-events) |
+| キューの中身を加工して別サービスへ | 支払い済みの注文だけに顧客情報を足して、出荷のワークフローを起動する | [Pipes](#eventbridge-pipes) |
+
+### 使わない方がよい場面 {#use-cases-avoid}
+
+| 場面 | 理由 | 代わりの選択肢 |
+| --- | --- | --- |
+| 画面に結果をすぐ返す（残高照会など） | キューを挟むと結果は後からしか分からず、状態を確かめる仕組みが別に要る | API Gateway と Lambda の同期呼び出し（[Lambda](lambda.md)） |
+| 同じデータを複数のアプリが何度も読み直す | SQS は削除すると消え、SNS は保持しない | [Kinesis Data Streams](streaming.md#kinesis-data-streams) |
+| 分岐や待ちを含む何段階もの手順を管理する | キューをつなぐと進み具合が散らばる。可視性タイムアウトも 12 時間まで | [Step Functions](step-functions.md) |
+| 1 件が数 MB 以上のデータを渡す | SQS と SNS は 1 MiB まで | 本体は S3 に置き、キーだけを送る（[Extended Client](#max-message-size)） |
+| 毎秒数千件のイベントを 1 つのバスに流し続ける | `PutEvents` には東京で既定 1,200 件/秒のクォータがある | [Kinesis Data Streams](streaming.md#kinesis-data-streams) か SQS |
+| 数万人へのメールマガジン | SNS のメール購読は 10 件/秒で、引き上げられない | Amazon SES |
+
+### 例: ネットスーパーの注文受付 {#use-case-ec}
+
+**状況:** 会員 50 万人のネットスーパー。平常は毎秒 20 件の注文が、夕方 17〜18 時と特売日の朝には毎秒 200 件になる。在庫引当は RDS の PostgreSQL で行い、同時接続は 100 本までに抑えたい。開発者は 4 人。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    U[アプリ] --> A[API Gateway]
+    A --> F1[Lambda: 受付]
+    F1 --> Q[(SQS 標準: orders)]
+    Q --> F2[Lambda: 在庫引当]
+    F2 --> DB[(RDS PostgreSQL)]
+    Q -. 5 回受信で移す .-> D[(DLQ: orders-dlq)]
+    D --> AL[CloudWatch アラーム]
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| 関数のタイムアウト | 30 秒 | 引当は通常 2 秒。DB の待ちを含めても足りる |
+| 可視性タイムアウト | 180 秒 | 関数のタイムアウトの 6 倍。バッチウィンドウは使わない（[可視性タイムアウト](#visibility-timeout)） |
+| `BatchSize` | 10 | 1 件の失敗の巻き添えを小さくする。部分バッチレスポンスも有効にする |
+| `MaximumConcurrency` | 50 | 1 呼び出しで 1 接続なので 50 本。管理画面などの分を残す |
+| `maxReceiveCount` | 5 | Lambda では 5 以上を推奨。スロットリングだけで DLQ に移らない |
+| 保持期間 | 4 日（既定） | 消費者は常に動いている。止まっても 4 日あれば直せる |
+| DLQ の保持期間 | 14 日 | 元のキューより長くする（[DLQ の保持期間](#sqs-dlq)） |
+
+処理の余力を確かめる。50 同時 × 10 件 ÷ 2 秒 = 毎秒 250 件で、ピークの 200 件を上回る。
+
+**なぜこのサービスか:** 消費者は在庫引当の 1 種類で、目的はピークの平準化である。SNS や EventBridge は届けるだけでためないので、DB が詰まったときの逃げ場にならない。注文どうしの順序は関係ないので FIFO にする理由もなく、重複は注文番号で冪等にして防ぐ。
+
+**つまずきやすい点:**
+
+- `MaximumConcurrency` を 50 にしたのに、関数の予約済み同時実行を 20 にしてしまう。スロットリングで受信回数が増え、正常な注文が DLQ に移る（[値を入れた例](#sqs-lambda-examples)）。
+- 受付 API が `202` を返した時点でアプリが「注文完了」と表示し、引当に失敗しても利用者に伝わらない。状態を確かめる API か通知を用意する。
+
+### 例: ネット銀行の入出金の反映 {#use-case-bank}
+
+**状況:** 口座数 30 万のネット銀行。提携 ATM や給与振込から入出金の通知が届き、平常で毎秒 300 件、給料日の朝は毎秒 3,000 件になる。同じ口座の「入金 → 出金」が入れ替わると、残高不足で誤ってエラーになる。勘定系への反映は 1 件 0.2 秒。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    A[提携先からの通知 API] --> F1[Lambda: 受付]
+    F1 --> Q[(SQS FIFO: ledger.fifo)]
+    Q --> F2[Lambda: 残高反映]
+    F2 --> L[(勘定系 DB)]
+    Q -. 5 回受信で移す .-> D[(DLQ: ledger-dlq.fifo)]
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| `MessageGroupId` | 口座番号 | 口座の中は順に、口座どうしは並列に処理する |
+| `MessageDeduplicationId` | 提携先の取引番号 | 5 分以内の再送は 1 回だけ届く |
+| `DeduplicationScope`、`FifoThroughputLimit` | `messageGroup`、`perMessageGroupId` | 3,000 件/秒は通常モードのバッチの上限ちょうどなので、高スループットモードで余裕を持つ（[FIFO の設定の詳細](#fifo-settings)） |
+| `BatchSize` | 10 | FIFO の最大 |
+| 関数のタイムアウト | 60 秒 | 10 件 × 0.2 秒に、勘定系の待ちの余裕を足す |
+| 可視性タイムアウト | 360 秒 | 関数のタイムアウトの 6 倍 |
+| `maxReceiveCount` | 5 | 一時的な勘定系の遅れで DLQ に移さない |
+
+**なぜこのサービスか:** 順序と重複排除の両方が要るので、標準キューではなく FIFO にする。Kinesis Data Streams もシャードの中の順序を守れるが、失敗した 1 件でシャード全体が止まり、1 件ごとの再試行や DLQ の扱いは SQS のほうが単純になる（[Lambda とストリーム](streaming.md#lambda-streams)）。
+
+**つまずきやすい点:**
+
+- 壊れた通知が 1 件あると、その口座のグループは DLQ に移るまで約 360 × 5 = 1,800 秒止まる。他の口座は進む。DLQ に移ると順序が崩れるので、その口座の後続を保留する運用を決めておく。
+- 再送のたびに UUID を作って ID にすると、重複を防げない。取引番号のような業務上の値を使う。
+- 5 分を過ぎてからの再送は重複として検出されない。勘定系の側でも取引番号で冪等にする。
+
+### 例: 通販の出荷イベントを複数の部署へ {#use-case-logistics}
+
+**状況:** 1 日 8 万件を出荷する通販の物流センター。出荷が確定したら、顧客への出荷メール、配送業者のシステムへの送り状の連携、売上の分析の 3 つに伝える。配送業者のシステムは毎晩 1〜3 時に止まる。冷蔵品と冷凍品（全体の 15%）は、温度管理チームにも送る。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    W[倉庫管理システム] --> T[SNS: shipped]
+    T --> Q1[(SQS: mail-q)]
+    T --> Q2[(SQS: carrier-q)]
+    T -- "temp が chilled か frozen" --> Q4[(SQS: cold-chain-q)]
+    T --> F[Data Firehose から S3]
+    Q1 --> L1[Lambda: 出荷メール]
+    Q2 --> L2[ECS: 業者連携]
+    Q4 --> L3[Lambda: 温度管理]
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| SQS 購読の `RawMessageDelivery` | `true` | 受信側で JSON を 2 回解析しなくて済む（[raw メッセージ配信](#sns-raw-delivery)） |
+| `cold-chain-q` のフィルター | `{"temp": ["chilled", "frozen"]}` | 冷蔵と冷凍だけを受け取る |
+| メッセージ属性 | `temp`、`carrier`、`region` の 3 個 | raw 配信の SQS は 10 個まで |
+| `carrier-q` の保持期間 | 4 日（既定） | 夜間 2 時間の停止なら十分。連休の停止に備えるなら延ばす |
+| 購読ごとの DLQ | すべての購読に設定し、保持期間は 14 日 | キューを誤って消しても失わない（[サブスクリプションの DLQ](#sns-retries)） |
+
+**なぜこのサービスか:** 宛先は 4 つで、振り分けの条件は属性 1 つだけなので、SNS のフィルターで足りる。宛先ごとに処理の速さと止まる時間が違うので、SQS を挟んで受け手ごとにためる。条件が複雑になったり、SaaS のイベントも混ぜたくなったりしたら EventBridge を検討する。
+
+**つまずきやすい点:**
+
+- キューのアクセスポリシーで SNS に `sqs:SendMessage` を許可していないと、購読は成功しているのに届かない（[ファンアウト](#fanout)）。
+- 発行側が `temp` 属性を付け忘れると、フィルターに一致せず、冷蔵品の通知が届かない。エラーにならないので、`cold-chain-q` の受信数を出荷数との比率で監視する。
+- 属性を 11 個に増やすと、raw 配信の SQS には届かずに破棄される（[メッセージのサイズと属性](#sns-message-attributes)）。
+
+### 例: 会計 SaaS のイベントの振り分け {#use-case-saas}
+
+**状況:** 中小企業 1 万社が使う会計 SaaS。「請求書の発行」「入金の消し込み」などのイベントが 1 日 200 万件、月末のピークで毎秒 300 件出る。100 万円以上の取引だけを不正チェックへ、全件を監査ログへ送る。外部の決済 SaaS からのイベントも同じ仕組みで受けたい。下流のバグで処理を誤ったとき、各チームに送り直しを頼まずに済ませたい。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    A[アプリの各機能] --> B[カスタムバス: accounting]
+    P[決済 SaaS] --> PB[パートナーバス]
+    B --> R1{ルール: 高額取引}
+    B --> R2{ルール: 全件}
+    R1 --> SF[Step Functions: 不正チェック]
+    R2 --> FH[Data Firehose から S3]
+    B -.-> AR[(アーカイブ 30 日)]
+    PB --> R3{ルール: 入金通知}
+    R3 --> L[Lambda: 消し込み]
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| 高額取引のパターン | `{"detail-type":["TransactionPosted"],"detail":{"amount":[{"numeric":[">=",1000000]}]}}` | 発行側に振り分けの条件を書かない |
+| ターゲットの再試行 | `MaximumEventAgeInSeconds=3600`、DLQ あり | 1 時間を過ぎた不正チェックは担当者が DLQ から扱う（[ターゲットの再試行と DLQ](#target-retry-dlq)） |
+| アーカイブの保持期間 | 30 日 | 月次の締めまでに見つかったバグを流し直せる。既定の無期限だと料金が増え続ける |
+| リプレイの宛先 | 直したルールだけ | 全ルールにすると、監査ログが二重になる |
+| `PutEvents` の量 | ピークで毎秒 300 件 | 東京の既定 1,200 件/秒に収まる |
+
+**なぜこのサービスか:** 宛先を決める条件がイベントの中身（金額、種類）にあり、外部 SaaS のイベントも同じ方法で受けたい。金額の条件は SNS のフィルターでも書けるが、パートナーバス、アーカイブとリプレイは EventBridge にしかない。
+
+**つまずきやすい点:**
+
+- `PutEvents` で `EventBusName` を省くと既定のバスに入り、`accounting` バスのルールが動かない。エラーにはならない（[イベントバス](#event-buses)）。
+- 金額を文字列の `"1500000"` で送ると、`numeric` の条件に一致しない（[パターンの評価のしかた](#eventbridge-rules)）。
+- リプレイしたイベントで請求メールが再送される。ターゲットを冪等にするか、`replay-name` を持つイベントをルールで除く（[アーカイブとリプレイ](#archive-replay)）。
+
+### 例: オンライン英会話のレッスン前リマインド {#use-case-education}
+
+**状況:** 受講者 8 万人のオンライン英会話。1 日 4 万レッスンの予約があり、開始 30 分前にアプリへプッシュ通知を送る。予約は 2 か月先まで入り、キャンセルもある。以前は cron サーバーが毎分 DB を検索していたが、サーバーの障害で朝の通知が全部止まったことがある。
+
+**構成:**
+
+```mermaid
+sequenceDiagram
+    participant A as 予約 API
+    participant S as EventBridge Scheduler
+    participant L as Lambda: 通知
+    A->>S: CreateSchedule（開始 30 分前の at）
+    Note over A,S: キャンセル時は DeleteSchedule
+    S->>L: 指定した時刻に呼ぶ
+    L->>L: 予約が有効か確かめてからプッシュ通知
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| スケジュール式 | `at(2026-12-01T18:30:00)` | 予約ごとに 1 回だけ動かす |
+| `ScheduleExpressionTimezone` | `Asia/Tokyo` | 省くと UTC になり、9 時間ずれる |
+| `FlexibleTimeWindow` | `OFF` | 30 分前の通知が最大 15 分ずれると意味が薄れる |
+| `ActionAfterCompletion` | `DELETE` | 完了したスケジュールを残さない |
+| スケジュール名 | `lesson-<予約番号>` | キャンセルのときに名前で消せる |
+| 同時にあるスケジュール | 4 万 × 60 日 = 約 240 万個 | リージョンの既定 10,000,000 個に収まる |
+
+**なぜこのサービスか:** 個別の時刻が約 240 万件ある。SQS の遅延は最大 15 分なので、2 か月先までは待てない。cron サーバーのように 1 台が落ちると全部止まる箇所がなく、失敗したときの再試行と DLQ も設定できる（[スケジュール](#eventbridge-schedule)）。
+
+**つまずきやすい点:**
+
+- 実行ロールの信頼ポリシーに `scheduler.amazonaws.com` がないと、作成は成功するのに、時刻になると失敗する。
+- キャンセル時の `DeleteSchedule` が失敗すると、キャンセル済みのレッスンの通知が届く。関数の側でも予約の状態を確かめてから送る。
+
+### 例: 動画配信の投稿後の変換 {#use-case-media}
+
+**状況:** クリエイター 2 万人が投稿する動画配信サービス。投稿は 1 日 3,000 本で、夜 20〜23 時には 1 時間に 600 本になる。変換は 1 本 5〜20 分かかり、Lambda の 15 分に収まらないことがあるので、ECS のワーカーで行う。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    U[投稿アプリ] --> S3[(S3: uploads/)]
+    S3 -- "作成イベント、.mp4" --> Q[(SQS 標準: transcode)]
+    Q --> W[ECS ワーカー]
+    W --> O[(S3: outputs/)]
+    Q -. 滞留の件数 .-> CW[CloudWatch]
+    CW --> AS[ECS の台数を調整]
+    Q -. 3 回受信で移す .-> D[(DLQ)]
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+| --- | --- | --- |
+| S3 イベントのフィルター | プレフィックス `uploads/`、サフィックス `.mp4` | 出力は `outputs/` に分けてループを防ぐ（[S3 イベント通知](#s3-events)） |
+| 可視性タイムアウト | 300 秒。処理中は 120 秒ごとに 300 秒へ延長する | 処理時間のばらつきが大きいので、ハートビートにする（[ChangeMessageVisibility](#visibility-timeout)） |
+| `WaitTimeSeconds` | 20 秒 | 昼は空のことが多い。空の受信を減らす（[ロングポーリング](#long-polling)） |
+| `maxReceiveCount` | 3 | 壊れた動画は何度やっても失敗するので、早めに DLQ へ移す |
+| 1 台あたりの滞留の目標 | 4 本 | 1 台が平均 15 分で 1 本、1 時間で 4 本。許容する遅れを 1 時間とした |
+| 台数の範囲 | 2〜150 台 | ピークの 600 本 ÷ 4 本 = 150 台 |
+
+**なぜこのサービスか:** 1 本ずつ独立したジョブで、消費者は変換ワーカーの 1 種類。S3 から直接 Lambda を呼ぶと 15 分を超える変換が打ち切られる。SQS にためれば、ワーカーが止まっても取りこぼさず、台数を滞留に合わせて増減できる（[メッセージングの最適化](#optimization)）。
+
+**つまずきやすい点:**
+
+- 変換結果を `uploads/` に書くと、新しい作成イベントで自分を呼び続ける。
+- 延長を忘れると、20 分の変換の途中で別のワーカーにも渡り、同じ動画を 2 回変換する。受信回数も増えて DLQ に移る。
+- イベントのキーは URL エンコードされている。日本語のファイル名は `unquote_plus` で戻さないと、存在しないキーとして失敗する。
+
 ## SQS {#sqs}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
 
 メッセージをためるキュー。消費者が **取りに行く** プル型で、1つのメッセージは基本的に1つの消費者が処理する。
+
+**使う場面:** ネットスーパーで、夕方のピークに届く注文をためておき、在庫引当の関数が DB の耐えられる速さで順に処理する（[例](#use-case-ec)）。
 
 提供単位はリージョンで、AZ は選ばない。VPC の外のサービスで、VPC 内からはインターフェイスエンドポイントか NAT を経由して呼ぶ（[リソースの提供単位](resource-scope.md#scope-regional-outside)）。
 
@@ -303,6 +556,8 @@ aws sqs set-queue-attributes \
 - **誤ると:** 消費者が動いていてもエラーは出ないまま、古いメッセージから消える。`ApproximateAgeOfOldestMessage` が保持期間に近づいたらアラームを出す。
 
 短くする変更は **既存のメッセージにも効く**。14 日から 1 日に変えると、1 日より古いメッセージは期限切れとして消えることがある。
+
+**使う場面:** 社内の経費精算システムで、月曜朝まで止まる下流のために、金曜夜に入った申請を 7 日保持して取りこぼさない。
 
 ### 最大メッセージサイズと Extended Client {#max-message-size}
 
@@ -655,6 +910,8 @@ aws sqs start-message-move-task \
 
 送った直後には処理させたくないときに使う。たとえば、関連するデータがそろうまで少し待ちたい、すぐの再試行を避けたい、という場面である。消費者側で待つ処理を書かずに済む。
 
+**使う場面:** フードデリバリーで、注文の 60 秒後に「店舗が受け付けたか」を確認し、未受付なら店舗に電話の通知を出す。
+
 | | 遅延キュー | メッセージタイマー |
 | --- | --- | --- |
 | 範囲 | キュー全体（`DelaySeconds`） | メッセージごと（送信時の `DelaySeconds`） |
@@ -709,6 +966,8 @@ for failed in res.get("Failed", []):
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 トピックに発行すると、購読者全員に **プッシュ** するサービス。1対多の配信に使う。
+
+**使う場面:** 物流センターで、1 件の「出荷済み」を出荷メール、配送業者への連携、分析の 3 か所へ同時に届ける（[例](#use-case-logistics)）。
 
 提供単位はリージョンで、AZ は選ばない。VPC の外のサービスで、VPC 内からはインターフェイスエンドポイントか NAT を経由して呼ぶ（[リソースの提供単位](resource-scope.md#scope-regional-outside)）。
 
@@ -1042,6 +1301,8 @@ SQS と違い、SNS の DLQ はトピックではなく **サブスクリプシ�
 
 1 対多に配りつつ、受け手ごとの順序をそろえたいときに使う。順序を守るために、購読者は順序を保てる SQS に限られる。
 
+**使う場面:** 家電量販店のチェーンで、商品ごとの価格改定を店舗の POS、EC サイト、分析の 3 つに、どこでも同じ順で反映する。
+
 | 項目 | 内容 |
 | --- | --- |
 | 順序 | メッセージグループごとに保証 |
@@ -1084,6 +1345,8 @@ sns.publish(
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
 
 イベントをルールに従って振り分けるサービス。AWS のサービス、自前のアプリ、SaaS のイベントを扱える。
+
+**使う場面:** 会計 SaaS で、100 万円以上の取引だけを不正チェックへ、全件を監査ログへ送り、外部の決済 SaaS のイベントも同じバスで受ける（[例](#use-case-saas)）。
 
 提供単位はリージョンで、AZ は選ばない。VPC の外のサービスで、VPC 内からはインターフェイスエンドポイントか NAT を経由して呼ぶ。エンドポイントは Classic のバスと既定のバスが `events`、新しい Custom Event Bus が `eventsv2`（[EC サイトの例](resource-scope.md#ec-site-order)）。
 
@@ -1172,6 +1435,8 @@ if res["FailedEntryCount"] > 0:
 ルールは特定のバスに属し、そのバスのイベントだけを評価する。カスタムバスに送ったのに既定のバスのルールが動かない、という間違いが多い。`PutEvents` で `EventBusName` を省くと既定のバスに入る。
 
 別アカウントからの送信はバスのリソースポリシーで `events:PutEvents` を許可する。
+
+**使う場面:** 事業部ごとに AWS アカウントを分けた会社で、各アカウントの `OrderCreated` を中央アカウントの `orders` バスに集め、共通の分析と監査に流す。
 
 `Detail` は JSON の **文字列** で渡す。オブジェクトのままや不正な JSON は受け付けられない。エントリのエラーは例外ではなく、`Entries` の `ErrorCode` で返る。
 
@@ -1425,6 +1690,8 @@ flowchart TD
 
 ポーリングや変換のための Lambda を書かずに済むのが利点。
 
+**使う場面:** EC で、注文キューのうち `status` が `paid` のものだけに顧客情報を足して、出荷のワークフローを起動する。中継の Lambda を書かずに済む。
+
 | | イベントバスとルール | Pipes |
 | --- | --- | --- |
 | つなぎ方 | 多対多。1 つのイベントを複数のターゲットへ | 1 本のソースから 1 つのターゲットへ |
@@ -1471,6 +1738,8 @@ aws pipes create-pipe --name paid-orders \
 - 順序は保証されない。発生時刻を基準に 1 分間隔で処理する。
 - 受信からアーカイブまで遅延がある。AWS は 10 分待ってからのリプレイを勧めている。
 - 再送イベントには `replay-name` が付くので、ルールで区別できる。
+
+**使う場面:** ポイントサービスで、付与の計算のバグを直した後、誤った 1 時間分のイベントだけを、直したルールに流し直す（[例](#use-case-saas)）。
 
 | 項目 | 内容 |
 | --- | --- |
@@ -1519,6 +1788,8 @@ aws events start-replay --replay-name fix-20261031 \
 ## S3 イベント通知 {#s3-events}
 
 オブジェクトの作成や削除で処理を起動する。アップロードを定期的に一覧で調べる処理（ポーリング）を書かずに、置かれたらすぐ処理できる。
+
+**使う場面:** 動画配信で、投稿された元動画が `uploads/` に置かれたら、変換の待ち行列に入れる（[例](#use-case-media)）。
 
 提供単位はリージョンで、バケットのあるリージョンで動く。VPC の外の機能で、Lambda、SQS、SNS の宛先はバケットと同じリージョンに置く（[リソースの提供単位](resource-scope.md#scope-regional-outside)）。
 

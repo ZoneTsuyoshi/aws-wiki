@@ -75,6 +75,204 @@ CLI は API を 1 回ずつ呼ぶだけで、何を作ったかを覚えませ�
 - **AWS CLI の例:** `aws s3 ls` で一覧を確認するだけなら、テンプレートは要りません。
 - **CloudShell の例:** 手元の PC に CLI を入れられない環境で、コンソールから `aws sts get-caller-identity` を実行します。
 
+## 使いどころと具体例 {#use-cases}
+
+IaC が効くのは、「同じものをもう一度作る」「変更の影響を前もって知る」「誰が何を変えたか残す」のどれかが必要な場面です。逆に、1 回だけの確認や、秒単位で変わる値には向きません。
+
+ここでは、場面ごとの選び方と、架空のサービスでの使い方を示します。設定の詳細は各節へのリンク先にあります。
+
+### 使う場面 {#use-cases-fit}
+
+| 場面 | 具体例 | 使う機能 |
+|---|---|---|
+| 本番と同じ検証環境を何度も作りたい | ネットスーパーで、リリース前に本番と同じ構成のステージングを作り、検証後に消す | [パラメータ](#parameters)、[別のステージへのデプロイ](#deploy-stages) |
+| 本番 DB を誤って作り直したくない | 病院グループの電子カルテ連携 DB で、置き換えになる変更を事前に止める | [変更セット](#change-sets)、[スタックポリシー](#stack-policy) |
+| スタックを消してもデータは残したい | 保険会社の契約テーブルを、環境の作り直しでも残す | [DeletionPolicy](#deletion-policy)、[UpdateReplacePolicy](#update-replace-policy) |
+| 多数のアカウントに同じ設定を配りたい | 40 アカウントを持つ小売チェーンで、監査用の設定を全アカウントへ配る | [StackSets の設定](#stacksets-settings) |
+| 手作業の変更を見つけたい | 証券会社で、障害対応中にコンソールで変えたセキュリティグループを月次で洗い出す | [ドリフト検出](#drift) |
+| リリース後の悪化で構成ごと戻したい | 旅行予約サイトで、更新後 10 分の 5XX のアラームで前の構成へ戻す | [ロールバックトリガー](#rollback-triggers) |
+| 関数と API の組み合わせを短く書きたい | 自治体の申請受付で、API、キュー、関数 5 つを 1 つのテンプレートで管理する | [SAM](#sam) |
+| 同じ形のリソースを大量に作りたい | 動画配信で、30 チャネル分の処理系を同じ部品から作る | [CDK](#cdk) |
+| 社内の標準構成を部品として配りたい | 社員 3,000 人の製造業で、暗号化とログ設定を済ませたバケットを全チームに使わせる | [コンストラクト](#cdk-constructs) |
+| 単発の確認や棚卸しをスクリプトにしたい | 物流会社で、毎朝、停止したままの EC2 を一覧にする | [AWS CLI](#aws-cli)、[--query で絞り込む](#cli-query) |
+| 手元の PC に CLI を入れられない | 銀行の支店の端末から、コンソールにサインインしてコマンドを流す | [CloudShell](#cloudshell) |
+
+### 使わない方がよい場面 {#use-cases-avoid}
+
+| 場面 | 理由 | 代わりの選択肢 |
+|---|---|---|
+| 一覧の確認など、1 回だけ API を呼ぶ | テンプレートを書く手間に見合わず、作るものもない | [AWS CLI](#aws-cli) |
+| DB の行や S3 のオブジェクトなど、データ自体を入れる | IaC が管理するのはリソースの器で、データの移行や更新には向かない | 移行ツールやアプリのスクリプト。小さな初期データだけなら [カスタムリソース](#custom-resources) |
+| 機能フラグなど、日に何度も変わる設定値 | スタックの更新のたびに変更セットとロールバックの判断が要り、遅い | Parameter Store や AppConfig で値だけを変える |
+| Auto Scaling が増減させるインスタンスを 1 台ずつ書く | 台数はスケーリングが決めるので、テンプレートとすぐにずれる | Auto Scaling グループを書き、台数の範囲だけを決める（[UpdatePolicy](#update-policy)） |
+| 本番へ素早く反映したいので `sam sync` や `--hotswap` を使う | CloudFormation を迂回し、スタックと実機がずれる | `sam deploy` や CI/CD（[CI/CD](cicd.md)） |
+
+### 例: 病院グループの本番 DB を守る運用 {#use-case-hospital}
+
+**状況:** 8 病院を運営する医療法人です。予約と電子カルテ連携のシステムを、VPC、ALB、EC2、RDS for PostgreSQL の 1 つのスタックで管理しています。インフラ担当は 3 人で、変更は月 2 回の定例作業に限っています。患者データを失う変更は、どんな理由でも許されません。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    G["テンプレートの変更<br/>（Git のレビュー）"] --> C["変更セットを作る"]
+    C --> R{"Replacement: True<br/>のリソースがある?"}
+    R -- "ある" --> STOP["作業を止めて<br/>データの扱いを確認"]
+    R -- "ない" --> E["変更セットを実行"]
+    E --> SP{"スタックポリシー<br/>DB の置き換え、削除は Deny"}
+    SP --> M["ロールバックトリガーで<br/>10 分間アラームを監視"]
+    M -- "ALARM" --> RB["前の構成へ戻す"]
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+|---|---|---|
+| DB の `DeletionPolicy` | `Snapshot` | スタックの削除やテンプレートからの除去でも、最後のスナップショットが残る |
+| DB の `UpdateReplacePolicy` | `Snapshot` | 置き換えになっても、古い DB のスナップショットを残す |
+| スタックポリシー | DB の `Update:Replace`、`Update:Delete` を `Deny` | テンプレートを書き換えられる人でも、DB の作り直しを出せない |
+| 終了保護 | 有効 | `delete-stack` の誤操作を止める |
+| ロールバックトリガー | `MonitoringTimeInMinutes: 10`、5XX のアラーム | 定例作業の後の悪化を自動で戻す |
+| ドリフト検出 | 定例作業の前に毎回 | 前回からの手作業の変更を、作業前に知る |
+
+**なぜこのサービスか:** 変更セット、スタックポリシー、終了保護は、オンプレミスで行っていた「作業前の影響確認」「重要機器の施錠」を、そのまま手順に置き換えられます（[テンプレートの更新と変更の確認](#updating-stacks)）。少人数でも、確認の抜けを仕組みで防げます。
+
+**つまずきやすい点:**
+
+- `DeletionPolicy` だけでは、置き換えからは守れません。両方を書きます。
+- スタックポリシーに `Deny` だけを書くと、他のリソースも更新できなくなります。`Allow` の文を先に置きます。
+- 障害対応でコンソールから変えた設定は、次の定例作業で上書きされます。ドリフト検出で見つけて、テンプレートに戻します。
+
+### 例: 小売チェーンの 40 アカウントへ監査設定を配る {#use-case-retail-stacksets}
+
+**状況:** 全国 600 店舗のホームセンターです。店舗システム、EC、物流などで 40 アカウントを持ち、東京と大阪の 2 リージョンを使います。監査部門から、全アカウントに同じログの保管設定とアラームを入れるよう求められました。新しいアカウントは年に 5〜6 個増えます。
+
+**構成:** 管理アカウントの StackSet から、OU ごとにスタックを配ります（図は [ネストされたスタックと StackSets](#nested-stacks-stacksets) の構成図を参照）。
+
+| 項目 | 内容 |
+|---|---|
+| 展開先 | 店舗、EC、物流の OU。40 アカウント × 2 リージョン = 80 スタックインスタンス |
+| 権限 | サービスマネージド権限（Organizations と連携） |
+| 新しいアカウント | 自動デプロイで、OU に入った時点で作られる |
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+|---|---|---|
+| `MaxConcurrentCount` | 5 | 40 アカウントを 5 つずつ、8 回に分けて進める |
+| `FailureToleranceCount` | 4 | 同時実行 5 の上限は `FailureToleranceCount` + 1 なので、4 にする |
+| `RegionConcurrencyType` | `SEQUENTIAL` | 東京で失敗したら、大阪へ進む前に止まる |
+| 自動デプロイ | 有効 | 新しいアカウントへの入れ忘れを防ぐ |
+
+**なぜこのサービスか:** 1 アカウントずつスタックを作ると、80 回の作業と、新しいアカウントでの入れ忘れが生まれます。StackSets は 1 回の操作で配り、失敗の許容数で広がり方を制御できます（[StackSets の設定](#stacksets-settings)）。
+
+**つまずきやすい点:**
+
+- `FailureToleranceCount` を既定の 0 のままにすると、同時実行は 1 になり、`MaxConcurrentCount` を 5 にしても 1 アカウントずつしか進みません。
+- StackSet はリージョン単位のリソースです。東京で作った StackSet は、大阪のコンソールには出ません。
+- 監査用のスタックを各アカウントの担当者が手で消すと、次の更新でそのアカウントだけ失敗します。消せないように SCP（[ガバナンス](governance.md)）と組み合わせます。
+
+### 例: 自治体の給付金申請をサーバーレスで受け付ける {#use-case-municipality}
+
+**状況:** 人口 40 万人の市です。給付金のオンライン申請を、API Gateway、SQS、Lambda、DynamoDB で受け付けます。普段は 1 日 2,000 件ですが、締切の前日は平常時の 15 倍になります。開発は委託先の 4 人で、市の職員がリリースを承認します。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    U["申請者のブラウザ"] --> A["API Gateway<br/>POST /applications"]
+    A --> F1["受付関数"]
+    F1 --> Q["SQS キュー"]
+    Q --> F2["審査準備の関数<br/>BatchSize 10"]
+    F2 --> T["DynamoDB<br/>申請テーブル"]
+    Q -. "3 回失敗" .-> D["DLQ"]
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+|---|---|---|
+| `Globals` の `Timeout` | 10 | 受付の関数はすぐ返す。審査準備の関数だけ `Properties` で 30 に上書きする（[Globals](#sam-globals)） |
+| `Policies` | `SQSSendMessagePolicy`、`DynamoDBCrudPolicy` | 関数ごとに、使うキューとテーブルだけを許す（[Policies](#sam-policies)） |
+| SQS イベントの `BatchSize` | 10 | 締切前日の大量の申請を 10 件ずつまとめて処理する |
+| `DeploymentPreference` | `Canary10Percent10Minutes` | 受付を止めずに新版を確かめる |
+| `samconfig.toml` の `prod` | `confirm_changeset = true` | 職員が変更セットを確かめてから本番に出す（[別のステージへのデプロイ](#deploy-stages)） |
+
+**なぜこのサービスか:** 関数、実行ロール、API、権限、イベントの接続を素の CloudFormation で書くと長くなり、権限の付け忘れも起きます。SAM なら短く書け、`sam local invoke` で委託先の手元でも試せます。締切前日の急増はキューで受け止めるので、サーバーの台数を見積もる必要がありません。
+
+**つまずきやすい点:**
+
+- `--config-env prod` を付け忘れると `default` の設定が使われます。`default` を本番にしないようにします。
+- `SQSSendMessagePolicy` の `QueueName` に `!Ref` を書くと URL が入り、権限が効きません。`!GetAtt OrdersQueue.QueueName` の形で書きます。
+- 環境変数のパラメータだけを変えても、新しい関数のバージョンが出ず、カナリアが動きません（[DeploymentPreference によるカナリア](#deployment-preference)）。
+
+### 例: 動画配信の 30 チャネルを CDK で作る {#use-case-video-cdk}
+
+**状況:** 月間 1,000 万再生のスポーツ動画配信です。競技ごとに 30 チャネルがあり、どのチャネルも「取り込み用バケット、変換の関数、配信用バケット」の同じ形です。シーズンごとにチャネルが増減します。開発者は TypeScript と Python に慣れた 6 人です。
+
+**構成:**
+
+| 階層 | 中身 |
+|---|---|
+| App | `dev` と `prod` の 2 アカウント、東京と大阪の 2 リージョン |
+| Stack | チャネル群のスタック、共通の監視のスタック |
+| Construct | 社内で作った `ChannelPipeline`（バケット 2 つと関数 1 つ）を、チャネルの一覧から `for` で 30 個作る |
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+|---|---|---|
+| ブートストラップ | 2 アカウント × 2 リージョン = 4 回 | 環境ごとにアセットの置き場が要る（[ブートストラップ](#cdk-bootstrap)） |
+| `--require-approval` | 手元は `broadening`、CI は `never` | 権限が広がる変更は人が見る。CI では `cdk diff` の結果をレビューで確かめる |
+| `cdk.context.json` | Git に入れる | CI と手元で合成の結果をそろえる（[コンテキスト](#cdk-context)） |
+| assertions | 配信用バケットが 30 個、どれも公開アクセスをブロック | チャネル数の誤りと公開設定の漏れを、デプロイ前に見つける（[assertions によるテスト](#cdk-testing)） |
+
+**なぜこのサービスか:** YAML で 30 チャネルを書くと、同じ記述を 30 回コピーすることになり、1 か所の修正が 30 か所になります。CDK ならチャネルの一覧を変えるだけで増減でき、部品の修正は 1 か所で済みます。
+
+**つまずきやすい点:**
+
+- チャネルの ID をコンストラクトの ID に使い、競技名の変更で ID を変えると、論理 ID が変わってバケットが作り直されます（[アプリとスタック](#cdk-app-stack)）。
+- 大阪のリージョンを足したときにブートストラップを忘れると、`cdk deploy` が失敗します。
+- 開発で便利な `--hotswap` を本番の CI に入れると、スタックとのずれが生じます。
+
+### 例: 物流会社の運用チームが CLI で毎朝の棚卸しをする {#use-case-logistics-cli}
+
+**状況:** 全国 50 拠点の物流会社です。運用チーム 5 人が 12 アカウントを見ています。開発者が検証で作った EC2 や EBS ボリュームの消し忘れで、毎月の費用が想定を超えていました。チームの一部は、CLI を入れられない業務 PC を使っています。
+
+**構成:**
+
+| 工程 | 使うもの | 内容 |
+|---|---|---|
+| 認証 | IAM Identity Center のプロファイル | `aws sso login` で一時的な認証情報を得る。アクセスキーを置かない |
+| 取得 | `aws ec2 describe-instances`、`describe-volumes` | アカウントごとのプロファイルで順に呼ぶ |
+| 絞り込み | `--filters` と `--query` | サーバー側で状態を絞り、手元で項目を選ぶ |
+| 実行場所 | 手元の PC、または CloudShell | CLI を入れられない PC は CloudShell を使う |
+
+```bash
+for p in ops-store ops-ec ops-wms; do
+  aws ec2 describe-volumes --profile "$p" \
+    --filters Name=status,Values=available \
+    --query "Volumes[].{Id:VolumeId,GiB:Size,Created:CreateTime}" --output table
+done
+```
+
+**設定値:**
+
+| 設定 | 値 | 理由 |
+|---|---|---|
+| `--filters` | `Name=status,Values=available` | どの EC2 にも付いていないボリュームだけをサーバー側で返す |
+| `--output` | 人が見るなら `table`、集計なら `json` | 目視とスクリプトで使い分ける（[出力形式](#cli-output)） |
+| `AWS_PAGER` | 空 | スクリプトが `less` の待ちで止まらない |
+| `retry_mode` | `standard`（既定） | 12 アカウントを続けて呼んでも、一時的なエラーで止まりにくい |
+
+**なぜこのサービスか:** 棚卸しは「今どうなっているか」を見るだけで、何かを作るわけではありません。テンプレートより CLI のスクリプトが向いています。消す操作は、ボリュームを確かめてから人が実行します。
+
+**つまずきやすい点:**
+
+- 環境変数に古い `AWS_ACCESS_KEY_ID` が残っていると、プロファイルを替えても同じアカウントを見続けます。`aws sts get-caller-identity` で確かめます（[設定ファイルと優先順位](#cli-config)）。
+- `--filters` を使わず `--query` だけで絞ると、全件を受け取ってから絞るので遅くなります。
+- CloudShell で長いループを流したまま操作しないと、20〜30 分でセッションが終わります（[CloudShell](#cloudshell)）。
+
 ## CloudFormation テンプレート {#cloudformation-template}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
@@ -271,6 +469,8 @@ MasterUserPassword: "{{resolve:secretsmanager:my-db-secret:SecretString:password
 
 `Mappings` はテンプレート内の固定の表で、`!FindInMap` で読みます。リージョンや環境ごとの値に使います。
 
+**使う場面:** 東京と大阪で同じ構成を動かす決済代行の会社で、リージョンごとの AMI の ID やインスタンスの種類を表にし、`Stage` が `prod` のときだけ Multi-AZ にする。
+
 `Conditions` は `!Equals`、`!And`、`!Or`、`!Not` で定義します。使い方は 2 つです。
 
 - リソースや出力に `Condition: IsProd` と書き、作るかどうかを決める
@@ -286,6 +486,8 @@ MasterUserPassword: "{{resolve:secretsmanager:my-db-secret:SecretString:password
 ### 出力とエクスポート {#outputs-exports}
 
 `Outputs` の値に `Export` を付けると、別のスタックから `!ImportValue` で参照できます。
+
+**使う場面:** ネットワーク担当のチームが作った VPC とサブネットの ID を、EC サイトの 5 つのアプリのスタックが読む。
 
 ネットワークとアプリのように、管理するチームや変更の頻度が違うものは、スタックを分けます。そのとき、VPC の ID をメールや表で受け渡すと、写し間違いや、使われている VPC を消す事故が起きます。エクスポートは値を直接渡し、使われている間は消せないようにします。
 
@@ -459,6 +661,8 @@ flowchart TD
 
 CloudFormation から見えるのは、EC2 の API が「インスタンスを起動した」と返したところまでです。中のアプリが動いたかは分かりません。そのまま完了にすると、壊れたサーバーで本番が始まります。
 
+**使う場面:** 社内の勤怠システムで、アプリの導入に 10 分かかる EC2 を、`cfn-signal` が届くまでスタックの完了として扱わず、後続のリソースも作らせない。
+
 CreationPolicy は、サーバーの中から「準備ができた」という合図(シグナル)が届くまで、完了を待たせる仕組みです。オンプレミスで構築担当が「動作確認が済んだ」と報告するまで、次の作業に進まないのに当たります。
 
 ```mermaid
@@ -587,6 +791,8 @@ Instance:
 
 CloudFormation にない処理を Lambda か SNS で実行します。種類は `AWS::CloudFormation::CustomResource` か `Custom::名前` です。
 
+**使う場面:** 決済 SaaS で、スタックを作るときに外部の監視サービスへ API でホストを登録し、スタックを消すときに登録も消す。
+
 CloudFormation が対応していない設定や、外部のシステムへの登録が 1 つあるだけで、そこだけ手順書に戻ると、IaC の利点が崩れます。カスタムリソースは、その処理を自作の関数に任せ、スタックの作成、更新、削除と同じ流れに組み込みます。
 
 ```mermaid
@@ -714,6 +920,8 @@ aws cloudformation execute-change-set \
 
 更新時の保護です。削除からの保護ではありません。
 
+**使う場面:** 会員 50 万人のネットスーパーで、注文テーブルの置き換えと削除だけを禁止し、他のリソースは普段どおり更新する。
+
 テンプレートを書き換えられる人は、誤って DB を置き換える変更も出せてしまいます。スタックポリシーは、IAM の権限とは別に、スタックの中の特定のリソースに「この種類の更新はさせない」という線を引きます。サーバールームの中で、本番 DB のラックだけ施錠しておくのに近い考え方です。
 
 | 状態 | 動作 |
@@ -769,6 +977,8 @@ aws cloudformation execute-change-set \
 ### ドリフト検出 {#drift}
 
 手作業の変更などで、実際の設定がテンプレートとずれた状態を検出します。
+
+**使う場面:** 夜間の障害対応でセキュリティグループを手で開けた翌朝に、テンプレートとの差分を一覧にして、戻すかテンプレートに入れるかを決める。
 
 障害対応で急いでコンソールから直すと、テンプレートには残りません。次のデプロイでその修正が上書きされて障害が再発する、という事故の元になります。オンプレミスで、構成管理の台帳と実機の設定が食い違うのと同じ問題です。
 
@@ -913,6 +1123,8 @@ stateDiagram-v2
 ### ロールバックトリガー {#rollback-triggers}
 
 スタック操作の間と、完了後の監視時間に CloudWatch アラームを見張ります。アラームが `ALARM` になるとスタック全体を戻します。
+
+**使う場面:** オンライン英会話のサービスで、ALB の設定を変えた後 15 分の 5XX を見張り、レッスン中の生徒に影響が出たら構成ごと戻す。
 
 リソースの作成に成功しても、サービスが正しく動いているとは限りません。リリース後にエラー率を見張り、悪化したら切り戻す作業を、人の判断を待たずに自動で行うための仕組みです。
 
@@ -1106,6 +1318,8 @@ Resources:
 ### Events {#sam-events}
 
 `AWS::Serverless::Function` の `Events` の `Type` は次のとおりです。
+
+**使う場面:** 不動産仲介の会社で、物件写真のアップロード（`S3`）でサムネイルを作り、毎晩 2 時（`ScheduleV2`）に掲載期限切れの物件を非公開にする。
 
 | 種類 | 例 |
 |---|---|
@@ -1691,6 +1905,8 @@ Lambda のコードやコンテナイメージは、テンプレートに直接�
 
 ### コンテキスト {#cdk-context}
 
+**使う場面:** 既存の VPC に新しいサービスを足す保険会社で、`Vpc.from_lookup` の結果を `cdk.context.json` に固定し、CI と手元で同じサブネットに作る。
+
 | 指定 | 内容 |
 |---|---|
 | `cdk.json` | プロジェクトの設定と機能フラグ |
@@ -1765,6 +1981,8 @@ def test_lambda_settings():
 ### プロファイル {#cli-profiles}
 
 設定は `~/.aws/config` と `~/.aws/credentials` に保存します。`config` では `[profile 名前]`、`credentials` では `[名前]` と書きます。
+
+**使う場面:** 開発、ステージング、本番の 3 アカウントを持つ SaaS の開発者が、`--profile` で行き先を切り替え、本番だけは読み取り用のロールで入る。
 
 ```ini
 [default]
@@ -1930,6 +2148,8 @@ aws lambda list-functions \
 ### ページネーション {#cli-pagination}
 
 CLI は既定で複数の API 呼び出しを行い、全件を集めて返します。
+
+**使う場面:** ログを 500 万オブジェクト持つバケットの中身を、`--max-items 1000` と `--starting-token` で少しずつ確かめる。
 
 | オプション | 動作 |
 |---|---|

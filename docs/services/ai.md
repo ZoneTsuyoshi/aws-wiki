@@ -58,6 +58,203 @@ flowchart LR
 | C03 4.1.5 | [エラー分析](#ai-troubleshooting) |
 | C03 4.3.6 | [最適化](#ai-optimization) |
 
+## 使いどころと具体例 {#use-cases}
+
+このページのサービスは、「アプリに生成 AI を組み込む」（Bedrock、AgentCore）、「業務ユーザーがそのまま使う」（Quick）、「開発そのものを AI に手伝わせる」（Kiro）の 3 つに分かれます。どれを選ぶかは、誰が使い、どこまで自分で作るかで決まります。
+
+| 場面 | 具体例 | 使う機能 |
+|---|---|---|
+| 利用者の質問に画面で答えたい | ネットスーパーの問い合わせチャットで、返品や配送の質問に文字を順に表示しながら答える | [ConverseStream](#streaming)、[Knowledge Bases](#knowledge-bases) |
+| 社内規程に根拠付きで答えたい | 銀行の行員が、融資の事務手続きを規程の引用付きで調べる | [RetrieveAndGenerate](#knowledge-bases)、[フィルター](#kb-params) |
+| 個人情報を AI に渡したくない | 保険の問い合わせ文のメールアドレスと証券番号を隠してからモデルに渡す | [機密情報フィルター](#guardrail-policy-settings)、[ApplyGuardrail](#apply-guardrail) |
+| 規制で答えてはいけない話題がある | 証券会社のチャットが特定の銘柄を勧めないようにする | [拒否トピック](#guardrail-policy-settings) |
+| インターネットを通さずに呼びたい | 閉域網だけで動く銀行の勘定系の周辺システムから Bedrock を呼ぶ | [VPC エンドポイント](#privatelink)、[`aws:SourceVpce`](#iam-actions) |
+| 予約や返金まで AI に任せたい | ホテルの予約変更や、上限付きの返金をエージェントに実行させる | [AgentCore](#agentcore-components)、[Policy](#tool-authorization)、[人による承認](#human-in-the-loop) |
+| 大量の文章を急がずに処理したい | 動画メディアで、過去の記事 30 万本の要約とタグを週末に作る | [バッチ](#throughput-options)、[Flex](#throughput-options) |
+| 部門ごとの AI の費用を分けたい | 検索、サポート、営業の 3 部門の Bedrock の費用を毎月配賦する | [アプリケーション推論プロファイル](#model-identifiers) |
+| 何が返ったかを後から調べたい | 誤回答の苦情を受けて、その日の入力と応答を確認する | [呼び出しログ](#invocation-logging)、[データ保護](#cloudwatch-data-protection) |
+| 開発チームの規約を AI に守らせたい | 家計簿アプリの開発で、AI が書くコードに社内の規約とテストを必ず通す | [Kiro の Steering と Hooks](#kiro) |
+| 業務ユーザーが自分で使いたい | 製造業の営業が、受注データと社内資料からチャットで週報を作る | [Amazon Quick](#quick) |
+
+使わない方がよい場面、またはこのページ以外の選択肢が合う場面です。
+
+| 場面 | 理由 | 代わりの選択肢 |
+|---|---|---|
+| 請求書の合計額を 100 万枚から確実に取りたい | 出力の形をそろえる検証が要り、決まった項目の抽出なら専用のサービスが向く | [Textract](ai-managed-services.md#textract) |
+| 新しく Bedrock Agents でエージェントを作りたい | Agents Classic は新規の受付を終了している | [AgentCore](#agentcore-components) |
+| 税額や在庫数のように確定した値を出したい | FM は同じ入力にも違う答えを返す | 通常のプログラム（[AI を使わない判断](ai-fundamentals.md#when-not-ai)） |
+| 1 日数件の要約にバッチを使いたい | バッチには 1 ジョブの最小件数のクォータがあり、結果も後で受け取る形になる | オンデマンドの [Converse](#converse) |
+| 社員が文書を検索するだけのために画面から作りたい | 画面、権限の連携、データソースの接続を自分で作ることになる | [Amazon Quick](#quick) |
+| システムプロンプトだけで個人情報の出力を防ぎたい | モデルが必ず従うとは限らない | [Guardrails](#guardrails-why) |
+
+### 例: ネットスーパーの問い合わせチャット {#use-case-support-chat}
+
+**状況:** 会員 50 万人のネットスーパーです。問い合わせは 1 日 6,000 件で、夕方 17〜19 時に 1 時間 1,200 件まで増えます。返品、配送、ポイントの規定は 80 ページあり、月に 2〜3 回更新されます。オペレーターは 12 人です。
+
+**構成:**
+
+```mermaid
+sequenceDiagram
+    participant U as 会員
+    participant A as アプリ
+    participant K as Knowledge Bases
+    participant B as Bedrock
+    U->>A: 冷凍食品は返品できますか
+    A->>K: Retrieve（規定だけ、5 件）
+    K-->>A: 関連するチャンク
+    A->>B: ConverseStream（guardrailConfig 付き）
+    B-->>A: 文字を順に返す
+    A-->>U: 回答と規定へのリンク
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+|---|---|---|
+| API | `ConverseStream` | 最初の文字を早く出して待ち時間を短く感じさせる（[ストリーミング](#streaming)） |
+| `maxTokens` | 800 | 回答は 300 トークン程度。大きすぎるとクォータの予約が増える（[クォータ](#errors-throttling-why)） |
+| `temperature` | 0.2 | 規定の回答をそろえる（[inferenceConfig](#inference-config)） |
+| `numberOfResults` | 5 | 既定のまま。根拠が足りない質問が多ければ 10 にする（[KB のパラメータ](#kb-params)） |
+| ガードレール | 版 `"3"` を固定、機密情報は `ANONYMIZE`、グラウンディング 0.7 | `DRAFT` を本番で指定しない（[バージョン](#guardrail-versions)） |
+| リトライ | `adaptive`、最大 5 回 | 夕方のピークの 429 を吸収する（[Converse の例](#converse)） |
+| 監視 | `EstimatedTPMQuotaUsage` が TPM の 80% でアラーム | ピーク前に容量不足に気づく（[メトリクス](#bedrock-metrics)） |
+
+**なぜこのサービスか:** 規定が月に何度も変わるので、モデルを作り直さずに済む RAG（Knowledge Bases）が合います。画面と会員の認証は自社のアプリにあるので、完成品の Quick ではなく Bedrock を組み込みます。
+
+**つまずきやすい点:** ストリーミングの途中で `throttlingException` が届くと、HTTP は 200 のままです。ループの中で例外を処理しないと、途中で切れた回答を正常として表示します。また、`stopReason` が `guardrail_intervened` でもマスクだけのことがあるので、一律に「お答えできません」にしません。
+
+### 例: 銀行の行員向け規程検索を閉域で {#use-case-bank}
+
+**状況:** 行員 6,000 人の地方銀行です。融資や口座の事務規程が 2,500 ファイルあり、行員が 1 日 3,000 回ほど調べます。社内の方針で、業務システムからインターネットへは出られません。監査部門は「AI が何を答えたか」を 1 年間確認できるようにすることを求めています。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    A["行内の業務端末"] --> B["VPC 内のアプリ<br/>NAT なし"]
+    B --> C["bedrock-runtime の<br/>VPC エンドポイント"]
+    B --> D["bedrock-agent-runtime の<br/>VPC エンドポイント"]
+    C --> E["Bedrock"]
+    D --> F["Knowledge Bases"]
+    E --> G["呼び出しログ"]
+    G --> H["CloudWatch Logs<br/>データ保護でマスク"]
+    G --> I["S3<br/>SSE-KMS、1 年保持"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+|---|---|---|
+| エンドポイント | `bedrock-runtime` と `bedrock-agent-runtime` の両方 | `Retrieve` は `bedrock-runtime` だけでは届かない（[VPC エンドポイント](#privatelink)） |
+| IAM の条件 | `aws:SourceVpce` でエンドポイントを限定 | `aws:SourceIp` はエンドポイント経由で使えない |
+| 推論の場所 | 宛先リージョンを `GetInferenceProfile` で確かめたプロファイル | データの所在の要件があるので `global` は選ばない（[推論プロファイル](#model-identifiers)） |
+| 拒否トピック | 「特定の金融商品の勧誘」 | 行員がそのまま顧客に伝えると規制に触れる |
+| ガードレールの層 | Standard | 日本語のコンテンツフィルターと拒否トピックは Standard 層が対応する |
+| 呼び出しログ | 有効。CloudWatch Logs は 90 日、S3 は 1 年 | 既定は無効。保持期間で漏えいの範囲を絞る（[ログの保護](#log-protection)） |
+| データ保護 | 口座番号の正規表現と `EmailAddress` をマスク | 運用者に元の値を見せない。元の値は `logs:Unmask` を持つ監査担当だけ |
+
+**なぜこのサービスか:** 閉域の要件は VPC エンドポイントで満たせ、モデルの入出力は学習に使われません（[学習に使われるか](#training-use)）。完成品の Quick ではなく Bedrock を選ぶのは、行内の業務システムに組み込み、経路とログを自分で決める必要があるためです。
+
+**つまずきやすい点:** 推論プロファイルの名前の地域だけを見て選ぶと、想定外のリージョンが宛先に含まれていることがあります。公式も、呼び出し元の各リージョンから `GetInferenceProfile` で宛先を確かめるよう求めています。また、Guardrails のマスクは呼び出しログには効かないので、ログ側のデータ保護は別に必要です。
+
+### 例: ホテルチェーンの予約変更エージェント {#use-case-hotel-agent}
+
+**状況:** 国内 45 か所のホテルを運営する会社です。予約の変更とキャンセルの依頼が 1 日 2,500 件あります。予約の変更と、規定内の返金（1 件 2 万円まで）をエージェントに任せ、それを超える返金は人が承認します。
+
+**構成:**
+
+```mermaid
+flowchart TD
+    A["宿泊者のチャット"] --> B["AgentCore Runtime<br/>セッションごとに microVM"]
+    B --> C["AgentCore Gateway"]
+    C --> P{"Policy<br/>返金は 2 万円以下?"}
+    P -- はい --> D["予約 API、返金 API"]
+    P -- いいえ --> X["拒否して<br/>人の承認へ回す"]
+    B --> M["AgentCore Memory<br/>宿泊者ごとの好み"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+|---|---|---|
+| Policy | `context.input.amount <= 20000` の `permit` | 上限をエージェントのコードの外で強制する（[ツール利用の認可](#tool-authorization)） |
+| Policy のモード | 1 週間 `LOG_ONLY`、その後 `ENFORCE` | `permit` の漏れで正常な操作が止まらないか先に確かめる |
+| `idleRuntimeSessionTimeout` | 1800 | 宿泊者が日程を家族と相談する間に文脈が消えないようにする（[Runtime の設定](#agentcore-components)） |
+| `runtimeSessionId` | 予約ごとの UUID（36 文字） | 33 文字以上が必要。ユーザーとの対応はバックエンドで管理する |
+| Memory の `actorId` | 会員 ID ごと | 他の宿泊者の好みが混ざらないようにする |
+| Runtime への直接の呼び出し | 禁止 | Gateway を迂回されると Policy が効かない |
+
+**なぜこのサービスか:** 新規の Bedrock Agents Classic は受け付けていないので AgentCore を使います。返金の上限のような規則は、モデルへの指示ではなく Policy で判定すると、モデルが誤った引数を作っても止まります。
+
+**つまずきやすい点:** 人が 1 万 5,000 円の返金を承認した後、モデルが引数を 15 万円に書き換えることがあります。承認後の実行の直前に、アプリが承認済みの金額と照合します（[人による承認](#human-in-the-loop)）。
+
+### 例: 動画メディアの記事の一括要約 {#use-case-media-batch}
+
+**状況:** 月間 1,000 万再生の動画メディアです。過去の記事と動画の書き起こしが 30 万本あり、検索とおすすめのために、要約 200 字とタグ 5 個を付け直したいと考えています。結果は月曜の朝までにあればよく、急ぎません。
+
+**構成:**
+
+```mermaid
+flowchart LR
+    A["S3 に JSONL<br/>recordId 付き"] --> B["CreateModelInvocationJob"]
+    B --> C["Bedrock バッチ"]
+    C --> D["S3 に結果"]
+    C -->|"状態の変化"| E["EventBridge"]
+    E --> F["Lambda が<br/>recordId で結合"]
+    F --> G["記事 DB を更新"]
+```
+
+**設定値:**
+
+| 項目 | 値 | 理由 |
+|---|---|---|
+| 方式 | バッチ（`CreateModelInvocationJob`） | 大量で即時性が要らない（[バッチの設定](#throughput-options)） |
+| `timeoutDurationInHours` | 72 | 金曜の夜に投入し、週末に終わればよい。範囲は 24〜168 |
+| `recordId` | 記事 ID | 出力の順序は入力と同じとは限らないので、ID で結合する |
+| 完了の検知 | EventBridge | `GetModelInvocationJob` をポーリングしない |
+| 新着記事の要約 | オンデマンドの `serviceTier: flex` | 1 日 300 本程度。少し遅くてもよいので割引の層にする |
+
+**なぜこのサービスか:** 30 万本を 1 件ずつオンデマンドで呼ぶと、TPM のクォータを長時間使い続け、利用者向けの機能の容量を圧迫します。バッチに預ければ、その心配がありません。
+
+**つまずきやすい点:** 出力の 1 行目が入力の 1 行目の結果だと思い込むと、別の記事の要約を付けてしまいます。また、`Converse` 形式のバッチで `toolConfig` を指定すると 400 エラーになるので、タグは JSON の出力形式の指示で受け取ります。
+
+### 例: 家計簿アプリの SaaS の開発チーム {#use-case-dev-team}
+
+**状況:** 利用者 120 万人の家計簿アプリを提供する SaaS の会社です。開発者は 25 人で、TypeScript のバックエンドとモバイルアプリを週 2 回リリースしています。AI に書かせたコードで、社内の規約違反とテスト漏れが目立ってきました。
+
+**構成:**
+
+| 置き場所 | 設定 | 目的 |
+|---|---|---|
+| `.kiro/steering/tech.md` | `inclusion: always`。パッケージ管理は pnpm、`any` は禁止 | 全員の AI に同じ規約を伝える（[Steering](#steering-modes)） |
+| `.kiro/steering/api-errors.md` | `inclusion: fileMatch`、`src/api/**/*.ts` | API のコードを扱うときだけ読み込み、文脈を節約する |
+| `.kiro/hooks/test-on-save.json` | `PostFileSave`、`matcher` は `\\.ts$`、`timeout` 180 | AI が変更したファイルのテストを毎回流す（[Hooks](#hooks-settings)） |
+| `.kiro/settings/mcp.json` | `autoApprove: ["search_docs"]`、`disabledTools: ["delete_page"]` | 読み取りだけを確認なしにする（[MCP](#mcp-settings)） |
+| CI | `kiro-cli` のヘッドレスモード、`--trust-tools=read_file,grep_search` | PR のレビューを読み取りの権限だけで行う（[CI/CD](#ai-cicd)） |
+
+**設定値の理由:** テストに 2 分半かかるので、Hook の `timeout` は既定の 60 秒から 180 秒に伸ばします。CI の `KIRO_API_KEY` はシークレットに入れ、ワークフローのファイルには書きません。
+
+**なぜこのツールか:** 規約を毎回の依頼に書くのは漏れやすく、人によって伝え方も変わります。Steering と Hooks をリポジトリに置けば、全員の AI に同じ前提とチェックがかかります。
+
+**つまずきやすい点:** File Save の Hook は AI による変更にしか反応しないので、人が手で直したファイルではテストが流れません。人の変更は従来どおり CI で確かめます。また、`autoApprove: ["*"]` にすると、書き込みのツールも確認なしで動きます。
+
+### 例: 製造業の営業部門の週報と問い合わせ {#use-case-quick}
+
+**状況:** 社員 2,000 人の産業機械メーカーで、営業は 150 人です。毎週、受注の表と商談のメモから週報を作るのに 1 人 2 時間かけています。製品の仕様書 1,200 ファイルは SharePoint にあり、顧客からの仕様の質問に答えるたびに探しています。IT 部門は 4 人で、新しいアプリを作る余力はありません。
+
+**構成:**
+
+| 業務 | Quick の機能 | 内容 |
+|---|---|---|
+| 仕様の質問 | Quick Index | SharePoint の仕様書を取り込み、根拠付きで答える |
+| 週報 | Quick Flows | 毎週金曜に受注の表を要約し、部門に送る |
+| 受注の状況確認 | コネクタ | 社内の受注 API の OpenAPI 仕様からコネクタを作る |
+| 値引きの申請 | Quick Automate | 値引き率が 15% を超えるものだけ部長の承認を挟む |
+
+**なぜこのサービスか:** 使うのは業務ユーザーで、画面や権限の連携を一から作る余力がありません。Bedrock で作ると、画面、認証、データソースの接続まで IT 部門が持つことになります（[3 階層](ai-managed-services.md#three-layers)）。開発者の仕事は、受注 API をコネクタとしてつなぐことに絞られます。
+
+**つまずきやすい点:** 仕様書の古い版が同じフォルダーに残っていると、廃止した型番の仕様で答えます。取り込む前に、置き場所を整理します。また、DVA-C03 の対象は Quick で、BI 機能の Quick Sight は対象外です。
+
 ## AI 支援開発ツール {#ai-dev-tools}
 
 AI に「この機能を作って」と頼むだけだと、AI は曖昧な部分を推測で埋めて、大量のコードを一気に書きます。人が後から読んで直すと、手で書くより手間がかかることもあります。AI 支援開発ツールは、AI に渡す前提（仕様、規約、使ってよい道具）と、AI の作業を確かめる仕組み（フック、テスト）をそろえるためにあります。
@@ -464,6 +661,8 @@ CloudTrail の記録は呼び出し元のリージョンに残り、`additionalE
 
 モデルはツールを直接呼びません。実行はアプリの役目です。
 
+**使う場面:** 通販のチャットで「注文 A-100 はいつ届く?」と聞かれたとき、モデルに `get_order` を要求させ、アプリが配送システムを呼んで結果を返す。
+
 ```mermaid
 sequenceDiagram
     participant A as アプリ
@@ -731,7 +930,7 @@ FM の容量は共有の資源なので、「急ぎかどうか」と「量が�
 
 **`CountTokens` の例:** 契約書を送る前に数え、コンテキストの上限を超えるなら先に分割します。
 
-**プロンプトキャッシュ:** 繰り返す長い文脈を再利用して、遅延と入力料金を下げます。`Converse` では `cachePoint` のブロックを置きます。TTL はヒットごとに延長され、モデルにより 5 分や 1 時間を選べます。結果は `usage` の `cacheReadInputTokens` と `cacheWriteInputTokens` で確認します。クォータの消費は `InputTokenCount` と `CacheWriteInputTokenCount` の合計で考えます。
+**プロンプトキャッシュ:** 繰り返す長い文脈を再利用して、遅延と入力料金を下げます。社内規定 5,000 トークンを毎回の質問の前に付ける問い合わせボットのように、同じ前置きが続く場面で効きます。`Converse` では `cachePoint` のブロックを置きます。TTL はヒットごとに延長され、モデルにより 5 分や 1 時間を選べます。結果は `usage` の `cacheReadInputTokens` と `cacheWriteInputTokens` で確認します。クォータの消費は `InputTokenCount` と `CacheWriteInputTokenCount` の合計で考えます。
 
 ```json
 {"system": [
@@ -962,6 +1161,8 @@ flowchart TD
 ### Bedrock API キー {#api-keys}
 
 AWS 署名の代わりにベアラートークンで認証できます。環境変数は `AWS_BEARER_TOKEN_BEDROCK` です。
+
+**使う場面:** SigV4 の署名に対応していない社外のツールから、検証の間だけ Bedrock を呼ぶ。本番のアプリは IAM ロールで呼びます。
 
 | 種類 | 有効期間 | 用途 |
 |---|---|---|
@@ -1357,6 +1558,8 @@ if resp["stopReason"] == "guardrail_intervened":
 
 ### ApplyGuardrail {#apply-guardrail}
 
+**使う場面:** 自社の GPU サーバーで動かすモデルや他社の API の回答を、Bedrock のモデルと同じ基準で検査する。RAG の検索結果やツールの結果を、モデルに渡す前に検査する。
+
 モデルを呼ばずに、任意のテキストをガードレールだけで評価する API です。Bedrock 以外のモデルの入出力や、RAG の検索前のチェックに使えます。IAM は `bedrock:ApplyGuardrail` です。
 
 ```python
@@ -1484,6 +1687,8 @@ permit (
 - **2LO と 3LO の例:** 社内の在庫 API をサービスとして呼ぶなら 2LO（ユーザーの同意なし）です。利用者本人のカレンダーを読むなら 3LO（ユーザーの同意あり）です。
 
 ### セッションの分離 {#session-isolation}
+
+**使う場面:** 複数の会社が使う経理のエージェントで、A 社の請求書のファイルや会話の内容が B 社のセッションから見えないようにする。
 
 AgentCore Runtime は、セッションごとに専用の microVM を用意します。CPU、メモリ、ファイルシステムが分離され、終了時に microVM を破棄してメモリを消去します。
 
@@ -1654,6 +1859,8 @@ flowchart LR
 ```
 
 ### モデル呼び出しログ {#invocation-logging}
+
+**使う場面:** 「チャットが誤った返金条件を案内した」という苦情を受けて、その時刻の入力と応答を確かめる。テナントごとの利用量を `requestMetadata` で絞り込んで集計する。
 
 - **既定は無効です。** `PutModelInvocationLoggingConfiguration` またはコンソールで、アカウントのリージョン単位に有効化します。
 - **送信先:** CloudWatch Logs、S3、または両方です。同じアカウント、同じリージョンに限られます。
