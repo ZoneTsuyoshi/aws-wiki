@@ -11,6 +11,7 @@ AWS の構成や運用をまとめる wiki。`docs/` の md を MkDocs Material 
 - 比較は表にする。
 - 図の中身は要点に絞る。1枚あたりノード10個程度を目安にし、多ければ図を分ける。
 - Mermaid はスマホで拡大できないので、シーケンス図の参加者は4つまでにする。フローチャートは項目が多ければ `flowchart TD` にする。
+- 略語は各ページの最初の1回に（正式名称）を付ける。md には手で書かず、`hooks/abbreviations.py` がビルド時に `data/abbreviations.json` の `terms` から付ける。新しい略語を使ったら `terms` に足す。文脈で意味が変わる略語は `when` で切り替え、略語を含む製品名（`SageMaker AI` など）は `keep` に足す。AWS と ID、単位（MB など）は付けない。
 
 ## ディレクトリの役割
 

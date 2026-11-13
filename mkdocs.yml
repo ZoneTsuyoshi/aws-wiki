@@ -36,6 +36,7 @@ extra_css:
 
 hooks:
   - hooks/search_scope.py
+  - hooks/abbreviations.py
 
 markdown_extensions:
   - admonition

@@ -359,9 +359,139 @@ resp = sts.get_session_token(
 
 方式ごとの具体例です。
 
-- **SAML の例:** 社内 IdP の属性 `https://aws.amazon.com/SAML/Attributes/Role` に、ロールと SAML プロバイダーの ARN の組を入れる。社員は IdP のサインイン後、コンソールに入る。
+- **SAML の例:** 社内 IdP の属性 `https://aws.amazon.com/SAML/Attributes/Role` に、ロールと SAML プロバイダーの ARN の組を入れる。社員は IdP のサインイン後、コンソールに入る。詳しくは [SAML 2.0 の具体例](#saml)を参照。
 - **OIDC の例:** `sub` を `repo:my-org/my-repo:ref:refs/heads/main` にすると、`main` ブランチのジョブだけが引き受けられる。`repo:my-org/my-repo:*` なら、同じリポジトリの他のブランチのジョブも通る。
 - **誤ると:** `sub`（または `job_workflow_ref`）の条件がなく `aud` だけの信頼ポリシーは、ロールの作成や更新のときに `MalformedPolicyDocument` で拒否される。この検査の前からある同じ形のロールは、GitHub の他の組織のジョブからも引き受けられる。`aud` の `sts.amazonaws.com` は全利用者で同じ値だからだ。
+
+### SAML 2.0 の具体例 {#saml}
+
+SAML は、IdP（社内の認証基盤）が「この人を認証した」という署名付きの XML 文書（アサーション）を発行し、受け取る側がそれを信じてサインインさせる標準です。
+
+ここでは、社員 3,000 人が Okta や Entra ID でサインインしている会社が、IAM ユーザーを作らずに AWS のコンソールへ入る例で説明します。
+
+```mermaid
+sequenceDiagram
+    participant B as 社員のブラウザ
+    participant I as 社内 IdP
+    participant S as AWS サインイン
+    participant T as STS
+    B->>I: AWS のアプリを選ぶ
+    I->>I: パスワードと MFA で認証
+    I-->>B: 署名付きの SAML 応答
+    B->>S: SAML 応答を POST
+    S->>T: AssumeRoleWithSAML
+    T-->>S: 一時認証情報
+    S-->>B: コンソールを表示
+```
+
+ブラウザが SAML 応答を AWS に運ぶだけで、IdP と AWS が直接通信する必要はありません。AWS は、事前に登録した IdP のメタデータにある公開鍵で署名を検証します。
+
+#### 準備するもの {#saml-setup}
+
+| 場所 | 設定 | 具体例 |
+| --- | --- | --- |
+| IAM | SAML プロバイダー | IdP からダウンロードしたメタデータ XML を登録し、名前を `CorpIdP` にする |
+| IAM | ロール | `Developer` と `ReadOnly` を作り、信頼ポリシーで `CorpIdP` を信頼する |
+| IdP | AWS をサービスプロバイダーとして登録 | 応答の送り先（ACS URL）を `https://ap-northeast-1.signin.aws.amazon.com/saml` にする |
+| IdP | 属性（クレーム）の設定 | `Role` と `RoleSessionName` を必ず送る。グループごとに `Role` の値を変える |
+
+AWS 側のメタデータは `https://signin.aws.amazon.com/static/saml-metadata.xml` から取得し、IdP に登録します。
+
+信頼ポリシーは次の形です。`SAML:aud` は、IdP が応答を送るサインインの URL と一致させます。
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": {
+    "Effect": "Allow",
+    "Action": ["sts:AssumeRoleWithSAML", "sts:TagSession"],
+    "Principal": {"Federated": "arn:aws:iam::111122223333:saml-provider/CorpIdP"},
+    "Condition": {
+      "StringEquals": {"SAML:aud": "https://ap-northeast-1.signin.aws.amazon.com/saml"}
+    }
+  }
+}
+```
+
+`sts:TagSession` は、IdP からセッションタグ（`PrincipalTag`）を渡すときに必要です。`SourceIdentity` を渡すなら `sts:SetSourceIdentity` も足します。
+
+#### アサーションの中身 {#saml-assertion}
+
+社員 alice が開発グループに属している場合、IdP は次のような属性を送ります。要点だけを抜き出しています。
+
+```xml
+<Subject>
+  <NameID Format="urn:oasis:names:tc:SAML:2.0:nameid-format:persistent">a1b2c3d4e5</NameID>
+  <SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
+    <SubjectConfirmationData NotOnOrAfter="2026-11-13T01:05:00Z"
+      Recipient="https://ap-northeast-1.signin.aws.amazon.com/saml"/>
+  </SubjectConfirmation>
+</Subject>
+<AttributeStatement>
+  <Attribute Name="https://aws.amazon.com/SAML/Attributes/Role">
+    <AttributeValue>arn:aws:iam::111122223333:role/Developer,arn:aws:iam::111122223333:saml-provider/CorpIdP</AttributeValue>
+    <AttributeValue>arn:aws:iam::111122223333:role/ReadOnly,arn:aws:iam::111122223333:saml-provider/CorpIdP</AttributeValue>
+  </Attribute>
+  <Attribute Name="https://aws.amazon.com/SAML/Attributes/RoleSessionName">
+    <AttributeValue>alice@example.com</AttributeValue>
+  </Attribute>
+  <Attribute Name="https://aws.amazon.com/SAML/Attributes/SessionDuration">
+    <AttributeValue>28800</AttributeValue>
+  </Attribute>
+  <Attribute Name="https://aws.amazon.com/SAML/Attributes/PrincipalTag:Project">
+    <AttributeValue>shop</AttributeValue>
+  </Attribute>
+</AttributeStatement>
+```
+
+この応答で起きることは次のとおりです。
+
+- `Role` に組が 2 つあるので、alice はサインイン後に `Developer` と `ReadOnly` のどちらかを選ぶ画面を見ます。
+- CloudTrail には `alice@example.com` の名前でセッションが記録されます。
+- コンソールのセッションは 8 時間（28,800 秒）続きます。
+- セッションに `Project=shop` のタグが付くので、`aws:PrincipalTag/Project` で ABAC の条件を書けます（[セッションタグ](#session-tags)）。
+
+| 属性・要素 | 必須 | 値の形と範囲 | 誤ったときの症状 |
+| --- | --- | --- | --- |
+| `Role` | 必須 | 「ロールの ARN,プロバイダーの ARN」の組。複数可 | 名前の大文字と小文字を間違えると、ロールが見つからずサインインできない |
+| `RoleSessionName` | 必須 | 2〜64 文字。英数字と `_ . , + = @ -`。空白は不可 | `Taro Yamada` のように空白を含む表示名を送ると失敗する |
+| `SessionDuration` | 任意 | 900〜43,200 秒。省略すると 1 時間 | 範囲外の値は失敗する。コンソールのセッションにだけ効き、API の認証情報は延ばせない |
+| `PrincipalTag:キー` | 任意 | セッションタグ。最大 50 個 | 信頼ポリシーに `sts:TagSession` がないと失敗する |
+| `SourceIdentity` | 任意 | 2〜256 文字。ロールの連鎖でも引き継がれ、変更できない | 信頼ポリシーに `sts:SetSourceIdentity` がないと失敗する |
+| `NotOnOrAfter` | 必須 | 応答の有効期限 | IdP の時計がずれて期限切れになると、サインインに失敗する |
+| `Recipient` | 必須 | AWS のサインインの URL | `SAML:aud` と一致しないと、信頼ポリシーで拒否される |
+
+`NameID` は CloudTrail に記録されるので、メールアドレスより、個人を特定しにくい `persistent` の ID を使うのが推奨です。
+
+#### CLI から使う例 {#saml-cli}
+
+コンソールだけでなく、IdP が発行した SAML 応答を使って CLI の一時認証情報も取れます。応答は Base64 のまま渡します。
+
+```bash
+aws sts assume-role-with-saml \
+  --role-arn arn:aws:iam::111122223333:role/Developer \
+  --principal-arn arn:aws:iam::111122223333:saml-provider/CorpIdP \
+  --saml-assertion file://saml-response.b64 \
+  --duration-seconds 3600
+```
+
+- **期間の例:** ロールの最大セッション時間が 4 時間なら、`--duration-seconds` は 900〜14,400 にする。`28800` を指定すると失敗する。
+- **短くなる例:** 応答の `SessionNotOnOrAfter` が 30 分後なら、`3600` を指定しても 30 分で切れる。短いほうが優先される。
+- **誤ると:** `AWSReservedSSO_` で始まる Identity Center のロールにはこの API を使えない。Identity Center の利用者は `aws sso login` を使う。
+
+#### Identity Center との違い {#saml-vs-identity-center}
+
+外部 IdP と AWS を SAML でつなぐ方法は 2 つあります。
+
+| 項目 | IAM の SAML フェデレーション | IAM Identity Center |
+| --- | --- | --- |
+| IdP の登録先 | アカウントごとの IAM | 組織に 1 つの Identity Center |
+| 30 アカウントに入るなら | 30 アカウントにプロバイダーとロールを作る | 権限セットを 30 アカウントに割り当てる |
+| ロールの選び方 | IdP の `Role` 属性で決める | アクセスポータルで選ぶ |
+| ユーザーの同期 | なし（毎回の応答だけで判断） | SCIM で同期できる |
+| 向いている場面 | 単一アカウント、Identity Center の障害時の緊急用 | 複数アカウントの従業員アクセス（推奨） |
+
+Identity Center に外部 IdP をつなぐときの設定は [ID ソース](identity-directory.md#idc-identity-sources)を参照してください。
 
 ### IAM Identity Center {#identity-center}
 
