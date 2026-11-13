@@ -8,9 +8,33 @@
 
 [![Step Functions のオーケストレーション](../assets/diagrams/step-functions-order.png)](../assets/diagrams/step-functions-order.png)
 
+## なぜ Step Functions か {#why}
+
+複数の処理をつなぐ手順を 1 つの Lambda 関数や、関数どうしの呼び出しで書くと、次の問題が出る。
+
+| 困りごと | コードで書くと起きること | Step Functions の仕組み |
+| --- | --- | --- |
+| 処理が 15 分を超える | Lambda のタイムアウトで打ち切られる | Standard は最大 1 年動く |
+| 人の承認や外部の完了を待つ | 待つ間も関数の実行時間に課金される | コールバックで、待つ間は動かずに止まる |
+| 再試行とエラー処理 | 各関数に同じような再試行のコードが散らばる | `Retry` と `Catch` を定義に書く |
+| どこまで進んだか分からない | ログを突き合わせて調べる | 実行履歴で状態ごとの入出力が見える |
+| 途中で失敗したら前の処理を取り消す | 補償の順序をコードで管理する | `Catch` から取り消しの状態へ進める |
+
+手順を「コード」ではなく「定義（状態遷移図）」として持ち、実行の進み具合の記録、待機、再試行をサービス側が受け持つ。その代わり、各状態の間で渡せるデータは 256 KiB までで、大きなデータは S3 に置く。
+
+オンプレミスでは、ジョブ管理ツール（ジョブスケジューラー）のジョブネットや、手順を順に呼ぶシェルスクリプトが近い。
+
+| | ジョブ管理ツールのジョブネット | Step Functions |
+| --- | --- | --- |
+| 同じ点 | 順序、分岐、並列、失敗時の分岐を定義する | 同じ。`Choice`、`Parallel`、`Catch` で書く |
+| 動かす場所 | ジョブ管理サーバーとエージェント | サーバーは不要 |
+| 各手順の中身 | サーバー上のスクリプトやコマンド | Lambda、ECS のほか、200 以上の AWS サービスの API を直接呼ぶ |
+| 手順の間のデータ | ファイルや終了コード | JSON の入出力 |
+| 料金 | ライセンスとサーバー | Standard は状態遷移の数、Express は実行回数と時間 |
+
 ## オーケストレーションとコレオグラフィー {#orchestration-choreography}
 
-複数のサービスを協調させる方法は2つある。
+複数のサービスを協調させる方法は2つある。オーケストラの指揮者が全員に合図を出すのがオーケストレーション、ダンサーが音楽（イベント）を聞いて各自で動くのがコレオグラフィーである。
 
 | | オーケストレーション | コレオグラフィー |
 | --- | --- | --- |
@@ -42,6 +66,21 @@ flowchart TD
 ## Standard と Express {#standard-express}
 
 作成時に選び、後から変更できない。既定は Standard。
+
+2 種類あるのは、「確実さ」と「量と安さ」を両立できないためである。Standard は状態遷移のたびに実行の状態を保存するので、正確に 1 回動き、1 年待てて、履歴も残る。その分、遷移ごとに課金される。Express は状態を保存しないので、大量の短い処理を安く速く回せるが、非同期では同じ処理が 2 回動くことがある。
+
+```mermaid
+flowchart TD
+    A[ワークフローの種類を選ぶ] --> B{5 分を超える?}
+    B -- はい --> STD[Standard]
+    B -- いいえ --> C{"人の承認、.sync、<br/>Distributed Map を使う?"}
+    C -- はい --> STD
+    C -- いいえ --> D{"処理は冪等?<br/>決済のように二重実行が困る?"}
+    D -- 二重実行が困る --> STD
+    D -- 冪等 --> E{結果をその場で返す?}
+    E -- はい --> SYNC[同期 Express]
+    E -- いいえ --> ASYNC[非同期 Express]
+```
 
 | | Standard | Express |
 | --- | --- | --- |
@@ -106,6 +145,8 @@ sfn.start_execution(
 ## Amazon States Language {#asl}
 
 ワークフローは JSON の Amazon States Language（ASL）で定義する。`StartAt` が最初の状態で、`States` に各状態を書く。
+
+手順をプログラムではなくデータ（JSON）で書くので、コンソールでそのまま図として表示でき、実行中にどの状態にいるかも図の上で見える。また、再試行や待機をサービスが解釈して実行できる。代わりに、複雑な計算は Lambda に任せるか、JSONata の式で書く。
 
 ```json
 {
@@ -302,6 +343,8 @@ JSONata では、`InputPath`、`Parameters`、`ResultSelector`、`ResultPath`、
 
 ### 変数 {#variables}
 
+変数がないと、後の状態で使う値を、途中のすべての状態の入出力に載せて運び続ける必要がある。途中の 1 つの状態が `ResultPath` を誤ると、その値は消える。変数はこのバケツリレーをなくすための仕組みである。
+
 `Assign` で変数に保存すると、後の状態で `$name` として読める。`Pass`、`Task`、`Map`、`Parallel`、`Choice`、`Wait` で使える。
 
 ```json
@@ -317,6 +360,8 @@ JSONata では、`InputPath`、`Parameters`、`ResultSelector`、`ResultPath`、
 - **計算例（サイズ）:** 200 KiB の変数は 1 つなら入る。60 個作ると 12,000 KiB で、実行全体の 10 MiB を超えて失敗する。大きなデータは S3 に置く。
 
 ### Map の設定 {#map-settings}
+
+配列の要素ごとに同じ手順を並列に回す。ループと並列数の制御を自分で書かずに済み、`MaxConcurrency` で下流の API を守る速さに抑えられる。データが大きい、件数が多いときは、各要素を子の実行に分ける Distributed にする。
 
 | 設定 | 内容 |
 | --- | --- |
@@ -402,6 +447,28 @@ JSONata では、`InputPath`、`Parameters`、`ResultSelector`、`ResultPath`、
 ## エラー処理 {#error-handling}
 
 状態でエラーが起きると、既定では実行全体が失敗する。`Retry` と `Catch` を `Task`、`Parallel`、`Map` に書いて制御する。
+
+再試行とエラー処理を各関数のコードではなく定義に書くのは、処理の中身と、失敗したときの方針を分けるためである。関数は自分の仕事だけを書き、「何回、何秒おきに再試行し、だめならどこへ進むか」はワークフロー全体の見通しの中で決める。
+
+| | プログラムの try/except | `Retry` と `Catch` |
+| --- | --- | --- |
+| 同じ点 | エラーの種類ごとに処理を分ける | `ErrorEquals` でエラー名ごとに分ける |
+| 再試行 | ループと待機を自分で書く | 回数、間隔、倍率、ジッターを指定するだけ |
+| 待っている間 | プロセスが動き続ける | 実行は止まって待つ。Lambda の時間は使わない |
+| 捕まえられないもの | 言語による | `States.Runtime` と、実行全体のタイムアウト |
+
+1 つの状態でエラーが起きると、次の順に判定される。
+
+```mermaid
+flowchart TD
+    E[状態でエラー] --> R{Retry に一致する<br/>ErrorEquals がある?}
+    R -- はい --> M{その項目の<br/>MaxAttempts が残っている?}
+    M -- はい --> W[間隔を空けて再試行] --> T[同じ状態をやり直す]
+    M -- いいえ --> C
+    R -- いいえ --> C{Catch に一致する<br/>ErrorEquals がある?}
+    C -- はい --> N[Catch の Next へ進む]
+    C -- いいえ --> F[実行全体が失敗]
+```
 
 ```json
 {
@@ -491,6 +558,18 @@ Lambda を呼ぶ状態には、一時的なサービスのエラーの再試行�
 
 **Saga の例:** 決済 → 在庫 → 配送の順で、配送が失敗したとする。配送の `Catch` から `ReleaseStock`、`RefundPayment` の順に進み、最後に `Fail` で終わる。
 
+```mermaid
+flowchart TD
+    P[Charge: 決済] --> S[ReserveStock: 在庫を確保]
+    S --> D[Ship: 配送を依頼]
+    D --> OK[Succeed]
+    D -. "Catch: 配送の失敗" .-> RS[ReleaseStock: 在庫を戻す]
+    RS --> RP[RefundPayment: 返金する]
+    RP --> F[Fail]
+```
+
+複数のサービスにまたがる処理は、1 つの DB トランザクションのようにまとめて取り消せない。そこで、成功した手順を逆の順で打ち消す処理を用意する。これが Saga で、取り消しの順序を図として持てる点がオーケストレーションの利点になる。
+
 - **例（順序）:** `Catch` も配列で上から見る。`{"ErrorEquals": ["OutOfStock"], "Next": "Backorder"}` を先に、`States.ALL` を最後に書く。
 - **誤ると（`ResultPath` なし）:** 次の状態の入力が `{"Error": "...", "Cause": "..."}` だけになり、`$.orderId` を読めなくなる。
 
@@ -516,6 +595,8 @@ Lambda を呼ぶ状態には、一時的なサービスのエラーの再試行�
 - **`Lambda.Unknown` の例:** 未処理のエラーの古い名前で、新しいランタイムでは関数のタイムアウトが `Sandbox.Timedout` で届く。両方を書くか、`States.TaskFailed` や `States.ALL` で受ける。
 
 ### タイムアウトとハートビート {#timeouts}
+
+Step Functions は待つことが得意なので、相手が応答しないと、いつまでも待ち続けてしまう。タイムアウトは「いつ諦めるか」、ハートビートは「相手がまだ生きているか」を決める設定である。
 
 | 設定 | 既定 | 内容 |
 | --- | --- | --- |
@@ -565,6 +646,8 @@ aws stepfunctions update-state-machine \
 
 `Task` の `Resource` の書き方で、待ち方が変わる。
 
+呼び出す相手には、すぐ終わる API、時間のかかるジョブ、人や外部システムのように終わりが読めない処理がある。待ち方を 3 つに分けるのは、どれも同じ方法（ポーリングのループを書くなど）で待たせずに済むようにするためである。
+
 | パターン | Resource の例 | 動き | 対応 |
 | --- | --- | --- | --- |
 | Request Response | `arn:aws:states:::sns:publish` | HTTP 応答を受けたらすぐ次へ | Standard、Express |
@@ -591,6 +674,23 @@ aws stepfunctions update-state-machine \
 ### コールバック（waitForTaskToken） {#wait-for-callback}
 
 外部の処理が終わるまで、課金を増やさず待つ仕組み。トークンを相手に渡し、相手が API で返す。
+
+クリーニング店の引換券に近い。預けるときに券（タスクトークン）を受け取り、仕上がったら券を出して引き取る。券がないと、どの預け物か分からない。
+
+```mermaid
+sequenceDiagram
+    participant S as Step Functions
+    participant Q as SQS
+    participant W as ワーカー
+    S->>Q: SendMessage（TaskToken 付き）
+    Note over S: 待機。状態遷移は増えない
+    W->>Q: ReceiveMessage
+    loop 長い処理の間
+        W->>S: SendTaskHeartbeat
+    end
+    W->>S: SendTaskSuccess（TaskToken、結果）
+    Note over S: 次の状態へ進む
+```
 
 ```json
 {

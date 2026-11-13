@@ -6,6 +6,45 @@
 
 [![SAM でのデプロイの流れ](../assets/diagrams/iac-sam-deploy.png)](../assets/diagrams/iac-sam-deploy.png)
 
+## なぜ IaC を使うのか {#why-iac}
+
+コンソールでの手作業と手順書による構築を、テキストのコードに置き換えるためです。コードにすると、同じ構成を何度でも同じように作れ、変更の履歴をソースコードと同じように残せます。
+
+#### なぜ必要か {#why-iac-why}
+
+| 困りごと | 手作業と手順書だと起きること | IaC での解決 |
+|---|---|---|
+| 本番と同じ検証環境が欲しい | 手順の読み違いや抜けで、少しずつ違う環境ができる | 同じテンプレートから作る |
+| 大阪にも同じ構成を作りたい | 100 個の設定を記録し、もう一度クリックし直す | パラメータを変えて別のスタックを作る |
+| 誰が、いつ、何を変えたか知りたい | 手順書の更新が漏れ、実機と食い違う | Git の履歴とレビューで追える |
+| 変更が失敗したら戻したい | 元の設定を覚えていないと戻せない | 前のテンプレートに戻す。失敗したら自動でロールバック |
+| 作る順番を考えたくない | サブネットより先に EC2 を作ろうとして失敗する | 依存関係を CloudFormation が判断する |
+| 使い終わった環境を片付けたい | 消し忘れたリソースに課金が続く | スタックを消せば中のリソースがまとめて消える |
+
+#### 手作業との対比 {#why-iac-compare}
+
+| 手作業の世界 | IaC での対応 | 違う点 |
+|---|---|---|
+| 設計書、パラメータシート | テンプレート | そのまま実行できる。読み違いがない |
+| 手順書に沿った構築作業 | スタックの作成 | 作る順番は CloudFormation が決める |
+| 変更申請と作業前の影響確認 | 変更セット | 置き換えになるかが事前に出る |
+| 切り戻し手順 | 自動のロールバック | 失敗すると既定で元に戻る |
+| 実機と台帳の突き合わせ | ドリフト検出 | 差分を自動で一覧にする |
+| 環境ごとの設計書のコピー | パラメータ、`samconfig.toml` | 1 つのテンプレートを共有する |
+
+```mermaid
+flowchart LR
+    G["テンプレート<br/>Git で管理"] --> R["レビュー"]
+    R --> C["変更セット<br/>影響を確認"]
+    C --> S["スタック"]
+    S --> AWS["AWS のリソース"]
+    AWS -. "手作業の変更は<br/>ドリフトとして検出" .-> S
+```
+
+IaC は、宣言型の考え方です。「どう作るか」の手順ではなく、「最終的にどうあるべきか」を書きます。CloudFormation が今の状態との差を計算し、必要な作成、変更、削除を決めます。
+
+その代わり、テンプレートの外で手を加えると、テンプレートと実機がずれます。「変更は必ずテンプレートから」という運用の約束とセットで効果が出ます。
+
 ## どれを使うか {#choosing}
 
 | ツール | 書き方 | 向いている場面 |
@@ -16,7 +55,19 @@
 | AWS CLI | コマンド | API の単発実行、スクリプト、確認 |
 | CloudShell | ブラウザ上のシェル | 環境構築なしで CLI を使う |
 
-SAM も CDK も、最終的には CloudFormation のテンプレートとしてデプロイされます。
+SAM も CDK も、最終的には CloudFormation のテンプレートとしてデプロイされます。書き方の違う入口が、同じ土台に集まる関係です。
+
+```mermaid
+flowchart TD
+    SAM["SAM テンプレート<br/>短い YAML"] -- "Transform で展開" --> T["CloudFormation テンプレート"]
+    CDK["CDK のコード<br/>Python、TypeScript"] -- "cdk synth" --> T
+    YAML["手書きの YAML"] --> T
+    T --> CFN["CloudFormation<br/>スタックを作成、更新"]
+    CLI["AWS CLI"] -. "API を直接呼ぶ<br/>状態は管理しない" .-> API["AWS の API"]
+    CFN --> API
+```
+
+CLI は API を 1 回ずつ呼ぶだけで、何を作ったかを覚えません。繰り返し作る構成はテンプレートに、確認や単発の操作は CLI に、と分けます。
 
 - **CloudFormation の例:** VPC、サブネット、RDS をまとめて管理し、YAML でレビューしたい基盤チームに向きます。
 - **SAM の例:** Lambda 3 つと API を 40 行ほどで書き、`sam local invoke` で手元で試します。
@@ -32,9 +83,22 @@ SAM も CDK も、最終的には CloudFormation のテンプレートとして�
 
 - **例:** 東京で作ったスタックは、東京のコンソールにしか出ません。同じ構成を大阪にも作るなら、大阪にも別のスタックを作ります。
 
+テンプレートは建物の設計図、スタックは設計図から建てた 1 棟の建物にたとえられます。同じ設計図から何棟でも建てられ、取り壊すときは 1 棟ずつまとめて壊します。
+
 ### セクション {#template-sections}
 
 必須は `Resources` だけです。
+
+ほかのセクションは、1 つのテンプレートを環境ごとに使い回すためにあります。値を外から受け取り、表で引き、条件で切り替え、結果を外へ渡す、という流れです。
+
+```mermaid
+flowchart LR
+    P["Parameters<br/>外から受け取る"] --> R["Resources<br/>作るもの"]
+    M["Mappings<br/>固定の表"] --> R
+    C["Conditions<br/>作るかどうか"] --> R
+    P --> C
+    R --> O["Outputs<br/>外へ渡す"]
+```
 
 | セクション | 役割 |
 |---|---|
@@ -143,6 +207,8 @@ Rules:
 
 ### パラメータ {#parameters}
 
+環境ごとに違う値をテンプレートの外に出し、テンプレート自体は 1 つにするための仕組みです。設計書を環境の数だけコピーすると、片方だけ直す漏れが起きます。値の型や範囲を検証できるので、誤った値はリソースを作る前に止まります。
+
 - `Type`: `String`、`Number`、`List<Number>`、`CommaDelimitedList` など
 - `AWS::EC2::VPC::Id` のような AWS 固有の型は、値を検証してくれる
 - `AWS::SSM::Parameter::Value<String>` で Parameter Store の値を読める
@@ -221,6 +287,15 @@ MasterUserPassword: "{{resolve:secretsmanager:my-db-secret:SecretString:password
 
 `Outputs` の値に `Export` を付けると、別のスタックから `!ImportValue` で参照できます。
 
+ネットワークとアプリのように、管理するチームや変更の頻度が違うものは、スタックを分けます。そのとき、VPC の ID をメールや表で受け渡すと、写し間違いや、使われている VPC を消す事故が起きます。エクスポートは値を直接渡し、使われている間は消せないようにします。
+
+```mermaid
+flowchart LR
+    V["VPC のスタック<br/>Export: prod-vpc-id"] -- "ImportValue" --> A1["アプリ A のスタック"]
+    V -- "ImportValue" --> A2["アプリ B のスタック"]
+    X["VPC のスタックの削除、<br/>値の変更"] -. "参照があるので失敗" .-> V
+```
+
 - エクスポート名はアカウントとリージョン内で一意
 - `Fn::ImportValue` が参照できるのは同じアカウントとリージョンのみ
 - 参照されている間は、エクスポート元のスタック削除や値の変更ができない
@@ -232,6 +307,8 @@ MasterUserPassword: "{{resolve:secretsmanager:my-db-secret:SecretString:password
 - **誤ると:** `Fn::GetStackOutput` は弱い参照です。参照先のスタックを消しても、消す操作は止まらず、参照側の更新もされません。値は参照側のスタックを作成や更新したときに解決します。パーティションをまたぐ参照はできません。
 
 ### 組み込み関数 {#intrinsic-functions}
+
+バケットの ARN や AZ の名前のように、デプロイするまで決まらない値をテンプレートに書くためのものです。値を手で書き写すと、別のアカウントやリージョンで動かなくなります。関数で参照すると、CloudFormation が作成時に値を埋め、参照の関係から作る順番も決めます。
 
 | 関数 | 用途 | 例 |
 |---|---|---|
@@ -327,6 +404,19 @@ ARN を書くときは、`arn:aws:` と固定せず `arn:${AWS::Partition}:` に
 
 ### リソースの属性: DeletionPolicy {#deletion-policy}
 
+スタックはまとめて消せるのが利点ですが、DB やバケットの中身まで一緒に消えると困ります。環境は使い捨てにしても、データは残したい。この 2 つを両立するために、リソースごとに「消すときどうするか」を決めます。
+
+どの属性が効くかは、リソースが消える理由で変わります。
+
+```mermaid
+flowchart TD
+    A["古いリソースが消えそう"] --> B{"なぜ消える?"}
+    B -- "スタックの削除" --> D["DeletionPolicy"]
+    B -- "テンプレートから外した" --> D
+    B -- "プロパティの変更で置き換え" --> U["UpdateReplacePolicy"]
+    B -- "作成のロールバック" --> RC["RetainExceptOnCreate なら削除"]
+```
+
 | 値 | スタック削除時の動作 |
 |---|---|
 | `Delete` | 削除する（通常の既定） |
@@ -367,6 +457,22 @@ ARN を書くときは、`arn:aws:` と固定せず `arn:${AWS::Partition}:` に
 
 #### CreationPolicy {#creation-policy}
 
+CloudFormation から見えるのは、EC2 の API が「インスタンスを起動した」と返したところまでです。中のアプリが動いたかは分かりません。そのまま完了にすると、壊れたサーバーで本番が始まります。
+
+CreationPolicy は、サーバーの中から「準備ができた」という合図(シグナル)が届くまで、完了を待たせる仕組みです。オンプレミスで構築担当が「動作確認が済んだ」と報告するまで、次の作業に進まないのに当たります。
+
+```mermaid
+sequenceDiagram
+    participant C as CloudFormation
+    participant E as EC2
+    participant H as cfn-init と cfn-signal
+    C->>E: インスタンスを起動
+    E->>H: UserData から実行
+    H->>H: パッケージ、ファイル、サービス
+    H->>C: 終了コードをシグナルで送る
+    Note over C: Count 分の成功が<br/>Timeout 内に届けば完了
+```
+
 対象は `AWS::AutoScaling::AutoScalingGroup`、`AWS::EC2::Instance`、`AWS::CloudFormation::WaitCondition` です。
 
 | 項目 | 既定値 | 説明 |
@@ -391,6 +497,8 @@ WebGroup:
 - **`MinSuccessfulInstancesPercent` の例:** `DesiredCapacity` が 4 で 75 なら、4 × 0.75 = 3 台の成功で完了します。1 台が失敗しても続きます。
 
 #### UpdatePolicy {#update-policy}
+
+Auto Scaling グループの起動テンプレートやサブネットを変えたとき、動いているインスタンスをどう入れ替えるかを決めます。全部を一度に入れ替えるとサービスが止まります。オンプレミスで、サーバーを 1 台ずつロードバランサーから外して更新するローリング作業を、設定で表したものです。
 
 | ポリシー | 項目 | 既定値 |
 |---|---|---|
@@ -479,6 +587,20 @@ Instance:
 
 CloudFormation にない処理を Lambda か SNS で実行します。種類は `AWS::CloudFormation::CustomResource` か `Custom::名前` です。
 
+CloudFormation が対応していない設定や、外部のシステムへの登録が 1 つあるだけで、そこだけ手順書に戻ると、IaC の利点が崩れます。カスタムリソースは、その処理を自作の関数に任せ、スタックの作成、更新、削除と同じ流れに組み込みます。
+
+```mermaid
+sequenceDiagram
+    participant C as CloudFormation
+    participant L as Lambda
+    participant S as 署名付き S3 URL
+    C->>L: RequestType: Create、Update、Delete
+    L->>L: 独自の処理
+    L->>S: Status と Data を PUT
+    S-->>C: 応答を受け取る
+    Note over C: 応答がなければ<br/>ServiceTimeout まで待つ
+```
+
 | 項目 | 内容 |
 |---|---|
 | `ServiceToken` | 必須。Lambda か SNS の ARN |
@@ -498,9 +620,30 @@ CloudFormation にない処理を Lambda か SNS で実行します。種類は 
 
 ## テンプレートの更新と変更の確認 {#updating-stacks}
 
+本番の構成を変えるときに一番怖いのは、「設定を 1 つ変えただけのつもりが、DB が作り直された」ことです。この節の仕組みは、オンプレミスの変更管理で行ってきた「影響の確認」「承認」「重要な機器の保護」「台帳との突き合わせ」を、スタックに対して行うためのものです。
+
+| 変更管理の作業 | 仕組み | 守るもの |
+|---|---|---|
+| 作業前の影響確認 | [変更セット](#change-sets) | 置き換えや削除の見落とし |
+| 重要な機器に触らない約束 | [スタックポリシー](#stack-policy) | 特定のリソースの置き換え、削除 |
+| 権限が増える作業の承認 | [capabilities](#capabilities) | IAM の変更の見落とし |
+| 実機と台帳の突き合わせ | [ドリフト検出](#drift) | テンプレートの外の手作業 |
+| 拠点への一斉展開 | [StackSets](#nested-stacks-stacksets) | アカウントやリージョンごとの作業漏れ |
+
 ### 既存テンプレートの更新 {#update-templates}
 
 更新時は、変更するプロパティごとに動作が決まっています。
+
+```mermaid
+flowchart TD
+    A["プロパティを変える"] --> B{"更新の動作は?"}
+    B -- 中断なし --> N["同じリソースのまま<br/>例: Lambda の MemorySize"]
+    B -- 一時的な中断 --> I["再起動などが起きる<br/>例: EC2 の InstanceType"]
+    B -- 置き換え --> R["新しく作って古いものを消す<br/>例: TableName"]
+    R --> P{"UpdateReplacePolicy は?"}
+    P -- "Retain" --> K["古いリソースとデータが残る"]
+    P -- "Delete" --> D["古いリソースが消える"]
+```
 
 | 更新動作 | 影響 |
 |---|---|
@@ -523,6 +666,16 @@ CloudFormation にない処理を Lambda か SNS で実行します。種類は 
 ### 変更セット {#change-sets}
 
 スタックへの影響を実行前に確認する仕組みです。作成しただけでは何も変わらず、実行して初めて反映されます。`Replacement` の列で置き換えの有無が分かります。
+
+工事の前に出す見積書と工程表に当たります。見積もりを確認して承認するまで、工事は始まりません。「確認する人」と「実行する人」を分けられるので、本番の変更の承認の流れに組み込めます。
+
+```mermaid
+flowchart LR
+    A["create-change-set"] --> B["describe-change-set<br/>Replacement を確認"]
+    B --> C{"問題ない?"}
+    C -- はい --> D["execute-change-set<br/>ここで初めて反映"]
+    C -- いいえ --> E["delete-change-set<br/>スタックは変わらない"]
+```
 
 ```bash
 aws cloudformation create-change-set \
@@ -561,6 +714,8 @@ aws cloudformation execute-change-set \
 
 更新時の保護です。削除からの保護ではありません。
 
+テンプレートを書き換えられる人は、誤って DB を置き換える変更も出せてしまいます。スタックポリシーは、IAM の権限とは別に、スタックの中の特定のリソースに「この種類の更新はさせない」という線を引きます。サーバールームの中で、本番 DB のラックだけ施錠しておくのに近い考え方です。
+
 | 状態 | 動作 |
 |---|---|
 | 設定なし(既定) | 全リソースの更新を許可 |
@@ -597,6 +752,8 @@ aws cloudformation execute-change-set \
 
 ### 機能の承認(capabilities) {#capabilities}
 
+テンプレートに IAM のロールが含まれていると、デプロイした人の意図を超えて権限が増えることがあります。capabilities は、「このテンプレートは IAM を変える」と実行する人に明示的に認めさせる確認です。マクロを含むテンプレートは、展開後の中身が書いたものと変わるので、同じく承認が要ります。
+
 | 値 | 必要な場面 |
 |---|---|
 | `CAPABILITY_IAM` | IAM リソースを含む |
@@ -612,6 +769,14 @@ aws cloudformation execute-change-set \
 ### ドリフト検出 {#drift}
 
 手作業の変更などで、実際の設定がテンプレートとずれた状態を検出します。
+
+障害対応で急いでコンソールから直すと、テンプレートには残りません。次のデプロイでその修正が上書きされて障害が再発する、という事故の元になります。オンプレミスで、構成管理の台帳と実機の設定が食い違うのと同じ問題です。
+
+| 観点 | 台帳と実機の突き合わせ | ドリフト検出 |
+|---|---|---|
+| やり方 | 人が実機の設定を見て比べる | API で自動に比べる |
+| 対象 | 台帳に書いた項目 | テンプレートに明示した値 |
+| 直し方 | 台帳か実機を直す | テンプレートを直して更新するか、実機を戻す |
 
 - `detect-stack-drift` で開始し、`describe-stack-resource-drifts` で差分を確認する
 - 対応していないリソースは `NOT_CHECKED` になる
@@ -645,6 +810,10 @@ aws cloudformation execute-change-set \
 | StackSets | 1 回の操作で複数のアカウントとリージョンへ展開する |
 
 部品の再利用ならネスト、ライフサイクルの違うスタック間の共有ならエクスポートです。
+
+テンプレートが大きくなると、1 つのファイルに全部を書くのは読みにくく、上限にも当たります。また、会社が 20 アカウントを持つと、同じ監査の設定を 20 回デプロイする作業が生まれます。ネストは「部品化」、StackSets は「一斉展開」で、この 2 つの困りごとに答えます。
+
+[![StackSets で複数のアカウントとリージョンへ展開する](../assets/diagrams/iac-stacksets.png)](../assets/diagrams/iac-stacksets.png)
 
 - **ネストの例:** 3 つのアプリで同じ ALB の構成を使うなら、`alb.yaml` を子にして、各親から呼びます。
 - **クロススタック参照の例:** ネットワークチームの VPC のスタックを、アプリの 5 つのスタックが参照します。
@@ -695,6 +864,20 @@ aws cloudformation execute-change-set \
 
 作成や更新が失敗すると、既定で自動的に元へ戻します。
 
+手作業の構築で途中の手順が失敗すると、半分だけ作られた状態が残ります。どこまで進んだかを調べ、切り戻し手順を手で実行することになります。CloudFormation は何を作ったかを覚えているので、失敗したら自分で戻し、「全部できたか、何もしていないか」のどちらかにそろえます。
+
+その代わり、戻す途中で戻す先のリソースが手で消されていると、ロールバック自体が失敗します。スタックの外で変更しないことが前提です。
+
+```mermaid
+stateDiagram-v2
+    [*] --> UPDATE_IN_PROGRESS
+    UPDATE_IN_PROGRESS --> UPDATE_COMPLETE: 成功
+    UPDATE_IN_PROGRESS --> UPDATE_ROLLBACK_IN_PROGRESS: 失敗
+    UPDATE_ROLLBACK_IN_PROGRESS --> UPDATE_ROLLBACK_COMPLETE: 戻せた
+    UPDATE_ROLLBACK_IN_PROGRESS --> UPDATE_ROLLBACK_FAILED: 戻せない
+    UPDATE_ROLLBACK_FAILED --> UPDATE_ROLLBACK_IN_PROGRESS: continue-update-rollback
+```
+
 | 操作 | 失敗後の状態 | 次にできること |
 |---|---|---|
 | 作成の失敗 | `ROLLBACK_COMPLETE` | 更新はできない。削除して作り直す |
@@ -730,6 +913,8 @@ aws cloudformation execute-change-set \
 ### ロールバックトリガー {#rollback-triggers}
 
 スタック操作の間と、完了後の監視時間に CloudWatch アラームを見張ります。アラームが `ALARM` になるとスタック全体を戻します。
+
+リソースの作成に成功しても、サービスが正しく動いているとは限りません。リリース後にエラー率を見張り、悪化したら切り戻す作業を、人の判断を待たずに自動で行うための仕組みです。
 
 - トリガーは最大 5 個
 - 監視時間は 0 から 180 分（既定は 0）
@@ -793,6 +978,18 @@ flowchart TD
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 サーバーレス向けの CloudFormation 拡張です。短い記述から、デプロイ時に IAM ロールなどを含む CloudFormation リソースへ展開されます。
+
+サーバーレスのアプリは、関数、実行ロール、API、権限、イベントの接続など、小さなリソースが多く集まってできています。素の CloudFormation で全部を書くと長くなり、権限の付け忘れも起きます。SAM は、よくある組み合わせを短い書き方にまとめ、手元での実行とテストの道具も付けています。
+
+```mermaid
+flowchart LR
+    F["AWS::Serverless::Function<br/>Events: Api"] -- "Transform で展開" --> L["AWS::Lambda::Function"]
+    F --> R["AWS::IAM::Role<br/>実行ロール"]
+    F --> A["API Gateway の<br/>API、ステージ"]
+    F --> P["AWS::Lambda::Permission<br/>API からの呼び出し"]
+```
+
+展開の結果は普通の CloudFormation のスタックなので、変更セット、ロールバック、ドリフト検出がそのまま使えます。
 
 **提供単位**: SAM は CloudFormation のスタックとしてリージョンにデプロイされます（[2 つの軸](resource-scope.md#two-axes)）。Lambda は既定で VPC の外です（[VPC の中か、接続を選べるリソース](resource-scope.md#scope-regional-vpc)）。
 
@@ -1220,6 +1417,22 @@ warm_containers = "EAGER"
 
 ## テストの書き方と実行 {#testing}
 
+インフラをコードにすると、アプリと同じようにテストできます。ただし、本物の AWS で確かめるほど遅く、費用もかかります。速いテストで大半の誤りを見つけ、遅いテストは本物でしか分からない点に絞ります。
+
+```mermaid
+flowchart TD
+    U["単体テスト<br/>AWS を呼ばない。秒で終わる"] --> L["ローカル実行<br/>sam local invoke、start-api"]
+    L --> I["結合テスト<br/>テスト用スタックの本物の API"]
+    I --> E["イベント駆動のテスト<br/>出口の結果を待って確認"]
+```
+
+| テスト | 速さ | 見つかる誤り | 見つからない誤り |
+|---|---|---|---|
+| 単体テスト | 速い | 分岐や計算の誤り | IAM の権限、イベントの形の違い |
+| ローカル実行 | 中くらい | ハンドラーの読み込み、イベントの扱い | 本番と同じ IAM の権限 |
+| 結合テスト | 遅い | 権限の不足、URL や設定の誤り | 非同期の処理の結果 |
+| イベント駆動のテスト | 最も遅い | キュー、リトライ、DLQ の動作 | なし(ただし待ち時間の設計が要る) |
+
 ### テストイベントの作成 {#test-events}
 
 Lambda のテストは JSON のイベントを渡して行います。`sam local generate-event` で雛形を作れます。
@@ -1351,6 +1564,26 @@ def test_order_is_processed():
 
 プログラミング言語でインフラを定義し、CloudFormation テンプレートを生成します。CDK v2 が現行で、v1 のサポートは終了しています。
 
+YAML のテンプレートには、ループ、関数、クラスがありません。同じ形のリソースを 20 個並べたり、社内の標準構成を部品として配ったりするには、コピーが増えます。CDK はプログラミング言語の道具(ループ、関数、クラス、パッケージ管理、IDE の補完)をそのまま使えるようにします。
+
+| 観点 | CloudFormation の YAML | CDK |
+|---|---|---|
+| 繰り返し | 書いた数だけ並べる | `for` で書く |
+| 部品の共有 | ネストされたスタック、モジュール | ライブラリとして配る |
+| 権限 | IAM ポリシーを自分で書く | `bucket.grant_read(fn)` のようなメソッドが作る |
+| 誤りの発見 | デプロイ時や cfn-lint | コンパイル、IDE の補完、`assertions` |
+| 実際に動くもの | テンプレートそのもの | 生成したテンプレート |
+
+```mermaid
+flowchart LR
+    C["CDK のコード"] -- "cdk synth" --> T["テンプレート<br/>cdk.out"]
+    T -- "cdk diff" --> D["差分の確認"]
+    T -- "cdk deploy" --> S["CloudFormation<br/>のスタック"]
+    B["cdk bootstrap<br/>S3、ECR、IAM ロール"] -. "アセットの置き場" .-> S
+```
+
+便利な反面、生成されるテンプレートは自分で書いたものより大きく、何ができるかが見えにくくなります。`cdk diff` で、実際に変わるものを必ず確かめます。
+
 **提供単位**: CDK は手元や CI で動くツールです。生成したスタックはリージョンにデプロイされます（[2 つの軸](resource-scope.md#two-axes)）。
 
 ### コンストラクト {#cdk-constructs}
@@ -1449,6 +1682,8 @@ cdk bootstrap aws://111122223333/ap-northeast-1
 
 アカウントとリージョンの組み合わせごとに必要です。S3 バケット(アセット)、ECR リポジトリ(イメージ)、IAM ロールを作ります。
 
+Lambda のコードやコンテナイメージは、テンプレートに直接入りません。デプロイの前にどこかへ置く必要があり、その置き場とデプロイ用の権限を最初に一度だけ用意するのがブートストラップです。
+
 **症状**: 実行していないと、`cdk deploy` がブートストラップの不足のエラーで失敗します。別のリージョンへ増やしたときにも発生します。
 
 - **計算例:** 2 アカウントと 3 リージョンで使うなら、2 × 3 = 6 回のブートストラップが必要です。
@@ -1523,6 +1758,10 @@ def test_lambda_settings():
 
 - **例:** `--region us-east-1` を付けると、手元が日本でも、バージニア北部のリソースを見ます。東京に作ったインスタンスは一覧に出ません。
 
+コンソールの操作は人が画面を見て行うので、同じ作業を 100 回繰り返したり、夜間に自動で動かしたりできません。CLI は AWS の API を 1 回ずつコマンドで呼び、スクリプトや CI に組み込めるようにします。オンプレミスで、機器の管理画面の代わりに SSH でコマンドを流すのに近い位置づけです。
+
+ただし、CLI は「何を作ったか」を覚えません。構成を作るのはテンプレート、確認や単発の操作は CLI、と使い分けます。
+
 ### プロファイル {#cli-profiles}
 
 設定は `~/.aws/config` と `~/.aws/credentials` に保存します。`config` では `[profile 名前]`、`credentials` では `[名前]` と書きます。
@@ -1553,6 +1792,21 @@ aws sts get-caller-identity   # 今の認証情報を確認する
 - **`region` の例:** `aws --region ap-northeast-3 ec2 describe-instances` は、`config` の `ap-northeast-1` より優先します。
 
 ### 設定ファイルと優先順位 {#cli-config}
+
+認証情報の置き場が多いのは、同じ CLI を手元の PC、CI、EC2、コンテナのどこでも動かせるようにするためです。その代わり、意図しない認証情報が先に見つかると、別の権限で動いてしまいます。CLI は上から順に探し、最初に見つかったものを使います。図は下の優先順の表を簡略化したものです。
+
+```mermaid
+flowchart TD
+    A["CLI を実行"] --> B{"--profile など<br/>オプションがある?"}
+    B -- はい --> X["それを使う"]
+    B -- いいえ --> C{"環境変数に<br/>AWS_ACCESS_KEY_ID?"}
+    C -- はい --> X
+    C -- いいえ --> D{"設定ファイルに<br/>プロファイルの認証情報?"}
+    D -- はい --> X
+    D -- いいえ --> E{"コンテナの認証情報?"}
+    E -- はい --> X
+    E -- いいえ --> F["EC2 のインスタンスプロファイル"]
+```
 
 ```ini
 # ~/.aws/credentials
@@ -1731,6 +1985,8 @@ aws ec2 run-instances --dry-run --image-id ami-12345678 --instance-type t3.micro
 [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 マネジメントコンソールから起動できるブラウザ上のシェルです。Amazon Linux 2023 ベースで、AWS CLI などが導入済みです。
+
+手元の PC に CLI を入れてアクセスキーを置くと、PC の紛失がそのまま認証情報の漏えいになります。CloudShell は、コンソールにサインインした権限のまま、AWS の側でシェルを用意します。オンプレミスで、作業用 PC からではなく踏み台サーバーにログインして作業するのに近い考え方です。違いは、踏み台を自分で建てて保守する必要がないことです。
 
 **提供単位**: 環境はリージョンごとで、既定では VPC の外です。VPC の中でも起動できます（[2 つの軸](resource-scope.md#two-axes)）。
 

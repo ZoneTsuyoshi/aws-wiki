@@ -13,6 +13,36 @@ AWS のリソースは、どの単位で作られ、どこに置かれるかが�
 
 AWS の公式の資料は、サービスをグローバル、リージョン、ゾーン（AZ）の3つに分けて説明しています。
 
+#### なぜ単位が分かれているか {#two-axes-why}
+
+単位は、**障害が広がる範囲の壁**（公式の用語では障害の分離境界）です。1 つの AZ は、独立した電源、ネットワーク、接続を持つ 1 つ以上のデータセンターです。同じリージョンの AZ は、同時に被災しないよう最大 100 km ほど離れていますが、同期レプリケーションができる程度に近く置かれています。
+
+| 困りごと | 単位を意識しないと起きること | 判断に使う単位 |
+| --- | --- | --- |
+| データセンターの停電に備えたい | 1 台の EC2 と一緒にサービスが止まる | AZ。2 つ以上の AZ に置く |
+| 地域ごと止まる災害に備えたい | 同じリージョンの全 AZ が使えない | リージョン。別のリージョンへ複製する |
+| 証明書や WAF をどこに作るか迷う | 東京に作り、CloudFront から選べない | グローバルのサービスの決まり（`us-east-1`） |
+
+**オンプレミスにたとえると、** AZ は同じ都市圏にある別々のデータセンター、リージョンはメインサイトと DR サイトのように遠く離れた拠点です。
+
+| AWS | オンプレミスでいうと | 違う点 |
+| --- | --- | --- |
+| AZ | 同じ都市圏の別のデータセンター | 拠点間の専用線と同期の仕組みは AWS が用意する |
+| リージョン | 遠隔地のバックアップサイト | 同じ API で、必要なときだけ使える |
+| リージョンのサービス（S3 など） | 複数のデータセンターにまたがる共有ストレージ | AZ の障害を AWS が吸収する |
+| AZ のリソース（EC2 など） | 1 つのデータセンターのサーバー | 冗長化は利用者が設計する |
+
+**なぜこの設計か:** AZ 単位のリソースは、置き場所を利用者が選びます。1 つの AZ にまとめて台数と AZ 間の通信を減らすか、複数の AZ に分けて止まりにくくするかを、利用者が選べます。冗長化と費用のトレードオフを、ワークロードごとに決められる設計です。
+
+単位の入れ子の関係は次のとおりです。VPC はリージョンの単位で、サブネットだけが AZ に分かれます。
+
+```mermaid
+flowchart TD
+    G["グローバル<br/>IAM、Route 53、CloudFront"] --> R["リージョン: 東京<br/>S3、DynamoDB、VPC"]
+    R --> A["AZ 1a<br/>サブネット、EC2、EBS"]
+    R --> C["AZ 1c<br/>サブネット、EC2、EBS"]
+```
+
 [![リソースの提供単位](../assets/diagrams/resource-scope-layers.png)](../assets/diagrams/resource-scope-layers.png)
 
 | 単位 | 意味 | 障害の考え方 |
@@ -26,6 +56,17 @@ AWS の公式の資料は、サービスをグローバル、リージョン、�
 ## リソースごとの提供単位 {#scope-table}
 
 「VPC」の列は、リソースを置く場所です。
+
+表を引く前に、次の流れで「自分で冗長化が要るか」を判断できます。
+
+```mermaid
+flowchart TD
+    A["このリソースは?"] --> B{"作るときに AZ か<br/>サブネットを選ぶ?"}
+    B -- いいえ --> C["リージョンかグローバル<br/>AZ の障害は AWS が吸収"]
+    B -- はい --> D{"1 つの AZ だけを<br/>指定した?"}
+    D -- はい --> E["その AZ と一緒に止まる<br/>別の AZ にも置く"]
+    D -- いいえ: 複数の AZ --> F["残った AZ で動き続ける<br/>容量の余裕を確認"]
+```
 
 ### グローバル {#scope-global}
 
@@ -91,6 +132,8 @@ AWS の公式の資料は、サービスをグローバル、リージョン、�
 
 ## 間違えやすい点 {#traps}
 
+名前や ARN の形からは単位を判断できないことが多く、思い込みで設計すると、障害時に初めて気づきます。
+
 | 思い込み | 実際 |
 |---|---|
 | S3 はグローバルのサービス | バケットはリージョンに作る。名前の空間が既定で共通なだけ |
@@ -105,6 +148,14 @@ AWS の公式の資料は、サービスをグローバル、リージョン、�
 ## EC サイトの構成例 {#ec-site}
 
 東京リージョンの EC サイト `shop.example.com` を例にします。公開、注文後の処理、プライベートな通信の3枚に分けます。
+
+3 枚に分けるのは、それぞれ守りたいものが違うからです。
+
+| 図 | 守りたいもの | 設計の要点 |
+| --- | --- | --- |
+| 商品ページと購入 | 応答の速さと、AZ の障害時の継続 | グローバルの入口、2 つの AZ に分けたアプリと DB |
+| 注文後の処理 | 購入の処理を、メールや出荷の遅れから切り離す | VPC の外のサーバーレスと、キューでの分離 |
+| プライベートな通信 | アプリをインターネットから隠したまま、外のサービスを使う | NAT とエンドポイントの使い分け |
 
 ### 商品ページと購入のリクエスト {#ec-site-web}
 
@@ -140,6 +191,15 @@ AWS の公式の資料は、サービスをグローバル、リージョン、�
 ### AZ が止まったときの動き {#ec-site-az-failure}
 
 AZ 1a が止まった場合を、単位ごとに追います。
+
+```mermaid
+flowchart TD
+    X["AZ 1a が停止"] --> G["グローバル、リージョンのサービス<br/>AWS が吸収。作業なし"]
+    X --> L["ALB<br/>1c のターゲットへ送る"]
+    X --> F["Fargate<br/>1c で処理を続け、タスクを足す"]
+    X --> D["Aurora<br/>1c のリーダーをライターへ昇格"]
+    X --> C["ElastiCache<br/>1c のレプリカを昇格"]
+```
 
 | リソース | 動き |
 |---|---|
@@ -178,6 +238,17 @@ AZ 1a が止まった場合を、単位ごとに追います。
 
 Fargate タスクはプライベートサブネットにあるので、VPC の外へ出る経路が必要です。
 
+アプリをプライベートサブネットに置くのは、インターネットから直接届かないようにするためです。その代わり、VPC の外にある AWS のサービスや外部の API へ行く道を、行き先ごとに用意します。
+
+```mermaid
+flowchart TD
+    A["タスクからの通信"] --> B{"行き先は AWS のサービス?"}
+    B -- いいえ: 外部の API --> N["NAT ゲートウェイ → IGW"]
+    B -- はい --> C{"S3 か DynamoDB?"}
+    C -- はい --> G["ゲートウェイエンドポイント<br/>追加料金なし"]
+    C -- いいえ --> I["インターフェイスエンドポイント<br/>ECR、Secrets Manager、Logs"]
+```
+
 [![EC サイトのプライベートな通信](../assets/diagrams/ec-site-private.png)](../assets/diagrams/ec-site-private.png)
 
 | 通信先 | 経路 | 理由 |
@@ -201,6 +272,7 @@ NAT ゲートウェイは 2 つの方式があります。
 
 ## 参考 {#references}
 
+- [AWS Fault Isolation Boundaries: Availability Zones](https://docs.aws.amazon.com/whitepapers/latest/aws-fault-isolation-boundaries/availability-zones.html)
 - [AWS Fault Isolation Boundaries: Zonal services](https://docs.aws.amazon.com/whitepapers/latest/aws-fault-isolation-boundaries/zonal-services.html)
 - [AWS Fault Isolation Boundaries: Regional services](https://docs.aws.amazon.com/whitepapers/latest/aws-fault-isolation-boundaries/regional-services.html)
 - [AWS Fault Isolation Boundaries: Global services](https://docs.aws.amazon.com/whitepapers/latest/aws-fault-isolation-boundaries/global-services.html)

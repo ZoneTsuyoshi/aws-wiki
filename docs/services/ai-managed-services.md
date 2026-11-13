@@ -28,6 +28,35 @@
 !!! warning "「新規受付終了」の読み方"
     既存の顧客は使い続けられますが、新機能は追加されません。試験の対象一覧に残っていても、新規の設計では公式が示す代替を選びます。
 
+## なぜマネージド AI サービスを使うのか {#why-managed-ai}
+
+文字起こし、OCR、翻訳のような作業は、以前は人手か、ルールを書き込んだソフトウェアで行っていました。マネージド AI サービスは、AWS が学習させたモデルを API として提供し、自分で学習データを集めたりモデルを作ったりせずに使えるようにしたものです。
+
+| 困りごと | 従来のやり方 | 従来のやり方の限界 | マネージド AI サービス |
+| --- | --- | --- | --- |
+| 紙の請求書をシステムに入れたい | 人が手で入力する、帳票ごとに座標を決めた OCR | 量に比例して人手が要る。帳票の形が変わると OCR の設定を作り直す | Textract が表やフォームの関係ごと読む |
+| 通話の内容を記録したい | 人が聞きながら書き起こす | 1 時間の通話に数時間かかる | Transcribe が自動で書き起こす |
+| 問い合わせを分類したい | キーワードの辞書や正規表現のルール | 言い回しが変わると漏れる。ルールが増え続ける | Comprehend のカスタム分類 |
+| 投稿画像を審査したい | 審査担当者が目視する | 量が増えると追いつかない。担当者の負担が大きい | Rekognition で一次判定し、迷うものだけ人に回す |
+
+どのサービスも結果に信頼度（`Score`、`Confidence`）を付けて返します。従来のルールのような「一致か不一致か」ではなく、「どのくらい確からしいか」で返すので、しきい値を決めて、低いものは人が確認する運用にします。
+
+```mermaid
+flowchart TD
+    A["何を入力する?"] --> B{"音声?"}
+    B -- はい --> T["Transcribe<br/>音声 → 文字"]
+    B -- いいえ --> C{"文書のスキャン、PDF?"}
+    C -- はい --> X["Textract<br/>文書 → 文字と構造"]
+    C -- いいえ --> D{"写真、動画?"}
+    D -- はい --> R["Rekognition"]
+    D -- いいえ: テキスト --> E{"何をしたい?"}
+    E -- 意味の分析、PII --> CO["Comprehend"]
+    E -- 翻訳 --> TR["Translate"]
+    E -- 読み上げ --> P["Polly"]
+```
+
+**Bedrock の FM との違い:** マネージド AI サービスは「決まった作業を、決まった形式で、安定して」行います。FM は自由な指示に応えられますが、出力の形と再現性は自分で整える必要があります。詳しくは[マネージド AI サービスと Bedrock](#vs-bedrock)を参照してください。
+
 ## Amazon Comprehend {#comprehend}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
@@ -35,6 +64,17 @@
 テキストから情報を取り出す NLP サービスです。入力は UTF-8 のテキストで、カスタム分類とカスタム固有表現は画像、PDF、Word も受け付けます。
 
 **提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
+
+**ルールベースの処理とくらべる**と、次のようになります。
+
+| 観点 | 正規表現、キーワード辞書 | Comprehend |
+| --- | --- | --- |
+| 作り方 | 人がパターンを書く | 学習済みのモデル。独自の分類は例を渡して学習させる |
+| 言い換え | 「最悪」は拾えても「二度と頼まない」は漏れる | 文全体から感情や意図を判定する |
+| 結果 | 一致か不一致か | ラベルと信頼度（`Score`） |
+| 得意 | 形式の決まった値（郵便番号など）の確実な検出 | 自由文の意味の分析 |
+
+形式の決まった値は正規表現のほうが確実で安いこともあります。両方を組み合わせるのが現実的です。
 
 | 機能 | 内容 | 例 |
 |---|---|---|
@@ -53,6 +93,17 @@
 | リアルタイム | 1 文書。最大 100 KB（操作により 5 KB） | 1 件ずつ |
 | バッチ（同期） | 1 リクエスト 25 文書、1 文書 5 KB | 少数をまとめて |
 | 非同期ジョブ | S3 の大量の文書 | 大量の処理 |
+
+同期の API に小さな上限があるのは、呼び出し元を待たせる処理だからです。大きな処理は S3 に置いてジョブとして預け、後で結果を受け取ります。このページの Textract、Transcribe、Translate、Polly も、同じく「小さいものは同期、大きいものは非同期」の 2 段の作りです。
+
+```mermaid
+flowchart TD
+    A["処理したい文書"] --> B{"1 件だけ、<br/>すぐ結果が要る?"}
+    B -- はい --> R["リアルタイム"]
+    B -- いいえ --> C{"25 件以下で<br/>1 件 5 KB 以下?"}
+    C -- はい --> BA["バッチ（同期）"]
+    C -- いいえ --> J["非同期ジョブ<br/>S3 に置いて預ける"]
+```
 
 ```bash
 aws comprehend detect-pii-entities --language-code en \
@@ -87,6 +138,8 @@ aws comprehend detect-pii-entities --language-code en \
 [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional }
 
 診療記録などの非構造化テキストから医療情報を取り出します。
+
+一般向けの Comprehend の固有表現は人名、場所、組織などで、薬や病状といった医療の種類はありません。医療の文に特化したモデルを別のサービスにしてあり、抽出した語を ICD-10-CM などの標準コードに対応付けられます。従来、診療情報管理の担当者が手で行っていたコード付けの下準備に当たります。
 
 **提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
@@ -129,6 +182,31 @@ aws comprehend detect-pii-entities --language-code en \
 
 **具体例:** 「明日 2 名で予約」→ インテントは `BookHotel`、スロットの日付と人数が埋まり、残りのチェックイン時間を聞き返します。揃ったら Lambda で予約します。
 
+**電話の自動音声とくらべる**と、Lex の考え方が分かりやすくなります。
+
+| 観点 | 従来の自動音声（「予約は 1 を押してください」） | Lex |
+| --- | --- | --- |
+| 入力 | 番号のボタン | 自然な話し言葉や文 |
+| 用件の判定 | メニューの階層をたどる | 発話からインテントを判定する |
+| 必要な情報 | 決まった順に 1 つずつ聞く | 一度に言われた分は埋め、足りない分だけ聞き返す |
+| 同じ点 | 最後は業務システムで処理する | 最後は Lambda で予約などを実行する |
+
+「理解する部分」は Lex、「実行する部分」は自分の Lambda と分けてあるのは、予約や決済の規則を会話の仕組みから切り離して、自分で管理できるようにするためです。
+
+```mermaid
+sequenceDiagram
+    participant U as 利用者
+    participant L as Lex
+    participant F as Lambda
+    U->>L: 明日 2 名で予約したい
+    L->>L: BookHotel と判定、日付と人数を埋める
+    L-->>U: チェックインは何時ですか?
+    U->>L: 15 時
+    L->>F: スロットがそろったので実行
+    F-->>L: 予約番号
+    L-->>U: 予約しました
+```
+
 **Lex か Bedrock か:** 決まった手続きを確実に進めるなら Lex、自由な質問への回答なら Bedrock です。Lex の中で Bedrock を使う構成もあります。
 
 **Lex か Polly か:** Lex は対話の理解、Polly は音声への変換です。
@@ -145,6 +223,32 @@ aws comprehend detect-pii-entities --language-code en \
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 文書から文字と構造を取り出します。単純な OCR と違い、表やフォームの関係も分かります。
+
+**従来の OCR と手入力とくらべる**と、次のようになります。
+
+| 観点 | 人の手入力 | 従来の帳票 OCR | Textract |
+| --- | --- | --- | --- |
+| 準備 | 不要 | 帳票ごとに読み取る位置を決める | 不要（Queries は質問を書くだけ） |
+| 帳票の形が変わったら | 対応できる | 設定を作り直す | そのまま読めることが多い |
+| 出力 | 入力した値 | 文字の並び | 文字、表のセル、「氏名: 山田」のようなキーと値、信頼度 |
+| 処理量 | 人数に比例 | 大量 | 大量。複数ページは非同期 |
+
+信頼度の低い項目だけを人が確認すれば、全件の手入力より大きく工数を減らせます。
+
+複数ページの文書を同期で受け付けないのは、処理に時間がかかるからです。非同期では、文書を S3 に置いてジョブを始め、終わったら SNS で知らせを受けます。
+
+```mermaid
+sequenceDiagram
+    participant A as アプリ
+    participant T as Textract
+    participant N as SNS
+    A->>T: StartDocumentAnalysis（S3 の PDF）
+    T-->>A: JobId
+    T->>N: 完了の通知
+    N->>A: JobId の完了
+    A->>T: GetDocumentAnalysis（JobId）
+    T-->>A: 文字、表、フォーム
+```
 
 **提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
@@ -190,6 +294,8 @@ aws textract start-document-analysis \
 音声を文字にします。
 
 **提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
+
+会議の議事録係や、コールセンターで通話を聞き直して記録する作業を自動にするサービスです。人の書き起こしと違い、製品名のような知らない語は誤りやすいので、カスタム語彙で教えます。また、話者の分離や PII の秘匿のように、人が後から手で行っていた加工も書き起こしと同時に行えます。
 
 | 機能 | 内容 |
 |---|---|
@@ -248,6 +354,8 @@ aws textract start-document-analysis \
 
 **提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
+翻訳会社に依頼するときは、用語集と過去の訳文の例を渡して訳をそろえてもらいます。Translate のカスタム用語と並列データは、この 2 つに当たる仕組みです。違う点は、人の翻訳者のように文脈を聞き返さないことです。契約書や広告の文案のように誤訳の影響が大きい文書は、人の確認を残します。
+
 | 方式 | 上限 |
 |---|---|
 | リアルタイムのテキスト翻訳（`TranslateText`） | 10,000 バイト |
@@ -281,6 +389,8 @@ Amazon Photos,Amazon Photos
 テキストを音声にします。
 
 **提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
+
+従来は、案内の音声をナレーターに読んでもらい、録音したファイルを流していました。文面を 1 か所変えるだけでも録り直しが要ります。Polly はテキストから都度音声を作るので、注文番号や日付のように毎回変わる内容も読み上げられます。代わりに、固有名詞の読み方や間の取り方は自分で指示します（レキシコン、SSML）。
 
 | エンジン | 特徴 |
 |---|---|
@@ -319,6 +429,8 @@ aws polly synthesize-speech --engine neural --voice-id Takumi \
 画像と動画を分析します。
 
 **提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
+
+投稿画像の審査を人だけで行うと、量に追いつかず、審査担当者の心理的な負担も大きくなります。Rekognition で一次判定し、信頼度の高いものは自動で処理し、迷うものだけ人に回すのが基本の形です。顔の比較のように結果が人に重大な影響を与える使い方では、判定の結果だけで決めず、人が確認します。
 
 | 機能 | 画像 | 動画 | 用途 |
 |---|---|---|---|
@@ -367,6 +479,15 @@ rek.detect_moderation_labels(
 
 **提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
+| 観点 | ルールベースのおすすめ（人気順、同じカテゴリ） | Personalize |
+| --- | --- | --- |
+| 作り方 | 担当者が規則を決めて SQL を書く | 行動データからモデルを学習する |
+| 利用者ごとの違い | 全員に同じ一覧 | 利用者ごとに違う一覧 |
+| 新商品 | 売れるまで上位に出ない | `explorationWeight` で履歴の少ない商品も出す |
+| 必要なもの | 商品の属性 | 十分な量の行動データ（下の例を参照） |
+
+行動データが少ないうちは、Popularity-Count のような人気順のレシピや、ルールベースのほうが安定します。
+
 | データ | 内容 | 必須か |
 |---|---|---|
 | Item interactions | 誰が何をしたか | ほとんどの場合の主データ |
@@ -403,6 +524,8 @@ rek.detect_moderation_labels(
     Kendra は 2026-06-30 にメンテナンスモードに入り、2026-07-30 から新規顧客を受け付けていません。バグ修正とセキュリティ更新は続きます。公式は [Bedrock Managed Knowledge Base](genai-apps.md#managed-kb) への移行を勧めています。
 
 機械学習を使う社内検索です。キーワードではなく自然文の質問で検索できます。
+
+従来の全文検索エンジンは、質問の語を含む文書を返します。「育休」で検索しても「育児休業」としか書かれていない文書は漏れることがあります。Kendra は質問の意味から文書と答えの箇所を探すために作られました。現在は、検索した結果を FM に渡して回答まで作る RAG が主流になり、公式の移行先も Bedrock の Knowledge Bases です（[RAG の考え方](genai-apps.md#knowledge-bases-why)）。
 
 **提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
@@ -451,6 +574,18 @@ rek.detect_moderation_labels(
 
 ML の予測を人がレビューする仕組みです。
 
+AI の判定は確率なので、一定の割合で誤ります。全件を人が見るなら AI を使う意味が薄れ、全件を自動にすると誤りがそのまま業務に入ります。A2I は、信頼度の低いものと品質確認用の抜き取りだけを人に回す、という中間の運用を作るためのものです。工場の検品で、機械の検査で怪しいものと抜き取りの一部だけを検査員が見るのと同じ考え方です。
+
+```mermaid
+flowchart LR
+    A["Textract などの結果"] --> B{"信頼度が<br/>しきい値未満?"}
+    B -- はい --> H["人のレビュー"]
+    B -- いいえ --> S{"抜き取りの<br/>対象?"}
+    S -- はい --> H
+    S -- いいえ --> Z["自動で処理"]
+    H --> Z
+```
+
 **提供単位:** SageMaker AI の機能で、リージョン単位です。
 
 | タスク種別 | 内容 |
@@ -488,6 +623,8 @@ ML の予測を人がレビューする仕組みです。
 [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
 医療データを FHIR R4 形式で保存、分析、共有する HIPAA 対象のサービスです。
+
+病院ごとに電子カルテの形式が違うと、データを他の病院やシステムに渡すたびに変換の作業が要ります。FHIR は医療データをやり取りするための共通の形式で、HealthLake はその形式のデータストアと API をまとめて提供します。共通の形式にそろえてから保存するので、受け取る側は FHIR の API を呼ぶだけで済みます。
 
 **提供単位:** リージョン単位で、[VPC の外](resource-scope.md#scope-regional-outside)のサービスです。VPC からはインターフェイスエンドポイントか NAT 経由で呼びます。
 
@@ -537,6 +674,8 @@ ML の予測を人がレビューする仕組みです。
 ## データの利用とオプトアウト {#data-use}
 
 Comprehend などは、学習済みモデルの改善のために内容を保存する場合があります。AWS Organizations の **AI サービスのオプトアウトポリシー**で止められます。
+
+アカウントごと、サービスごとに設定を頼むと、新しいアカウントや新しいサービスで設定が漏れます。組織のポリシーにしてあるのは、管理アカウントで一度決めれば、配下のアカウントと将来のサービス（`default`）にまとめて効かせるためです。[SCP](iam.md#boundaries-scp) と同じく、組織全体の線を 1 か所で引く考え方です。
 
 ```json
 {
@@ -593,6 +732,19 @@ Comprehend などは、学習済みモデルの改善のために内容を保存
 | ML プラットフォーム | SageMaker AI | ML エンジニア | 大 |
 
 **例:** 営業が議事録を要約するなら Quick、自社アプリに要約機能を組み込むなら Bedrock、自社データで需要予測の手法を開発するなら SageMaker AI です。
+
+上の層ほど早く使い始められ、下の層ほど自由に作れます。まず上の層で要件を満たせないかを確かめ、足りないときだけ下りるのが基本です。
+
+```mermaid
+flowchart TD
+    A["AI でやりたいこと"] --> B{"業務ユーザーが<br/>そのまま使う?"}
+    B -- はい --> Q["Quick"]
+    B -- いいえ: アプリに組み込む --> C{"決まった作業?<br/>OCR、文字起こし、翻訳"}
+    C -- はい --> M["マネージド AI サービス"]
+    C -- いいえ --> D{"生成、要約、<br/>自由な質問?"}
+    D -- はい --> BR["Bedrock"]
+    D -- いいえ: 独自の予測モデル --> SM["SageMaker AI"]
+```
 
 ### 紛らわしい組み合わせ {#confusing-pairs}
 

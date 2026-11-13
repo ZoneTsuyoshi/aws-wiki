@@ -16,6 +16,41 @@ AWS の費用を把握し、予算を管理し、割引を使って減らすた�
 | 部署ごとに分ける | [コスト配分タグ](#cost-allocation-tags)、[Cost Categories](#cost-categories) | 全体 |
 | 大きさを適正にする | [Compute Optimizer](#compute-optimizer) | 過去の使用から提案 |
 
+## なぜ費用の管理が要るのか {#why}
+
+オンプレミスでは、支出は機器を買うときに決まります。稟議で承認された額しか買えないので、使いすぎは調達の段階で止まります。
+
+クラウドでは、権限のある人なら誰でも API で費用を増やせます。請求は使った後に来るので、気づいたときには使い終わっています。費用の管理の道具は、この「後から請求が来る」形に合わせて、見える化、通知、自動の歯止めを足すためのものです。
+
+| 困りごと | 道具がないと起きること | 使う道具 |
+| --- | --- | --- |
+| どの部署がいくら使ったか分からない | 費用を配賦できず、削減の責任者が決まらない | コスト配分タグ、Cost Categories |
+| 月末まで額が分からない | 請求書を見て初めて予算超過に気づく | Budgets の予測の通知 |
+| 設定ミスで急に増える | 数日分の暴走が請求書に載る | Cost Anomaly Detection |
+| 大きすぎる構成のまま使う | 使わない分を払い続ける | Compute Optimizer |
+| 定常の負荷を定価で払う | 割引を受けずに払い続ける | Savings Plans、RI |
+
+オンプレミスの財務管理と対応させると、次のようになります。
+
+| オンプレミス | AWS | 違う点 |
+| --- | --- | --- |
+| 稟議と予算枠 | Budgets、予算アクション | 使う前ではなく、使いながら通知し、止める |
+| 固定資産台帳の管理部門 | コスト配分タグ、アカウント | タグは有効化しないと請求データに出ない |
+| 共通費の部門配賦 | Cost Categories の分割 | ルールで自動に配る |
+| 請求書と明細の照合 | Data Exports（CUR 2.0） | 時間単位、リソース単位の行まで出る |
+| 減価償却の期間 | Savings Plans、RI の期間（1 年か 3 年） | 物は残らない。請求上の割引だけ |
+
+道具は、次の循環で使います。
+
+```mermaid
+flowchart TD
+  A["見積もる<br/>Pricing Calculator"] --> B["分けて見る<br/>タグ、Cost Categories"]
+  B --> C["見張る<br/>Budgets、異常検出"]
+  C --> D["分析する<br/>Cost Explorer、CUR"]
+  D --> E["減らす<br/>Compute Optimizer、確約割引"]
+  E --> B
+```
+
 ## Billing and Cost Management {#billing}
 
 [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
@@ -27,6 +62,17 @@ AWS の費用を把握し、予算を管理し、割引を使って減らすた�
 ### 一括請求 {#consolidated-billing}
 
 Organizations の管理アカウントが、メンバーアカウントの費用をまとめて支払います。追加料金はかかりません。
+
+アカウントを分けるのは、権限や障害の影響を区切るためです。ただ、支払いまで分かれると、請求書の処理が増え、使うほど安くなる料金の恩恵も分散します。一括請求は、「管理は分け、支払いはまとめる」ための仕組みです。家族カードのまとめ払いに近く、利用明細は人ごとに見られます。
+
+```mermaid
+flowchart TD
+  A["アカウント A<br/>S3 40 TB"] --> M["管理アカウント<br/>1 枚の請求書"]
+  B["アカウント B<br/>S3 20 TB"] --> M
+  C["アカウント C<br/>RI を購入"] --> M
+  M --> V["合算の 60 TB で<br/>階段料金を計算"]
+  M --> R["未使用の RI を<br/>他のアカウントに適用"]
+```
 
 | 利点 | 内容 |
 | --- | --- |
@@ -45,6 +91,8 @@ Organizations の管理アカウントが、メンバーアカウントの費用
 ### 請求アラーム {#billing-alarms}
 
 CloudWatch の請求メトリクス `EstimatedCharges` でアラームを作れます。
+
+最も簡単な歯止めです。全体の見積額が 1 つのしきい値を超えたかだけを見ます。
 
 | 項目 | 内容 | 誤ったときの症状 |
 | --- | --- | --- |
@@ -72,6 +120,8 @@ aws cloudwatch put-metric-alarm --region us-east-1 \
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIB](../courses/aib/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty }
 
 費用と使用量をグラフで分析するツールです。
+
+請求書の合計額だけでは、何が増えたのか分かりません。Cost Explorer は、費用をサービス、アカウント、タグなどの軸で切り分けて、増えた原因を探すためのものです。家計簿アプリで、費目別や月別にグラフを見るのに近い使い方です。
 
 | 項目 | 内容 |
 | --- | --- |
@@ -101,6 +151,28 @@ aws cloudwatch put-metric-alarm --region us-east-1 \
 [提供単位](resource-scope.md#two-axes): グローバル。アカウントや組織に対して作り、リージョンを選びません。VPC の外です。
 
 費用や使用量のしきい値を設定して、超えそうなときに通知や処理を行います。監視と通知は無料です。
+
+オンプレミスの予算枠は、買う前に確かめるので超えられません。クラウドでは使ってから費用が決まるので、予算を「超えそうになったら知らせる」「超えたら新しく作れないようにする」形で守ります。
+
+| オンプレミスの予算管理 | Budgets | 違う点 |
+| --- | --- | --- |
+| 稟議で購入を承認する | なし（作成は権限で決まる） | 費用そのものでは作成を止めない |
+| 予算の残りを月次で確認 | 実績と予測の通知 | 1 日最大 3 回の更新で、自動で知らせる |
+| 予算超過で購入を止める | 予算アクション（IAM ポリシー、SCP） | 新しい作成を拒否する。動いているものは別に止める |
+
+```mermaid
+sequenceDiagram
+    participant B as 請求データ
+    participant G as Budgets
+    participant P as 担当者
+    participant I as IAM
+    B->>G: 1 日最大 3 回更新
+    G->>G: 予測が 80% を超えた
+    G->>P: メールや SNS で通知
+    G->>G: 予測が 90% を超えた
+    G->>I: 予算アクションで Deny のポリシーを付ける
+    Note over I: 新しい EC2 の作成が拒否される
+```
 
 ### 予算の種類 {#budget-types}
 
@@ -177,6 +249,17 @@ Cost and Usage Reports（CUR）は、最も詳しい費用と使用量のデー�
 
 現在の推奨は、Data Exports で作る **CUR 2.0** です。
 
+Cost Explorer の画面は、AWS が決めた軸でしか集計できません。社内の BI で独自の配賦をしたい、1 行ずつ監査したい、という場合は、元の明細そのものが要ります。CUR は、請求書の明細を機械で読める形で受け取るためのものです。
+
+```mermaid
+flowchart TD
+  A["Data Exports<br/>列と行を選ぶ"] --> B["S3 に配信<br/>Parquet か gzip CSV"]
+  B --> C["Athena で SQL"]
+  B --> D["Redshift に読み込む"]
+  C --> E["QuickSight でグラフ"]
+  D --> E
+```
+
 | 観点 | CUR 2.0（Data Exports） | 従来の CUR |
 | --- | --- | --- |
 | 列 | 固定のスキーマ | 使い方で月ごとに変わる |
@@ -221,6 +304,8 @@ Athena 向けの設定では Parquet で配信し、セットアップ用のス�
 
 機械学習で通常と異なる費用を検出して通知します。週次や月次の季節性や自然な成長を考慮するので、誤検知を減らせます。
 
+Budgets は、自分で決めた額を超えるまで知らせません。月 10,000 USD の予算に対して、ある小さなサービスが 50 USD から 500 USD に増えても、合計が予算内なら気づけません。異常検出は、額ではなく「いつもとの違い」で見るので、この種の増加を拾えます。クレジットカードの不正利用の検知に近い考え方です。
+
 Cost Explorer を有効にすると、自動で設定されます。オプトアウトできます。
 
 | モニターの種類 | 対象 |
@@ -264,6 +349,18 @@ Budgets との違いは、Budgets は自分で決めた額との比較で、異�
 
 費用を、事業の構造に合わせた独自の分類にまとめる機能です。ルールを定義し、評価はルールの順に行います。
 
+タグはリソースに付ける印なので、付け忘れたリソースの費用は分類できません。組織の構造も、アカウントやタグの単位とは一致しないことがあります。Cost Categories は、アカウント、タグ、サービスなどを組み合わせて、事業部やプロダクトの単位にまとめ直すためのものです。オンプレミスの共通費の配賦ルールを、請求データの上で自動で回す形です。
+
+```mermaid
+flowchart TD
+  A["アカウント"] --> C["Cost Categories のルール<br/>上から順に評価"]
+  T["コスト配分タグ"] --> C
+  S["サービス、請求の種類"] --> C
+  C --> X["Cost Explorer"]
+  C --> Y["Budgets"]
+  C --> Z["Data Exports"]
+```
+
 | ルール | 内容 | 例 |
 | --- | --- | --- |
 | グループ化 | アカウント、タグ、請求の種類、サービスなどで分類 | アカウント 1 から 3 を `Team=Team1` |
@@ -280,6 +377,10 @@ Budgets との違いは、Budgets は自分で決めた額との比較で、異�
 ## コスト配分タグ {#cost-allocation-tags}
 
 タグを費用の分類に使う仕組みです。リソースに付けるだけでは請求データに出ません。**有効化が必要です。**
+
+オンプレミスでは、固定資産台帳に管理部門のコードを書いて、どの部署の資産かを記録します。クラウドではリソースが毎日作られては消えるので、台帳を手で更新できません。そこで、リソース自体にタグを付けて、請求データの列として持たせます。
+
+付けたタグのうち、費用の分類に使うものだけを選んで有効にします。運用のためのタグと、配賦のためのタグを分けて管理できます。
 
 | 種類 | 付ける主体 | 例 |
 | --- | --- | --- |
@@ -314,6 +415,8 @@ flowchart TD
 
 構成の費用を作る前に見積もるツールです。
 
+オンプレミスの見積もりは、ベンダーに依頼して数日待つことがあります。クラウドは単価が公開されているので、構成を入れれば自分で試算できます。予算の承認を取る段階で使います。
+
 | 種類 | 特徴 |
 | --- | --- |
 | 公開の Web サイト | アカウント不要で無料。公開価格で試算 |
@@ -324,6 +427,30 @@ flowchart TD
 - **例:** 移行前に `m7g.large` 10 台、EBS 1 TB、データ転送 500 GB を入れて試算します。コンソール内の版なら、自社の Savings Plans を反映します。
 
 ## 購入オプション {#purchase-options}
+
+### なぜ選択肢が多いのか {#purchase-options-why}
+
+「どれだけ先まで使い続けると約束できるか」と「どれだけ止められても困らないか」は、ワークロードで違います。購入オプションは、約束や制約を受け入れる代わりに割引を得る、という交換の組み合わせです。
+
+| 受け入れるもの | 得られるもの | オプション |
+| --- | --- | --- |
+| なし | いつでも始めて、いつでもやめられる | オンデマンド |
+| 1 年か 3 年の利用額の確約 | 最大 66〜72% の割引 | Savings Plans |
+| 1 年か 3 年の構成の確約 | 最大 72% の割引、ゾーナルなら容量 | RI |
+| 2 分前の通知で中断される | 最大 90% の割引 | スポット |
+| 使わなくても予約分を払う | 容量の確保 | Capacity Reservation |
+
+**身近な契約にたとえる**と、次のようになります。
+
+| オプション | たとえ | 違う点 |
+| --- | --- | --- |
+| オンデマンド | タクシー。乗った分だけ払う | 秒単位などの細かい課金 |
+| Savings Plans | 携帯電話の定額プラン。毎月の額を約束する | 約束するのは 1 時間あたりの額 |
+| RI | 社用車の長期リース。車種を決めて借りる | 物は渡されない。条件の合う利用に割引が付く |
+| スポット | 空いている倉庫の格安貸し。持ち主が使うときは退去する | 退去の予告は 2 分前 |
+| Capacity Reservation | 席の予約。座らなくても予約料はかかる | 割引はない。Savings Plans と併用する |
+
+オンプレミスでサーバーを買う場合と比べると、確約割引は「先に約束して安くする」点が似ています。違うのは、期間が終われば何も残らず、機器の廃棄や減価償却の処理が要らないことです。
 
 | オプション | 割引の上限 | 確約 | 中断 | 容量の確保 | 向くもの |
 | --- | --- | --- | --- | --- | --- |
@@ -447,6 +574,19 @@ flowchart TD
 
 定常の基盤には確約割引、変動分にはオンデマンド、中断できる部分にはスポットと、組み合わせるのが基本です。
 
+1 日の台数の変化に重ねると、次のような層になります。
+
+```mermaid
+flowchart TB
+  S["上の層: 中断できるピーク<br/>例: 40 台 → スポット"]
+  O["中の層: 読めない変動<br/>→ オンデマンド"]
+  B["下の層: 24 時間ずっと動く台数<br/>例: 10 台 → Savings Plans、RI"]
+  S --- O
+  O --- B
+```
+
+確約は、下の層の「必ず使う量」に合わせます。ピークに合わせて確約すると、使わない時間の分を払うことになり、オンプレミスでピークに合わせて買うのと同じ無駄が出ます。
+
 ## Compute Optimizer と適正サイズ {#compute-optimizer}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
@@ -454,6 +594,8 @@ flowchart TD
 [提供単位](resource-scope.md#two-axes): リージョン。推奨はリージョンごとで、VPC の外です。
 
 使用状況を分析して、適正サイズの推奨とアイドルリソースを示すサービスです。使うにはオプトインが必要です。
+
+オンプレミスでは、一度買ったサーバーは小さくできないので、足りなくなるのを恐れて大きめに買います。クラウドに移ってもこの習慣が残り、大きすぎるインスタンスが使われ続けがちです。クラウドでは後からサイズを変えられるので、実際の使用率を測って合わせる方が得になります。Compute Optimizer は、その測定と提案を自動で行います。
 
 | 対象 | データの条件 |
 | --- | --- |
@@ -492,6 +634,19 @@ flowchart TD
 
 アクセスの頻度で選びます。低いクラスほど保存料は安く、取り出し料がかかります。
 
+すべてを同じ速さで取り出せる場所に置くと、ほとんど読まないデータにも高い保存料を払います。クラスが分かれているのは、「置いておく費用」と「取り出す費用と時間」を交換できるようにするためです。
+
+**倉庫にたとえる**と、次のようになります。オンプレミスでは、ディスクの階層とテープ装置で同じことをしていました。
+
+| クラス | たとえ | オンプレミスでの相当 |
+| --- | --- | --- |
+| Standard | 手元の棚。すぐ取れる | 高速なディスク |
+| Standard-IA、Glacier Instant Retrieval | 奥の棚。すぐ取れるが、出すたびに手数料 | 容量重視のディスク |
+| Glacier Flexible Retrieval | 別の倉庫。取り寄せに分から時間 | 社内のテープライブラリ |
+| Glacier Deep Archive | 遠くの保管庫。取り寄せに時間単位 | 外部の保管業者に預けたテープ |
+
+違う点は、オンプレミスのテープと違って、媒体の交換、装置の保守、保管業者との契約が要らないことです。
+
 | クラス | 向くデータ | 最低保存期間 | 最低課金サイズ | 取り出し料 |
 | --- | --- | --- | --- | --- |
 | Standard | 月 1 回以上のアクセス | なし | なし | なし |
@@ -525,6 +680,25 @@ flowchart TD
 
 通信の方向と場所で料金が変わります。
 
+オンプレミスでは、社内 LAN の通信は無料で、インターネット回線は月額の定額契約が普通です。AWS では、通信は量に応じて課金されることが多く、構成図の線の 1 本ずつが費用になります。特に AZ 間とインターネットへの送信は、設計で量が大きく変わります。
+
+| 観点 | オンプレミス | AWS |
+| --- | --- | --- |
+| 社内、VPC 内の通信 | 無料（スイッチを買えば終わり） | 同じ AZ 内は無料、AZ 間は有料 |
+| 外への通信 | 回線の帯域で月額の定額 | 送信したデータ量で従量 |
+| 拠点間の専用線 | 回線の月額 | Direct Connect のポート料金と送信データ量 |
+
+```mermaid
+flowchart TD
+  I["インターネット"] -- "受信: 無料" --> A1
+  A1 -- "送信: 有料（月 100 GB まで無料）" --> I
+  subgraph R["リージョン"]
+    A1["AZ 1 の EC2"] -- "同じ AZ: 無料" --> A1b["AZ 1 の RDS"]
+    A1 -- "AZ 間: 送受信とも有料" --> A2["AZ 2 の EC2"]
+  end
+  A1 -- "リージョン間: 送信側が有料" --> R2["別のリージョン"]
+```
+
 | 経路 | 料金 |
 | --- | --- |
 | インターネットから AWS へ（受信） | 無料 |
@@ -557,6 +731,8 @@ AZ 間の通信が多いアプリは、同じ AZ の中で処理を完結させ�
 [:material-sprout: AIB](../courses/aib/services.md){ .exam-badge .exam-foundational }
 
 AI サービスの課金の単位はさまざまです。金額は変わりやすいので、単位を覚えます。
+
+自前で GPU サーバーを買えば、使っても使わなくても費用は同じです。マネージドの AI サービスは、処理した量（トークン、ページ、秒数）で払うので、使わなければ費用はかかりません。その代わり、プロンプトの長さや呼び出しの回数が、そのまま費用に出ます。
 
 ### Amazon Bedrock {#bedrock-pricing}
 

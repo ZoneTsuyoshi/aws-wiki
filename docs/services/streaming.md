@@ -6,6 +6,37 @@
 
 [![ストリーミングデータのパイプライン](../assets/diagrams/streaming-pipeline.png)](../assets/diagrams/streaming-pipeline.png)
 
+## なぜストリーミングの仕組みが要るのか {#why}
+
+従来の分析は、1 日分のログをファイルにまとめ、夜間のバッチで処理する形が多かった。これでは、不正な注文や障害に気づくのが翌朝になる。ストリーミングは、データが発生したらすぐ受け取り、順に処理する形にするための仕組みである。
+
+| 困りごと | 仕組みがないと起きること | 使うサービス |
+| --- | --- | --- |
+| 発生してすぐ反応したい | 夜間バッチの後まで気づけない | Kinesis Data Streams と Lambda |
+| 同じデータを複数のシステムが使う | 生産者が送り先ごとに送り直し、送り先が増えるたびに改修する | Kinesis Data Streams の複数の消費者 |
+| 大量のログを保存先に届けたい | 配送のコード、バッファ、再試行を自分で書く | Data Firehose |
+| ためたログを SQL で調べたい | 分析用のサーバーを常に動かす | Athena |
+| 文字列であいまいに探したい | RDB の `LIKE` で全件を読む | OpenSearch Service |
+
+オンプレミスで同じことをする場合と対応させると、次のようになる。
+
+| AWS | オンプレミスでの相当 | 違う点（AWS ならでは） |
+| --- | --- | --- |
+| Kinesis Data Streams | Apache Kafka のクラスター（トピックとパーティション） | ブローカーの台数、ディスク、ZooKeeper などを管理しない。容量はシャードか On-demand で決める |
+| Data Firehose | Fluentd、Logstash などのログ転送 | 配送先ごとのバッファと再試行が組み込み。サーバーを持たない |
+| Athena | Hadoop の上の SQL エンジンのクラスター | クラスターを持たず、スキャンした量だけ払う |
+| OpenSearch Service | 自前の Elasticsearch、OpenSearch のクラスター | 故障したノードの検出と置き換えを AWS が行う |
+
+```mermaid
+flowchart TD
+  A["生産者<br/>アプリ、端末、ログ"] --> B["受ける<br/>Kinesis Data Streams"]
+  B --> C["すぐ処理する<br/>Lambda、KCL"]
+  B --> D["届ける<br/>Data Firehose"]
+  D --> E["ためる<br/>S3"]
+  D --> F["探す<br/>OpenSearch Service"]
+  E --> G["SQL で調べる<br/>Athena"]
+```
+
 ## Kinesis Data Streams {#kinesis-data-streams}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
@@ -13,6 +44,29 @@
 順序付きのレコードをためて、複数の消費者が読めるようにするサービス。読んでもレコードは消えず、保持期間の間は何度でも読み直せる。
 
 提供単位はリージョンで、AZ は選ばない。VPC の外のサービスで、VPC 内からはインターフェイスエンドポイントか NAT を経由して呼ぶ（[リソースの提供単位](resource-scope.md#two-axes)）。
+
+### なぜ必要か {#kinesis-data-streams-why}
+
+生産者が送り先に直接送ると、送り先が止まればデータを失い、送り先が増えるたびに生産者を直すことになる。Kinesis Data Streams は、間に「順序付きの記録」を置いて、生産者と消費者を切り離すためのものである。
+
+読んでも消えないのが、キューとの一番の違いである。消費者はそれぞれ自分の読んだ位置を持つので、新しい消費者を後から足したり、バグを直した後に読み直したりできる。その代わり、どこまで読んだかは消費者が管理する。
+
+**身近なものにたとえる**と、次のようになる。
+
+| 仕組み | たとえ | 読んだ後 |
+| --- | --- | --- |
+| Kinesis Data Streams | 防犯カメラの録画。何人でも巻き戻して見られ、一定期間で消える | 残る（保持期間まで） |
+| SQS | 郵便受け。取り出した人が処理する | 削除すると消える |
+| SNS | 館内放送。その場にいる人に一斉に届く | 残らない |
+
+```mermaid
+flowchart TD
+  P1["生産者 A"] --> S["ストリーム<br/>順序付きの記録"]
+  P2["生産者 B"] --> S
+  S --> C1["消費者 1: 不正検知<br/>最新の位置を読む"]
+  S --> C2["消費者 2: 集計<br/>5 分遅れの位置を読む"]
+  S --> C3["消費者 3: 再処理<br/>3 日前から読み直す"]
+```
 
 | 用語 | 意味 |
 | --- | --- |
@@ -34,6 +88,19 @@
 | 読み取り（拡張ファンアウト） | 消費者ごとに 2 MB/秒 |
 
 `GetRecords` は1回で 10 MB または 10,000 レコードまで。10 MB を返すと、次の 5 秒間の呼び出しは `ProvisionedThroughputExceededException` になる。
+
+容量を「シャード」という固定の単位で切っているのは、1 本あたりの性能を予測できるようにするためである。必要な量をシャードの本数で表せるので、容量と料金を同じ計算で見積もれる。その代わり、偏った書き込みは 1 本の上限で詰まる。
+
+高速道路の車線にたとえると分かりやすい。
+
+| Kinesis | 高速道路でのたとえ |
+| --- | --- |
+| シャード | 1 本の車線。通れる台数に上限がある |
+| パーティションキー | 行き先ごとに決まった車線 |
+| ホットシャード | 1 つの車線だけが渋滞している |
+| リシャーディング | 車線を増やす、減らす |
+
+Kafka のパーティションと同じ考え方である。違う点は、ブローカーやディスクを持たず、1 シャードあたりの上限が AWS によって決まっていることである。
 
 必要なシャード数は、書き込み量と読み取り量のうち多いほうから見積もる。
 
@@ -75,6 +142,17 @@
 
 キーの MD5 ハッシュでシャードが決まる。キーは 256 文字までの Unicode 文字列。
 
+キーは「順序を守りたい単位」と「負荷を散らす単位」を同時に決める。同じキーは必ず同じシャードに入るので順序が守られるが、1 つのキーに集中するとシャードを増やしても散らない。
+
+```mermaid
+flowchart TD
+  K["PartitionKey = u-1"] --> H["MD5 ハッシュ<br/>0〜2^128−1 の値"]
+  H --> Q{"どのシャードの<br/>範囲に入るか"}
+  Q --> S1["シャード 1"]
+  Q --> S2["シャード 2"]
+  Q --> S3["シャード 3"]
+```
+
 - **順序が保証されるのは同じシャードの中だけ**。同じキーのレコードは同じシャードに入る。
 - 値の種類が少ないキーは特定のシャードに偏る（**ホットシャード**）。ユーザー ID のように、種類が多く分散するキーを選ぶ。
 - 順序が不要なら、ランダムなキーで分散させる。
@@ -112,6 +190,8 @@ for row in rows:
 ### 保持期間 {#retention}
 
 既定は 24 時間で、最大 8,760 時間（365 日）。下限は 24 時間で、これより短くできない。
+
+保持期間は、消費者が止まったり間違えたりしたときに、やり直せる時間の長さである。長くすれば安全だが、24 時間を超えた分は料金が増える。
 
 ```bash
 aws kinesis increase-stream-retention-period --stream-name clicks --retention-period-hours 72
@@ -167,6 +247,8 @@ if res["FailedRecordCount"] > 0:
 | On-demand Standard | 自動 | データ量とストリームごとの固定料金 | 流量が読めない |
 | On-demand Advantage | 自動。ウォーム容量を設定可能 | 固定料金なし。最低利用量あり | 常に大量に流す |
 
+モードは「容量を自分で計算する手間」と「料金の読みやすさ」の交換である。Provisioned は計算とリシャーディングが要るが、シャード時間で費用が決まる。On-demand は計算が要らないが、流した量で費用が変わる。
+
 - On-demand の新規ストリームは 4 MB/秒の書き込み、8 MB/秒の読み取りから始まる。
 - 過去 30 日のピークの 2 倍まで対応する。これを超える急増では、約 15 分間エラーが出る場合がある。
 - 上限は書き込み 200 MB/秒または 10 GB/秒で、リージョンにより異なる。
@@ -202,6 +284,15 @@ On-demand の例を示す。過去 30 日のピークが 50 MB/秒なら、100 M
 | `AT_SEQUENCE_NUMBER` | 指定したシーケンス番号から |
 | `AFTER_SEQUENCE_NUMBER` | 指定したシーケンス番号の次から |
 | `AT_TIMESTAMP` | 指定した時刻から |
+
+イテレーターは、録画のどこから再生するかを決める「再生位置」である。読んでも消えない設計なので、位置を消費者が指定する。
+
+```mermaid
+flowchart TD
+  T["TRIM_HORIZON<br/>最も古い"] --> M["AT_TIMESTAMP<br/>指定した時刻"]
+  M --> A["AT / AFTER_SEQUENCE_NUMBER<br/>処理済みの位置"]
+  A --> L["LATEST<br/>これから書かれる分"]
+```
 
 ```python
 it = kinesis.get_shard_iterator(
@@ -242,6 +333,20 @@ while it:
 
 消費者が複数で遅延が問題なら、拡張ファンアウトを使う。`RegisterStreamConsumer` で登録する。
 
+共有スループットでは、1 本のシャードの読み取り枠を全員で分け合う。消費者を足すほど 1 人あたりの枠が減り、ほかのチームの読み取りの影響も受ける。拡張ファンアウトは、消費者ごとに専用の枠を割り当て、互いの影響をなくすための仕組みである。その分、追加の料金がかかる。
+
+```mermaid
+sequenceDiagram
+    participant C as 消費者
+    participant K as Kinesis
+    C->>K: SubscribeToShard
+    K-->>C: レコードを押し出す（HTTP/2）
+    K-->>C: レコードを押し出す
+    Note over C,K: 5 分で接続が切れる
+    C->>K: SubscribeToShard を呼び直す
+    K-->>C: 続きのレコードを押し出す
+```
+
 拡張ファンアウトの細かい動きは次の通り。
 
 - `SubscribeToShard` の接続は最大 5 分。続けて受け取るには呼び直す。
@@ -262,6 +367,18 @@ aws kinesis register-stream-consumer \
 ### KCL {#kcl}
 
 自前の消費者を作るなら **Kinesis Client Library（KCL）** が便利。シャードの割り当てとチェックポイントを管理し、その情報を DynamoDB のリーステーブルに保存する。テーブルの容量が足りないと、イテレーターの期限切れを招くことがある。
+
+`GetRecords` だけで消費者を作ると、どのワーカーがどのシャードを読むか、ワーカーが落ちたら誰が引き継ぐか、どこまで読んだか、リシャーディングで親子のシャードをどう読むか、をすべて自分で書くことになる。KCL はこれらをまとめて引き受ける。Kafka のコンシューマーグループと、オフセットの記録に当たる。
+
+```mermaid
+flowchart TD
+  W1["ワーカー 1"] <--> L["リーステーブル<br/>DynamoDB"]
+  W2["ワーカー 2"] <--> L
+  L -. "担当とチェックポイント" .-> S1["シャード 1、2"]
+  L -. "担当とチェックポイント" .-> S2["シャード 3、4"]
+  W1 --> S1
+  W2 --> S2
+```
 
 | 用語 | 意味 |
 | --- | --- |
@@ -294,6 +411,16 @@ Provisioned モードでシャード数を変える操作。
 | 分割 | `SplitShard` | 容量と費用が増える。ホットシャードに使う |
 | 結合 | `MergeShards` | 容量と費用が減る。コールドシャードに使う |
 | 均等な変更 | `UpdateShardCount` | 全体を指定の数にする |
+
+流量は時間とともに変わるので、シャード数も合わせて変える。増やせば溢れを防げるが、シャード時間の費用が増える。
+
+```mermaid
+flowchart TD
+  P["親シャード<br/>OPEN"] -- "SplitShard" --> C["親は CLOSED<br/>新しい書き込みは子へ"]
+  C --> A["子シャード A<br/>ハッシュ範囲の前半"]
+  C --> B["子シャード B<br/>ハッシュ範囲の後半"]
+  C -- "保持期間が切れる" --> E["親は EXPIRED<br/>読めなくなる"]
+```
 
 - 分割と結合は 2 シャード単位で行う。
 - 親シャードは `OPEN` → `CLOSED` → `EXPIRED` と変わる。
@@ -422,6 +549,20 @@ Events:
 - 毒レコードで止めないように、再試行の上限、バッチ分割、失敗の記録先を組み合わせる。
 - 処理が追いつかなければ、`ParallelizationFactor` を上げるかシャードを増やす。並列数を上げてもパーティションキー単位の順序は保たれる。
 
+シャードを止めるのは、順序を守るためである。失敗したバッチを飛ばして次へ進むと、後のレコードが先に処理され、順序が崩れる。SQS の標準キューは順序を約束しないので、失敗したメッセージだけを後回しにできる。順序と、止まらないことのどちらを優先するかを、次の設定で決める。
+
+```mermaid
+flowchart TD
+  A["バッチの処理が失敗"] --> B{"BisectBatchOnFunctionError?"}
+  B -- はい --> C["半分に分けて再試行<br/>原因のレコードを絞る"]
+  B -- いいえ --> D["同じバッチを再試行"]
+  C --> E{"MaximumRetryAttempts か<br/>MaximumRecordAgeInSeconds に達した?"}
+  D --> E
+  E -- いいえ --> D
+  E -- はい --> F["OnFailure の宛先に<br/>位置の情報を送る"]
+  F --> G["次のバッチへ進む"]
+```
+
 ### 値を入れた例 {#lambda-streams-examples}
 
 - **例（`BatchSize`）:** 1 レコード 20 ms なら、100 件で 2 秒。関数のタイムアウトはその数倍の 10 秒以上にする。1 件 100 KB なら 100 件で 10 MB になり、同期呼び出しの 6 MB を超えるので、実際のバッチは 60 件未満になる。
@@ -443,6 +584,19 @@ Events:
 [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional }
 
 ストリーミングデータをためて、宛先に **届ける** マネージドサービス。自前の消費者コードやシャード管理が要らない。
+
+ログを S3 や OpenSearch に保存するだけなら、処理のコードは要らない。ところが Kinesis Data Streams だけで作ると、読み出し、まとめ、宛先への書き込み、失敗時の再試行を自分で書くことになる。Firehose は、この「届けるだけ」の部分を引き受けるためのものである。
+
+宅配便の集荷にたとえると、荷物（レコード）を一定の量か時間までためてから、まとめて届ける。届け先が留守なら持ち帰って再配達し、それでも届かなければ、S3 以外の宛先なら S3 に保管する。その代わり、届くまでにバッファの分だけ遅れる。
+
+```mermaid
+flowchart TD
+  A["Direct PUT か<br/>Kinesis Data Streams"] --> B["バッファ<br/>サイズか時間"]
+  B --> C["Lambda で変換<br/>任意"]
+  C --> D["形式の変換、圧縮<br/>任意"]
+  D --> E["宛先<br/>S3、Redshift、OpenSearch など"]
+  E -- "再試行しても失敗" --> F["S3 のバックアップ<br/>errors/ の下"]
+```
 
 提供単位はリージョンで、AZ は選ばない。VPC の外のサービスで、VPC 内からはインターフェイスエンドポイントか NAT を経由して呼ぶ。VPC 内の OpenSearch へ配信するときは、指定したサブネットに ENI を置く（[リソースの提供単位](resource-scope.md#two-axes)）。
 
@@ -634,6 +788,17 @@ flowchart TD
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 S3 のデータに標準 SQL で問い合わせるサーバーレスのサービス。インフラの管理が要らず、実行したクエリの分だけ払う。ログ分析やアドホックな調査に使う。
+
+ログの調査は、障害の後や月末など、ときどきしか行わない。そのために分析用のクラスターやデータウェアハウスを常に動かすと、使わない時間も費用がかかり、データを読み込む作業も要る。Athena は、データを S3 に置いたまま、問い合わせたときだけ計算するためのものである。
+
+| 観点 | 自前の SQL エンジンのクラスター、DWH | Athena |
+| --- | --- | --- |
+| サーバー | 常に動かし、台数を管理する | なし |
+| データの置き場所 | クラスターのディスクに読み込む | S3 に置いたまま |
+| 料金 | 使わなくても台数分 | スキャンした量だけ |
+| 向くもの | 毎日の定型の大量の集計 | ときどきの調査、アドホックな分析 |
+
+スキャン量で払う設計なので、読む量を減らす工夫がそのまま費用の削減になる。図書館にたとえると、パーティションは棚の分類、列指向の形式は必要なページだけを開くことに当たる。全部の棚を端から読むと時間も費用もかかる。
 
 提供単位はリージョンで、AZ は選ばない。VPC の外のサービスで、VPC 内からはインターフェイスエンドポイントか NAT を経由して呼ぶ。クエリの対象は同じリージョンの Data Catalog で管理する（[リソースの提供単位](resource-scope.md#two-axes)）。
 
@@ -838,6 +1003,17 @@ aws athena update-work-group --work-group analysts --configuration-updates \
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 OpenSearch の検索と分析のクラスターを管理するサービス。全文検索、ログ分析、リアルタイムのアプリケーション監視、クリックストリーム分析に使う。OpenSearch Dashboards で可視化できる。
+
+RDB で「本文に『シューズ』を含む」を探すと、`LIKE '%シューズ%'` で全行を読むことになる。OpenSearch は、書き込むときに単語ごとの索引（転置インデックス）を作っておくので、検索のときは索引を引くだけで済む。本の巻末の索引から、言葉の載っているページを引くのと同じである。その代わり、書き込みのたびに索引を作る手間とディスクがかかる。
+
+自前でクラスターを運用する場合との違いは次のとおり。OpenSearch Service は OpenSearch のほか、旧来の Elasticsearch OSS（7.10 まで）も選べる。
+
+| 作業 | 自前の Elasticsearch、OpenSearch | OpenSearch Service |
+| --- | --- | --- |
+| サーバーの用意 | 自分で用意してインストール | ドメインを作れば用意される |
+| 故障したノード | 自分で検知して入れ替える | 自動で検出して置き換える |
+| スナップショット | 自分で設定する | 自動のスナップショットがある |
+| シャード数と台数の設計 | 自分で行う | 自分で行う（Serverless なら OCU が自動） |
 
 ドメインの提供単位はリージョンで、データノードは AZ に置かれる。作成時に VPC アクセスかパブリックアクセスを選ぶ。Serverless は VPC の外にあり、VPC エンドポイントでプライベートに接続できる（[リソースの提供単位](resource-scope.md#two-axes)）。
 

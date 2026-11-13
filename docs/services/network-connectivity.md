@@ -24,6 +24,35 @@ VPC の基本、VPC エンドポイント、Route 53 のレコードとルーテ
     - **Route 53 Resolver** は **Route 53 VPC Resolver** に改称されました。別物として、インターネットから到達できる **Route 53 Global Resolver** が加わっています。古い教材の「Route 53 Resolver」は VPC Resolver のことです。
     - **Transit Gateway Network Manager** の機能は、公式文書では **AWS Global Networks for Transit Gateways** として説明されています。コンソールは AWS Network Manager です。試験ガイドは旧称を使っています。
 
+## オンプレミスの機器との対応 {#onprem-mapping}
+
+このページのサービスの多くは、オンプレミスのネットワーク機器や回線に対応します。知っている機器に置き換えると、役割をつかみやすくなります。ただし、違う点も多いので、右の列も合わせて読んでください。
+
+| オンプレミス | AWS | 同じ点 | 違う点（AWS ならでは） |
+| --- | --- | --- | --- |
+| 専用線、閉域網 | [Direct Connect](#direct-connect) | インターネットを通らず、帯域と遅延が安定 | 回線は DX ロケーションまで。既定では暗号化されない |
+| 拠点間 VPN ルーター | [Site-to-Site VPN](#site-to-site-vpn) | IPsec、IKE、BGP | AWS 側は 1 接続に 2 トンネル。ルートベースのみ |
+| リモートアクセス VPN 装置 | [Client VPN](#client-vpn) | 端末から社内網へ入る | 認可ルールで宛先を絞る。装置の運用は不要 |
+| コアルーター、コアスイッチ | [Transit Gateway](#transit-gateway) | 全拠点をつなぐハブ。ルートテーブルは VRF に近い | 冗長化のために 2 台置かない。AZ ごとにアタッチする |
+| 通信事業者の広域網（MPLS VPN） | [Cloud WAN](#cloud-wan) | セグメントは VRF に相当 | 全体を 1 つの JSON ポリシーで宣言する |
+| 2 拠点を結ぶ直結の回線 | [VPC ピアリング](#vpc-peering) | 2 点間だけをつなぐ | 推移的に通らない。経由して先へは行けない |
+| 社内 DNS の条件付きフォワーダー | [VPC Resolver のエンドポイントと転送ルール](#route53-resolver) | ドメインごとに転送先を決める | 転送先は API で設定し、RAM で配る |
+| 境界のファイアウォール、IPS | [Network Firewall](#network-firewall)、[GWLB](#gwlb-inspection) | ステートフルな検査 | ケーブルでなく、経路で通信を引き込む |
+| ミラーポート（SPAN） | [Traffic Mirroring](#traffic-mirroring) | パケットをコピーして監視装置へ | VXLAN で包んで送る。ENI 単位 |
+| NetFlow | [フローログ](#flow-log-analysis) | 誰が誰と通信したか | SG と NACL の判定（`ACCEPT`、`REJECT`）も残る |
+| IP アドレスの管理台帳 | [IPAM](#ipam) | 範囲の割り当てと重複の防止 | VPC の作成時に自動で割り当てる |
+
+**冗長化の持ち方が違います。** オンプレミスでは、ルーターも回線も自分で 2 重にします。AWS では、AWS が中で冗長化するものと、利用者が本数を設計するものに分かれます。
+
+| 部品 | 冗長化を持つのは | 利用者がすること |
+| --- | --- | --- |
+| Transit Gateway、DX ゲートウェイ | AWS | 1 つでよい |
+| VPN の AWS 側の終端 | AWS（2 トンネルを別の AZ に） | 2 本とも設定する |
+| DX の回線とロケーション | 利用者 | 本数とロケーションを選ぶ（[回復性のモデル](#dx-resiliency)） |
+| オンプレミスのルーター（CGW） | 利用者 | 2 台にするか決める |
+
+**なぜこの設計か:** AWS の中の部品はソフトウェアで多重化できますが、オンプレミスから AWS までの物理の回線と機器は、AWS の外にあります。そのため、AWS の外へ伸びる部分ほど、冗長化の判断が利用者に残ります。
+
 ## Direct Connect {#direct-connect}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
@@ -31,6 +60,31 @@ VPC の基本、VPC エンドポイント、Route 53 のレコードとルーテ
 オンプレミスと AWS を、インターネットを通らない専用回線で接続するサービスです。物理接続（コネクション）の上に論理接続（VIF）を作り、BGP で経路を交換します。
 
 **提供単位:** 接続は Direct Connect ロケーションの物理ポートで、関連するリージョンを持ちます。VPC の外です。Direct Connect ゲートウェイはグローバルです。提供単位の考え方は[リソースの提供単位](resource-scope.md)を参照してください。
+
+#### なぜ必要か {#direct-connect-why}
+
+| 困りごと | インターネット VPN だけだと起きること | Direct Connect での解決 |
+| --- | --- | --- |
+| 毎晩数十 TB を送りたい | トンネルあたり 1.25 Gbps などの上限に当たる | 1〜400 Gbps のポート |
+| 遅延を一定にしたい | インターネットの混雑で遅延が揺れる | ISP を経由しない専用の経路 |
+| 公開のネットワークを通したくない | 暗号化しても経路はインターネット | 自社のルーターから AWS のルーターまで直結 |
+
+公式の説明では、Direct Connect は社内のネットワークと Direct Connect ロケーションを標準のイーサネットの光ファイバーで結び、ISP を経路から外します。
+
+**専用線との違い:** 回線を借りる点はオンプレミスの専用線と同じですが、AWS が受け持つのは DX ロケーションの AWS のルーターからです。自社から DX ロケーションまでの区間は、通信事業者やパートナーと別に手配します。
+
+**1 本の回線を VLAN で分けて使います。** 物理の接続の上に、VLAN ごとに VIF を作り、VIF ごとに BGP で経路を交換します。道路（光ファイバー）に、行き先ごとの車線（VIF）を引くイメージです。
+
+```mermaid
+flowchart TD
+    R["自社のルーター"] --> C["専用接続（物理ポート）<br/>1 Gbps、10 Gbps など"]
+    C --> P["プライベート VIF<br/>VLAN 101、BGP"]
+    C --> T["トランジット VIF<br/>VLAN 102、BGP"]
+    C --> U["公開 VIF<br/>VLAN 103、BGP"]
+    P --> V["VGW、DX ゲートウェイ"]
+    T --> G["DX ゲートウェイ → Transit Gateway"]
+    U --> S["S3 などの公開エンドポイント"]
+```
 
 ### 接続の種類 {#dx-connections}
 
@@ -69,6 +123,8 @@ VPC の基本、VPC エンドポイント、Route 53 のレコードとルーテ
 - **誤ると:** 10 Gbps のポートに 1000BASE-LX の機器をつなぐと、リンクが上がりません。速度と光の規格は一致させます。
 
 ### VIF の種類 {#dx-vif-types}
+
+VIF が 3 種類あるのは、行き先によって、使う IP と経路の交換相手が違うからです。VPC へはプライベート IP で VGW や DX ゲートウェイと、S3 などの公開サービスへは公開 IP で AWS の公開ネットワークと、経路を交換します。
 
 | | プライベート VIF | トランジット VIF | 公開 VIF |
 |---|---|---|---|
@@ -125,6 +181,17 @@ aws directconnect create-private-virtual-interface \
 **提供単位:** グローバルで、VPC の外です。
 
 VIF と、VGW や Transit Gateway を結ぶグローバルなリソースです。中国を除く任意のリージョンへ接続できます。実体はデータ経路の外にある BGP ルートリフレクターの集まりなので、単一障害点になりません。冗長化のために 2 つ作る必要はありません。
+
+**何のためにあるか:** DX ゲートウェイがないと、プライベート VIF は同じリージョンの VGW 1 つにしかつながりません。東京と大阪の VPC へ行くには、VIF を 2 本作ることになります。DX ゲートウェイを間に置くと、1 本の VIF から複数のリージョンへ届きます。
+
+```mermaid
+flowchart TD
+    R["自社のルーター"] --> V["プライベート VIF 1 本"]
+    V --> G["DX ゲートウェイ<br/>グローバル"]
+    G --> T["東京の VGW → VPC"]
+    G --> O["大阪の VGW → VPC"]
+    T -. 関連付け同士は通信しない .- O
+```
 
 | 項目 | 値 |
 |---|---|
@@ -211,6 +278,17 @@ aws directconnect create-lag --lag-name tokyo-lag \
 
 Resiliency Toolkit のウィザードで、モデルを選んで接続を発注します。
 
+DX の回線と機器は、利用者のルーターから DX ロケーションまでの物理の部品です。AWS が中で多重化できないので、どの障害まで耐えるかを本数と場所で決めます。データセンターの電源を 2 系統にしても、建物ごと止まる障害には耐えないのと同じで、ロケーションの障害に備えるなら場所を分けます。
+
+```mermaid
+flowchart TD
+    A["どの障害まで耐えたい?"] --> B{"DX ロケーション<br/>ごと止まる障害も?"}
+    B -- いいえ: 機器の故障だけ --> D["Development and test<br/>1 ロケーション、別デバイス"]
+    B -- はい --> C{"ロケーションが止まった後の<br/>機器の故障も?"}
+    C -- いいえ --> H["High resiliency<br/>2 ロケーション × 1"]
+    C -- はい --> M["Maximum resiliency<br/>2 ロケーション × 2"]
+```
+
 | モデル | 構成 | SLA | 耐えられる障害 |
 |---|---|---|---|
 | Maximum resiliency | **2 ロケーション × 各 2 デバイス**（別デバイスで終端） | 99.99% | デバイス、回線、ロケーション |
@@ -242,6 +320,8 @@ aws directconnect start-bgp-failover-test \
 ### MACsec {#dx-macsec}
 
 お客様のルーターと Direct Connect ロケーションの機器の間を、レイヤー 2 で暗号化します。**区間だけの暗号化**で、エンドツーエンドではありません。
+
+**何のためにあるか:** 専用線は他の利用者と経路を共有しませんが、通信そのものは暗号化されません。監査で暗号化を求められたときに、IPsec の VPN を重ねるとトンネルの帯域が上限になります。MACsec はポートの速度のまま暗号化できます。
 
 | 項目 | 内容 |
 |---|---|
@@ -290,6 +370,26 @@ aws directconnect update-connection \
 オンプレミスの顧客ゲートウェイ（CGW）と、AWS 側の VGW または Transit Gateway を IPsec で結びます。AWS の VPN はルートベースのみで、ポリシーベースは使えません。
 
 **提供単位:** VPN 接続、CGW、VGW はリージョン単位で、VPC の外のリソースです。VGW は 1 つの VPC にアタッチします。Transit Gateway もリージョン単位です。
+
+**何のためにあるか:** 拠点間 VPN と同じく、インターネットの上に暗号化したトンネルを張ります。回線の工事が要らないので、今日から使えます。Direct Connect の開通までのつなぎや、DX のバックアップにも使います。
+
+**オンプレミスの拠点間 VPN との違い:**
+
+| 項目 | よくある拠点間 VPN | AWS の Site-to-Site VPN |
+| --- | --- | --- |
+| 相手側の機器 | 相手の拠点の VPN ルーター 1 台 | VGW か Transit Gateway。終端は別の AZ に 2 つ |
+| トンネルの数 | 1 本から | 1 接続に必ず 2 本 |
+| 方式 | ポリシーベースもルートベースもある | ルートベースのみ |
+| 保守 | 自分で日程を決める | AWS が 1 本ずつ止めることがある |
+
+```mermaid
+flowchart TD
+    C["CGW<br/>自社の VPN ルーター"] --> T1["トンネル 1<br/>AZ-a で終端"]
+    C --> T2["トンネル 2<br/>AZ-c で終端"]
+    T1 --> G["VGW または Transit Gateway"]
+    T2 --> G
+    G --> V["VPC"]
+```
 
 ### トンネル {#vpn-tunnels}
 
@@ -369,6 +469,8 @@ aws ec2 modify-vpn-tunnel-options --vpn-connection-id vpn-EXAMPLE \
 ### MTU と MSS {#vpn-mtu}
 
 IPsec のヘッダーの分だけ小さくなります。**ジャンボフレームと PMTUD は非対応**です。
+
+封筒にたとえると、IPsec は元のパケットを別の封筒に入れて送ります。外の封筒の大きさ（1500）は変わらないので、中に入る手紙はヘッダーの分だけ小さくなります。
 
 | 暗号 | ハッシュ | NAT-T | MTU | MSS（IPv4） |
 |---|---|---|---|---|
@@ -498,6 +600,19 @@ aws ec2 create-vpn-connection --type ipsec.1 \
 
 利用者の端末から OpenVPN ベースのクライアントで接続するマネージド VPN です。拠点と拠点をつなぐ Site-to-Site VPN とは用途が違います。
 
+オンプレミスのリモートアクセス VPN 装置に当たります。違いは、装置の台数や冗長化を考えず、関連付けたサブネットの数で同時接続の上限が増えることです。
+
+接続した利用者の通信は、次の順に確かめられます。どれか 1 つが欠けても届きません。
+
+```mermaid
+flowchart TD
+    A["端末が接続"] --> B["認証<br/>AD、証明書、SAML"]
+    B --> C["認可ルール<br/>この人はこの宛先へ行けるか"]
+    C --> D["ルート<br/>宛先への経路があるか"]
+    D --> E["セキュリティグループ<br/>宛先側で許可されるか"]
+    E --> F["宛先に届く"]
+```
+
 **提供単位:** エンドポイントはリージョン単位です。VPC のサブネットへ関連付けると、そのサブネットに ENI が置かれます。
 
 | 項目 | 内容 |
@@ -561,6 +676,26 @@ aws ec2 authorize-client-vpn-ingress --client-vpn-endpoint-id cvpn-endpoint-EXAM
 VPC、VPN、Direct Connect を 1 か所で接続するリージョンのルーターです。VPC を増やしても接続先は 1 つで済みます。高可用性の設計なので、冗長化のために 2 つ作る必要はありません。
 
 **提供単位:** Transit Gateway はリージョン単位で、VPC の外です。VPC アタッチメントは、AZ ごとのサブネットに ENI を置きます。一覧は[リソースの提供単位](resource-scope.md#scope-regional-vpc)を参照してください。
+
+#### なぜ必要か {#transit-gateway-why}
+
+VPC 同士を 1 対 1 でつなぐと、VPC が増えるほど接続の本数が急に増えます。`n` 個なら `n × (n - 1) / 2` 本で、10 個で 45 本、30 個で 435 本です。
+
+| 困りごと | ハブがないと起きること | Transit Gateway での解決 |
+| --- | --- | --- |
+| VPC が増え続ける | 新しい VPC のたびに全 VPC とピアリング | VPC ごとに 1 本のアタッチメント |
+| DX や VPN を全 VPC で使いたい | VPC ごとに VGW と VIF を用意する | ハブに 1 回つなげば全 VPC へ |
+| 本番と開発を分けたい | ピアリングを張るかどうかで管理する | ルートテーブルで分ける |
+| 通信を 1 か所で検査したい | VPC ごとに検査装置を置く | 経路を検査 VPC へ集める |
+
+**オンプレミスにたとえると、** データセンターのコアルーターです。各フロアのスイッチ（VPC）と WAN の回線（DX、VPN）を 1 台に集め、経路表で行き先を決めます。公式も、Transit Gateway をリージョンの仮想ルーターと説明しています。
+
+| | コアルーター | Transit Gateway |
+| --- | --- | --- |
+| 冗長化 | 2 台並べて VRRP などで切り替える | AWS が中で冗長化する。1 つでよい |
+| 拡張 | 性能が足りなければ機種を替える | 通信量に応じて伸縮する |
+| 分離 | VRF | ルートテーブル（関連付けと伝播） |
+| ポート | 物理のポートに配線する | アタッチメント。VPC は AZ ごとにサブネットを指定 |
 
 ### 作成時の設定 {#tgw-options}
 
@@ -627,6 +762,23 @@ aws ec2 create-transit-gateway-vpc-attachment \
 - **重複の例:** `10.1.0.0/16` の VPC がすでにあるときに、同じ CIDR の VPC をアタッチすると、経路が伝播しません。
 
 ### ルートテーブル {#tgw-route-tables}
+
+1 つのハブに全部をつなぐと、既定では全部が互いに通信できます。ルートテーブルは、ハブの中に「部屋」を作って、どこからどこへ行けるかを分けるための仕組みです。オンプレミスのルーターの VRF に近い考え方です。
+
+**関連付けは「どの部屋の地図を見るか」、伝播は「どの部屋の地図に自分の住所を載せるか」**です。2 つを別々に決められるので、片方向の見え方を作れます。
+
+```mermaid
+flowchart TD
+    P["本番 VPC"] -- 関連付け --> RP["rt-prod"]
+    D["開発 VPC"] -- 関連付け --> RD["rt-dev"]
+    S["共有 VPC、DX"] -- 関連付け --> RS["rt-shared"]
+    S -. 伝播 .-> RP
+    S -. 伝播 .-> RD
+    P -. 伝播 .-> RS
+    D -. 伝播 .-> RS
+```
+
+本番と開発の経路は互いの表に載らないので、本番と開発は通信できません。共有 VPC の表には両方が載るので、どちらとも通信できます。
 
 | 操作 | 意味 | 数 |
 |---|---|---|
@@ -789,6 +941,20 @@ SD-WAN などの仮想アプライアンスを、GRE と BGP で Transit Gateway
 
 アプライアンスモードを有効にすると、フローの間ずっと検査 VPC の同じ AZ を使います。
 
+```mermaid
+sequenceDiagram
+    participant A as VPC A（1a）
+    participant FA as 検査 1a
+    participant FC as 検査 1c
+    participant B as VPC B（1c）
+    A->>FA: SYN（1a に留まる）
+    FA->>B: 検査して通す
+    B->>FC: SYN-ACK（1c に留まる）
+    Note over FC: 行きを知らないので破棄
+```
+
+公式の説明では、既定の Transit Gateway が AZ をまたぐのは、AZ の障害時か、その AZ にアタッチメントのサブネットがないときだけです。AZ ごとに独立して流れるこの性質が、行きと戻りの両方を見るステートフルな装置を挟むときだけ裏目に出ます。
+
 ```bash
 aws ec2 modify-transit-gateway-vpc-attachment \
   --transit-gateway-attachment-id tgw-attach-inspection \
@@ -856,6 +1022,14 @@ Network Firewall を、検査 VPC を作らず直接 Transit Gateway に付け�
 ## ルートの優先順位 {#route-priority}
 
 **最長一致が常に最初**です。同じ長さの経路があるときだけ、次の規則を使います。VPC、VGW、Transit Gateway で規則が違うので、どの表を引いているか確かめます。
+
+**オンプレミスのルーターとの対応:** 最長一致が先なのは、どのルーターでも同じです。同じ長さの経路を比べる順位は、オンプレミスのルーターの管理距離（Administrative Distance）に当たります。ただし AWS の順位は固定で、利用者が数値を変えることはできません。順位を動かしたいときは、経路の長さや BGP の属性を変えます。
+
+| 考え方 | オンプレミスのルーター | AWS |
+| --- | --- | --- |
+| 最優先 | 最長一致 | 最長一致（VPC では `local` がさらに先） |
+| 同じ長さの比較 | 管理距離（変更できる） | 種類ごとの固定の順位 |
+| BGP 同士の比較 | 属性で決める | 属性で決める（AWS が読む属性は下の [BGP と経路制御](#bgp)） |
 
 ### VPC ルートテーブル {#vpc-route-priority}
 
@@ -1009,6 +1183,22 @@ BGP で受けた経路を、VPC とインターネットゲートウェイのル
 - **誤ると:** VGW に関連付けたルートテーブルは対象外です。Transit Gateway のルートテーブルへ広げたいなら、[Connect](#tgw-connect) を使います。
 
 ## BGP と経路制御 {#bgp}
+
+DX や VPN の回線が 2 本以上あると、「どちらを使うか」と「片方が切れたらもう片方へ移る」を決める必要があります。静的ルートでは、切れたことを経路に反映できません。BGP は経路を交換し続けるので、回線が切れれば経路が消え、残りの回線へ自動で移ります。
+
+**通信の向きごとに、決める側が違います。** 行きの経路は送る側のルーターが選ぶので、オンプレミスから出る通信は自分のルーターで、AWS から戻る通信は AWS が受け取った広告で決まります。
+
+```mermaid
+flowchart TD
+    subgraph OUT["オンプレミス → AWS"]
+        O1["自分のルーターが選ぶ"] --> O2["受信した経路の<br/>Local preference を設定"]
+    end
+    subgraph IN["AWS → オンプレミス"]
+        A1["AWS が選ぶ"] --> A2["広告する経路の長さ、<br/>コミュニティ、AS_PATH で誘導"]
+    end
+```
+
+片方だけ設定すると、行きと戻りで別の回線を使う非対称な経路になります。ステートフルな装置があると、ここで通信が切れます。
 
 ### 属性の一覧 {#bgp-attributes}
 
@@ -1196,6 +1386,10 @@ AWS は BGP の MED で主のトンネルを示します。トンネルの保守
 
 複数リージョンの WAN を、1 つの JSON ポリシーで宣言するマネージドサービスです。リージョンごとに Transit Gateway を作ってピアリングし、ルートテーブルをそろえる作業を置き換えます。
 
+**何のためにあるか:** Transit Gateway のピアリングは静的ルートのみです。リージョンが 5 つになると、ピアリングとルートテーブルの静的ルートを、リージョンの組み合わせごとに手で書きます。Cloud WAN は「どのセグメントがどこと話せるか」だけを書けば、各リージョンの経路を AWS が作ります。
+
+オンプレミスにたとえると、通信事業者の MPLS VPN の網に近いものです。拠点はつなぐだけで、VRF（セグメント）の割り当ては網の側で決めます。違いは、その網の設定を自分で JSON に書く点です。
+
 **提供単位:** コアネットワークはグローバルで、VPC の外です。実際の接続点（CNE）は、ポリシーで指定したリージョンごとに置かれます。
 
 | 概念 | 内容 |
@@ -1284,6 +1478,17 @@ AWS は BGP の MED で主のトンネルを示します。トンネルの保守
 
 2 つの VPC を直接接続します。リージョンをまたぐことも、アカウントをまたぐこともできます。
 
+2 つの建物の間に専用の通路を 1 本作るイメージです。ハブを経由しないので、通路の部品が故障点や帯域の上限になりません。その代わり、通路はその 2 棟だけのものです。A と B、B と C の間に通路があっても、B を通り抜けて A から C へは行けません。
+
+```mermaid
+flowchart TD
+    A["VPC A"] <-->|ピアリング| B["VPC B"]
+    B <-->|ピアリング| C["VPC C"]
+    A -. 通れない .-> C
+```
+
+この「推移的に通らない」性質は、つないだ相手以外へ通信が広がらないという安全面の利点でもあります。
+
 **提供単位:** ピアリング接続はリージョン単位のリソースで、2 つの VPC の間に作ります。ゲートウェイの部品を持たないので、単一障害点や帯域のボトルネックはありません。
 
 | 項目 | 内容 |
@@ -1353,6 +1558,14 @@ aws ec2 create-route --route-table-id rtb-b \
 
 世界共通の固定 IP でトラフィックを受け、最寄りのエッジから AWS ネットワークを通って正常なエンドポイントへ送ります。
 
+**何のためにあるか:** DNS でリージョンを切り替える方式は、利用者側のキャッシュが TTL の間は古い IP を返します。また、インターネットの経路は混雑に左右されます。Global Accelerator は IP を固定したまま裏側の行き先だけを変えるので、DNS の TTL を待たずに切り替わります。利用者の通信は、近くのエッジから先は AWS のネットワークを通ります。
+
+| 困りごと | DNS だけの構成 | Global Accelerator |
+| --- | --- | --- |
+| 取引先のファイアウォールに IP を登録してもらう | ALB の IP は変わる | 固定の 2 個の IP |
+| リージョンの障害で切り替える | TTL の間は古い IP へ向かう | IP は同じまま行き先を変える |
+| 遠くの利用者の遅延 | 全区間をインターネットで通る | 最寄りのエッジから AWS のネットワーク |
+
 **提供単位:** グローバルで、VPC の外です。エンドポイントとして、リージョンの ALB、NLB、EC2、Elastic IP を指定します。一覧は[リソースの提供単位](resource-scope.md)を参照してください。
 
 | | 標準アクセラレーター | カスタムルーティングアクセラレーター |
@@ -1414,6 +1627,14 @@ aws ec2 create-route --route-table-id rtb-b \
 
 ## IP アドレス設計と IPAM {#ip-addressing}
 
+IP の範囲は、町の住所の番地に当たります。後から番地を付け替えるのは大工事で、2 つの町に同じ番地があると、郵便（経路）が正しく届きません。VPC でも同じで、CIDR は後から縮めたり付け替えたりしにくく、重なった VPC 同士はそのままではつなげません。
+
+| 困りごと | 最初に決めないと起きること | 使う仕組み |
+| --- | --- | --- |
+| 後で VPC をオンプレミスとつなぐ | 社内と同じ `10.0.0.0/16` を使っていて経路が作れない | 重ならない範囲を最初に割り当てる |
+| アカウントごとに開発者が VPC を作る | 各自が好きな CIDR を選び、重複する | [IPAM](#ipam) のプール |
+| Pod や Lambda で IP を大量に使う | サブネットの IP が枯渇する | セカンダリ CIDR |
+
 ### VPC の CIDR {#vpc-cidr}
 
 | 項目 | 内容 |
@@ -1474,6 +1695,8 @@ aws ec2 associate-vpc-cidr-block --vpc-id vpc-EXAMPLE --cidr-block 100.64.0.0/16
 **提供単位:** IPAM はホームリージョンに作り、運用するリージョンを指定して使います。VPC の外です。プールはロケールのリージョンで使います。
 
 VPC IP Address Manager は、組織全体の IP を計画、割り当て、監視する機能です。
+
+オンプレミスでは、IP の割り当てを表計算の台帳で管理し、担当者が手で払い出すことがよくあります。台帳と実際の設定がずれると、重複に気づけません。IPAM では、VPC を作るときにプールから自動で払い出すので、台帳と実際が常に一致します。
 
 | 概念 | 内容 |
 |---|---|
@@ -1578,6 +1801,8 @@ Global Accelerator へ持ち込む場合は手順が別です。
 
 **Egress-only インターネットゲートウェイ:** IPv6 の NAT ゲートウェイに相当する部品です。ステートフルで、内から外への接続とその応答だけを通します。
 
+**なぜ NAT ではなく別の部品なのか:** IPv4 では、プライベート IP を公開 IP に変換すること（NAT）が、外から入れない仕組みも兼ねていました。IPv6 のアドレスはもともと公開で、変換は要りません。そこで、アドレスは変えずに「外から始まる接続だけを止める」部品として分けています。
+
 | 項目 | 内容 |
 |---|---|
 | 対象 | IPv6 のみ |
@@ -1614,6 +1839,15 @@ aws ec2 modify-subnet-attribute --subnet-id subnet-EXAMPLE --enable-dns64
 ## NAT と Elastic IP {#nat-eip}
 
 **提供単位:** ゾーン型の NAT ゲートウェイは AZ 単位でサブネットに置きます。リージョン型は VPC に属し、自動で AZ へ広がります。Elastic IP はリージョン単位です。一覧は[リソースの提供単位](resource-scope.md)を参照してください。
+
+**何のためにあるか:** プライベートサブネットのサーバーにも、OS の更新や外部 API の呼び出しなど、外へ出る用事があります。NAT ゲートウェイは、出ていく通信の送信元を自分の IP に置き換えて代わりに外と話し、外から始まる接続は受けません。家庭のブロードバンドルーターの NAPT と同じ役割です。
+
+| | 家庭やオフィスの NAPT ルーター | NAT ゲートウェイ |
+| --- | --- | --- |
+| 内から外だけ通す | 同じ | 同じ |
+| フィルター | ルーターのファイアウォールで設定 | 付けられない。SG と NACL で絞る |
+| 冗長化 | 機器を 2 台にする | ゾーン型は AZ ごとに作る。リージョン型は自動 |
+| 同時接続の上限 | 機器の性能による | 同じ宛先へ IP あたり 55,000 |
 
 ### NAT ゲートウェイ {#nat-gateway}
 
@@ -1691,6 +1925,8 @@ aws ec2 create-nat-gateway --subnet-id subnet-100-64 --connectivity-type private
 
 固定の公開 IPv4 アドレスです。
 
+EC2 に自動で付く公開 IP は、停止と起動で変わります。取引先の許可リストや DNS に登録する IP が変わると困るので、アカウントで確保しておき、付け替えて使う IP として分けています。
+
 | 項目 | 内容 |
 |---|---|
 | 範囲 | 1 つのリージョンのみ。別のリージョンへ移せない |
@@ -1715,6 +1951,20 @@ aws ec2 associate-address --allocation-id eipalloc-EXAMPLE --instance-id i-EXAMP
 ## Route 53 VPC Resolver とプライベート DNS {#route53-resolver}
 
 Route 53 のレコードとルーティングポリシーは [ネットワーク](networking.md#route53) を参照してください。ここではハイブリッドとプライベートの DNS を扱います。
+
+**何のためにあるか:** 回線で VPC とオンプレミスがつながっても、名前が引けなければ使えません。社内の端末は社内の DNS サーバーに聞き、VPC の EC2 は VPC Resolver に聞きます。お互いが相手のドメインを知らないので、ドメインごとに相手へ問い合わせを回す（転送する）仕組みが要ります。
+
+**オンプレミスの DNS との対応:**
+
+| オンプレミス | AWS | 違う点 |
+| --- | --- | --- |
+| 社内の DNS キャッシュサーバー | VPC Resolver（VPC+2） | 全 VPC で最初から動く。サーバーの管理は不要 |
+| 社内向けの内部ゾーン | プライベートホストゾーン | VPC に関連付けた VPC からだけ見える |
+| 条件付きフォワーダー | 転送ルールとアウトバウンドエンドポイント | ルールを RAM で他のアカウントへ配れる |
+| 外部から問い合わせを受ける DNS サーバー | インバウンドエンドポイント | オンプレミスから VPC+2 への転送は非対応なので、受け口を別に置く |
+| スプリット DNS | 公開ゾーンと同名のプライベートホストゾーン | プライベート側にないレコードは NXDOMAIN |
+
+[![ハイブリッド DNS の構成](../assets/diagrams/network-connectivity-hybrid-dns.png)](../assets/diagrams/network-connectivity-hybrid-dns.png)
 
 **提供単位:** VPC Resolver は各 VPC で動きます。エンドポイントと転送ルールはリージョン単位で、エンドポイントの ENI は VPC のサブネットに置きます。プライベートホストゾーンはグローバルで、VPC の外から関連付けます。一覧は[リソースの提供単位](resource-scope.md)を参照してください。
 
@@ -1950,6 +2200,8 @@ zone "aws.example.com" {
 
 VPC Resolver を通るクエリのドメイン名でフィルターします。
 
+**何のためにあるか:** マルウェアは、外の指令サーバーへつなぐ前に、その名前を DNS で引きます。名前を引く段階で止めれば、IP が変わり続ける相手でも接続を始めさせずに済みます。DNS の問い合わせに情報を埋めて持ち出す手口（DNS トンネリング）も、ここで見つけます。オンプレミスでいえば、社内の DNS サーバーに入れるドメインのブロックリスト（DNS フィルタリング）に当たります。
+
 | 要素 | 内容 |
 |---|---|
 | ルールグループ | VPC に関連付ける。アカウントのリージョンあたり VPC に 5 個まで。優先度の小さい順 |
@@ -1985,6 +2237,27 @@ VPC Resolver を通るクエリのドメイン名でフィルターします。
 VPC の境界でトラフィックを検査するマネージドのファイアウォールと IPS です。ステートフルエンジンは Suricata 互換です。
 
 **提供単位:** リージョン単位です。ファイアウォールのエンドポイントは、AZ ごとに VPC の専用サブネットへ置きます。
+
+#### なぜ必要か {#network-firewall-why}
+
+SG と NACL は、IP とポートで通すかどうかを決めます。次のような要件には足りません。
+
+| 困りごと | SG と NACL だけだと起きること | Network Firewall での解決 |
+| --- | --- | --- |
+| 外へ出る HTTPS を、許可したドメインだけにしたい | IP が変わる相手を IP で書けない | TLS の SNI でドメインを見て通す |
+| 既知の攻撃のパターンを止めたい | パケットの中身を見ない | Suricata のルールで検査（IPS） |
+| VPC ごとにルールがばらばらになる | 全 VPC の SG を見直す | 1 つのポリシーを全体に適用 |
+
+**オンプレミスとの違い:** オンプレミスの境界ファイアウォールは、回線とスイッチの間にケーブルでつなぎ、物理的に全通信を通します。Network Firewall は VPC のサブネットに置くエンドポイントで、**ルートテーブルで通信を向けたときだけ**検査します。経路を 1 つ書き忘れると、その通信は素通りします。
+
+```mermaid
+flowchart TD
+    I["インターネット"] --> G["IGW<br/>エッジのルートテーブル"]
+    G --> F["ファイアウォールエンドポイント<br/>同じ AZ"]
+    F --> A["保護するサブネット"]
+    A -->|0.0.0.0/0 の経路| F
+    F --> G
+```
 
 [![Transit Gateway と GWLB による集中検査](../assets/diagrams/network-connectivity-inspection.png)](../assets/diagrams/network-connectivity-inspection.png)
 
@@ -2120,6 +2393,19 @@ pass tls $HOME_NET any -> $EXTERNAL_NET 443 (tls.sni; content:".example.com"; en
 
 GWLB の概要は [ネットワーク](networking.md#gwlb) にあります。ここでは検査の構成と設定を扱います。
 
+**何のためにあるか:** 他社製のファイアウォールを使い続けたいとき、仮想アプライアンスを EC2 で動かします。しかし 1 台では故障点になり、台数を増やすと「どの通信をどの台へ送るか」と「行きと戻りを同じ台へ送るか」が問題になります。GWLB は、元のパケットを GENEVE で包んで、フローごとに同じアプライアンスへ届けます。オンプレミスで、ファイアウォールの前後に負荷分散装置を置いて冗長化する構成を、1 つの部品にしたものです。
+
+```mermaid
+flowchart TD
+    A["送信元"] --> E["GWLB エンドポイント<br/>経路で引き込む"]
+    E --> L["GWLB<br/>フローごとに同じ台を選ぶ"]
+    L -->|GENEVE 6081| F1["アプライアンス 1"]
+    L -->|GENEVE 6081| F2["アプライアンス 2"]
+    F1 --> L
+    L --> E
+    E --> D["宛先"]
+```
+
 **提供単位:** GWLB はリージョン単位で、VPC の中です。AZ ごとのサブネットにノードを置きます。GWLB エンドポイントは AZ 単位です。
 
 | 設定 | 既定値、範囲 | 内容 |
@@ -2190,6 +2476,16 @@ GWLB の概要は [ネットワーク](networking.md#gwlb) にあります。こ
 **誤ると:** アプリとエンドポイントを同じサブネットに置くと、同じサブネットの通信は VPC 内の `local` で届くので、エンドポイントを通らない経路が生まれます。
 
 ## 接続の調査 {#network-analysis}
+
+オンプレミスでは、機器にログインして経路表を見たり、スイッチのポートにキャプチャ装置をつないだりして調べます。AWS では機器にログインできないので、同じ目的の調査を、設定の解析とログで行います。
+
+| オンプレミスでの調べ方 | AWS で使うもの | 違う点 |
+| --- | --- | --- |
+| 経路表と ACL を順に見て、届くか推理する | [Reachability Analyzer](#reachability-analyzer) | パケットを送らず、設定から経路を計算する |
+| 定期的な設定の監査 | [Network Access Analyzer](#network-access-analyzer) | 「あってはならない経路」を全体から探す |
+| コアルーターの経路表 | [Route Analyzer](#route-analyzer) | Transit Gateway の経路だけを見る |
+| ミラーポートとキャプチャ装置 | [Traffic Mirroring](#traffic-mirroring) | ENI のパケットを VXLAN で送る |
+| NetFlow のコレクター | [フローログ](#flow-log-analysis) | SG と NACL の判定も残る |
 
 | ツール | 実パケットか | 質問の形 | 結果 |
 |---|---|---|---|
@@ -2488,6 +2784,18 @@ fields @timestamp, srcAddr, dstAddr, dstPort, action
 
 **経路全体の MTU は、最も小さい区間で決まります。** 超えたパケットはフラグメントされるか、DF ビットがあれば破棄されます。
 
+トンネルの高さ制限にたとえると分かりやすくなります。途中に低いトンネルが 1 つでもあれば、背の高いトラックはそこを通れません。VPC 内は 9001 と大きいので、外へ出る経路の低い区間で問題が出ます。
+
+```mermaid
+flowchart TD
+    E["EC2<br/>9001"] --> T["Transit Gateway<br/>8500"]
+    T --> D["トランジット VIF<br/>8500"]
+    D --> O["オンプレミス<br/>1500"]
+    O --> R["経路全体は 1500"]
+```
+
+大きなフレームを使うのは、1 パケットに多く載せて、ヘッダーと処理の回数を減らすためです。経路の全区間がそろっていないと、その利点よりも、大きなパケットだけが消える障害のほうが問題になります。
+
 | 区間 | MTU |
 |---|---|
 | VPC 内（同じリージョン） | 9001 |
@@ -2590,6 +2898,8 @@ sudo ip route add 192.168.0.0/16 via 10.0.0.1 mtu 1400
 
 サービス間の通信を接続、認可、監視するアプリケーションネットワークのサービスです。IP ルーティングではなく、サービスのレベルでつなぎます。
 
+**何のためにあるか:** マイクロサービスが多数のアカウントに散らばると、Transit Gateway で全 VPC をつなぐには CIDR の重複を避け、SG で相手の IP を書く必要があります。VPC Lattice は「どのサービスを、誰が呼べるか」を IAM の形で書き、IP の経路は交換しません。ネットワークの担当とアプリの担当が、それぞれ自分の範囲だけを設定できます。
+
 **提供単位:** リージョン単位です。サービスとサービスネットワークは VPC の外のリソースで、VPC に関連付けて使います。リソースゲートウェイは VPC の中に置きます。
 
 | 要素 | 内容 |
@@ -2670,6 +2980,8 @@ ECS については [コンテナ](containers.md) を参照してください。
 ## Outposts、Local Zones、Wavelength のネットワーク {#edge-infrastructure}
 
 VPC をリージョンの外へ広げる 3 つの方法です。
+
+どれも「計算する場所を、利用者やデータの近くへ移す」ための仕組みです。リージョンは都市から離れた場所にあることもあり、遅延や、データを置ける場所の規制が問題になるときに使います。ネットワークの考え方は同じで、サブネットを作る場所（AZ に相当する単位）が増えます。
 
 **提供単位:** Outposts、Local Zones、Wavelength Zones は、いずれも AZ に相当する単位です。VPC のサブネットをそこへ作るので、VPC の中です。
 
@@ -2757,6 +3069,19 @@ aws ec2 create-route --route-table-id rtb-wavelength \
 
 ### オンプレミスとの接続 {#choosing-hybrid}
 
+```mermaid
+flowchart TD
+    A["誰とつなぐ?"] --> B{"拠点か、利用者の端末か"}
+    B -- 端末 --> CV["Client VPN"]
+    B -- 拠点 --> C{"すぐ必要、または<br/>帯域は数 Gbps まで?"}
+    C -- はい --> V["Site-to-Site VPN"]
+    C -- いいえ: 大容量、安定した遅延 --> D["Direct Connect"]
+    D --> E{"暗号化も必須?"}
+    E -- ルーターまで --> M["MACsec"]
+    E -- VPC まで --> P["プライベート IP VPN"]
+    D --> F["バックアップに VPN を足す"]
+```
+
 | 要件 | 選択 |
 |---|---|
 | 今日から使いたい、低コスト | Site-to-Site VPN |
@@ -2779,6 +3104,19 @@ aws ec2 create-route --route-table-id rtb-wavelength \
 - 営業 200 人のノート PC から: Client VPN です。
 
 ### VPC 同士の接続 {#choosing-multi-vpc}
+
+```mermaid
+flowchart TD
+    A["何をつなぐ?"] --> B{"ネットワーク全体か、<br/>特定のサービスだけか"}
+    B -- サービスだけ --> C{"多数のサービスを<br/>IAM で認可?"}
+    C -- はい --> L["VPC Lattice"]
+    C -- いいえ: 1 つを公開 --> PL["PrivateLink"]
+    B -- ネットワーク全体 --> D{"VPC の数は?"}
+    D -- 2、3 個 --> P["VPC ピアリング"]
+    D -- 多数 --> E{"多数のリージョンを<br/>1 つのポリシーで?"}
+    E -- いいえ --> T["Transit Gateway"]
+    E -- はい --> W["Cloud WAN"]
+```
 
 | 要件 | 選択 |
 |---|---|
@@ -2944,6 +3282,7 @@ aws ec2 create-route --route-table-id rtb-wavelength \
 
 ## 参考 {#references}
 
+- [What is Direct Connect?](https://docs.aws.amazon.com/directconnect/latest/UserGuide/Welcome.html)
 - [Direct Connect: 仮想インターフェイス](https://docs.aws.amazon.com/directconnect/latest/UserGuide/WorkingWithVirtualInterfaces.html)
 - [Direct Connect: ルーティングポリシーと BGP コミュニティ](https://docs.aws.amazon.com/directconnect/latest/UserGuide/routing-and-bgp.html)
 - [Direct Connect: 接続の選択肢](https://docs.aws.amazon.com/directconnect/latest/UserGuide/connection_options.html)

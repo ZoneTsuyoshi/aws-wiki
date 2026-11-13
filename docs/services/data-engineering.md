@@ -20,11 +20,54 @@
 | 組織横断でデータを検索、申請、共有する | [DataZone と SageMaker Catalog](#datazone-unified-studio) | ビジネスカタログ |
 | ダッシュボードを作る | [Quick Sight](#quick-sight) | 旧 QuickSight |
 
+## なぜ部品が多いのか {#why-many-services}
+
+データ基盤は「集める」「置く」「意味を付ける」「変換する」「分析する」「見せる」「権限を管理する」という別々の仕事の組み合わせです。AWS はこれを 1 つの製品にせず、仕事ごとのサービスに分けています。データは S3 に 1 か所だけ置き、そこに複数のエンジンを付け替えられるようにするためです。
+
+#### なぜ必要か {#why-many-services-why}
+
+| 困りごと | 1 台の DWH にまとめると起きること | 使う仕組み |
+| --- | --- | --- |
+| ログが毎日 1 TB 増える | DWH のディスクを足すたびにノードを買い増す | S3 に置き、計算と分ける |
+| 同じデータを SQL と Spark と ML で使いたい | エンジンごとにデータをコピーし、食い違う | Data Catalog で定義を共有する |
+| 夜間のバッチだけ重い | ピークに合わせた台数が、昼も遊ぶ | Glue、EMR Serverless で使う時だけ動かす |
+| 部署ごとに見せる列を変えたい | テーブルを部署の数だけ作る | Lake Formation の列と行の権限 |
+| ジョブの順番と失敗時の再実行 | cron と手作業の再実行 | Step Functions、MWAA、Glue ワークフロー |
+
+#### オンプレミスとの対比 {#why-many-services-onprem}
+
+| オンプレミス | AWS | 同じ点 | 違う点(AWS ならでは) |
+| --- | --- | --- | --- |
+| ETL サーバーと ETL ツール | Glue | 抽出、変換、ロードを定義して動かす | サーバーを持たず、実行した時間だけ払う |
+| Hadoop クラスター | EMR | Spark、Hive をそのまま動かす | データを S3 に置けば、クラスターはジョブの間だけ作って消せる |
+| DWH の専用機 | Redshift | 列指向、並列処理、SQL | ストレージ(RMS)を計算と別に増やせる |
+| ファイルサーバーのデータ置き場 | S3 のデータレイク | ファイルとして置く | 容量の上限を意識しない。複数のエンジンが同時に読む |
+| Hive メタストア、データ辞書 | Glue Data Catalog | テーブルの定義と場所を持つ | Athena、EMR、Redshift で共有する |
+| DB の `GRANT` とファイルの ACL | Lake Formation | テーブルや列ごとに権限を付ける | S3 のファイルにも、テーブルの単位で効く |
+| ジョブ管理ツール、cron | Step Functions、MWAA | 順序、待ち合わせ、再実行 | 実行の履歴と状態が残る |
+| 自前の Kafka クラスター | MSK | Kafka の API とツール | ブローカーの交換やパッチを AWS が行う |
+
+```mermaid
+flowchart LR
+    I["集める<br/>AppFlow、DMS、MSK、Kinesis"] --> S["置く<br/>S3、Iceberg"]
+    S --> C["意味を付ける<br/>Data Catalog、クローラー"]
+    C --> T["変換する<br/>Glue、EMR"]
+    T --> S
+    C --> Q["分析する<br/>Athena、Redshift"]
+    Q --> V["見せる<br/>Quick Sight"]
+    G["権限を管理する<br/>Lake Formation"] -.-> C
+    O["順番を管理する<br/>Step Functions、MWAA"] -.-> T
+```
+
+部品を分けた代わりに、つなぎ方を自分で決める必要があります。迷ったら、データは S3 に Parquet か Iceberg で置き、Data Catalog に登録する、という土台から始めます。
+
 ## AWS Glue {#glue}
 
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 サーバーレスのデータ統合サービスです。メタデータのカタログ、スキーマの推定、Spark ベースの ETL、ワークフローをまとめて提供します。
+
+オンプレミスの ETL サーバーは、月末の一番重い処理に合わせて台数を決め、普段は余らせがちです。Glue はジョブを動かす間だけ Spark の実行環境を用意し、使った DPU と時間の分だけ払う形にしています。その代わり、アプリケーションやバージョンを選ぶ自由度は EMR より低くなります。
 
 提供単位はリージョンで、AZ は選びません。VPC の外のサービスです。VPC 内の RDS などを読むときは、Glue の接続に指定したサブネットへ ENI を置きます（[リソースの提供単位](resource-scope.md#two-axes)）。
 
@@ -41,6 +84,19 @@
 
 AWS アカウントのリージョンごとに 1 つある、永続的なメタデータストアです。
 
+S3 にあるのはただのファイルです。どの列が何の型か、どのフォルダが 1 つのテーブルかは、ファイルを見ても分かりません。Data Catalog は、図書館の蔵書目録のように「何が、どこに、どんな形で」あるかを記録します。目録を共有すれば、Athena も EMR も Redshift も、同じ定義で同じデータを読めます。
+
+```mermaid
+flowchart LR
+    A["Athena"] --> DC["Data Catalog<br/>列、型、場所"]
+    E["EMR"] --> DC
+    R["Redshift Spectrum"] --> DC
+    DC -. "LOCATION" .-> S3["S3 のファイル<br/>本体はここ"]
+    A --> S3
+    E --> S3
+    R --> S3
+```
+
 データベースとテーブルはメタデータだけを持ちます。データ本体は S3 などに残ります。そのため、テーブルを削除しても S3 のファイルは消えません。
 
 Athena、EMR、Redshift Spectrum が同じカタログを参照できます。Apache Hive メタストアの代わりとして EMR から使うのが典型です。
@@ -56,6 +112,8 @@ Athena、EMR、Redshift Spectrum が同じカタログを参照できます。Ap
 ### クローラー {#glue-crawlers}
 
 データストアを読み、スキーマを推定して Data Catalog のテーブルとパーティションを作ります。ストリーミングのソースには使えません。ストリーミングのテーブルは手動で定義します。
+
+他社や他部署から届くファイルは、列が予告なく増えたり、フォルダが日々増えたりします。そのたびに人がテーブル定義を書き直すと、追いつきません。クローラーは定義の作成と更新を自動にします。その代わり、推定が外れると意図しないテーブルが増えるので、下の設定で範囲を絞ります。
 
 | 設定 | 何が変わるか | 既定値 | 誤ったときの症状 |
 | --- | --- | --- | --- |
@@ -204,6 +262,20 @@ frame = glueContext.create_dynamic_frame.from_catalog(
 
 前回までに処理した位置を覚え、新しいデータだけを処理する機能です。既定は無効で、毎回すべてのデータを処理します。
 
+本に挟む栞(しおり)と同じ考え方です。データが毎日増えるのに毎回最初から読むと、処理時間と費用が日ごとに増え、同じ行を二重に書く恐れもあります。「どこまで読んだか」をジョブ自身が覚えておけば、自分で処理済みの一覧を管理せずに済みます。
+
+```mermaid
+sequenceDiagram
+    participant J as Glue ジョブ
+    participant B as ブックマーク
+    participant S as S3
+    J->>B: job.init で前回の位置を読む
+    J->>S: 前回より新しいファイルだけ読む
+    J->>J: 変換と書き込み
+    J->>B: job.commit で位置を進める
+    Note over J,B: commit がないと位置が進まず<br/>次回も同じデータを読む
+```
+
 | 設定値 | 動作 |
 | --- | --- |
 | `job-bookmark-enable` | 実行後に状態を更新する。次回は続きから処理する |
@@ -242,6 +314,17 @@ job.commit()                             # 状態を更新する
 
 複数のジョブとクローラーを 1 つの単位として実行し、追跡します。
 
+ジョブを cron でそれぞれの時刻に起動すると、前のジョブが遅れたときに、次のジョブが未完成のデータを読みます。ワークフローは「前が成功したら次」という依存で起動し、全体を 1 回の実行として追えるようにします。
+
+```mermaid
+flowchart LR
+    T["スケジュール<br/>毎月 1 日"] --> J1["重複除去ジョブ"]
+    T --> J2["電話番号修正ジョブ"]
+    J1 --> C{"条件トリガー<br/>両方が SUCCEEDED?"}
+    J2 --> C
+    C -- はい --> CR["クローラー"]
+```
+
 | トリガー | 発火の条件 | 例 |
 | --- | --- | --- |
 | スケジュール | cron | 毎日 2 時に開始する |
@@ -270,6 +353,21 @@ job.commit()                             # 状態を更新する
 
 プロデューサーとコンシューマーの間でスキーマを契約にできます。互換性のない変更は登録の時点で拒否されるので、壊れたデータが流れる前に止まります。
 
+システム間連携の「インターフェース仕様書」を、機械が確かめられる形にしたものです。仕様書だけだと、送る側が列を変えたことに、受ける側は本番でエラーが出るまで気づきません。
+
+```mermaid
+sequenceDiagram
+    participant P as プロデューサー
+    participant R as Schema Registry
+    participant K as MSK、Kinesis
+    participant C as コンシューマー
+    P->>R: 新しいスキーマを登録
+    R-->>P: 互換性モードで判定。違反なら拒否
+    P->>K: スキーマの ID 付きで送る
+    K->>C: レコード
+    C->>R: ID でスキーマを取得して読む
+```
+
 | 互換性モード | 動作 |
 | --- | --- |
 | `BACKWARD` | 推奨。コンシューマーは現在と 1 つ前のバージョンを読める |
@@ -293,6 +391,8 @@ job.commit()                             # 状態を更新する
 [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
 Glue の機能なので、提供単位はリージョンで、VPC の外です。データの品質をルールで測るサーバーレスの機能です。オープンソースの Deequ を基盤とし、DQDL という言語でルールを書きます。25 種類以上の組み込みルールと、機械学習による異常検出があります。
+
+工場の受け入れ検品に当たります。不良なデータが一度 DWH に入ると、それを使ったレポートや ML のモデルまで汚れ、後から追いかけて直すのは大変です。入口で数値として測り、基準に満たなければ止めます。
 
 | 入口 | タイミング | 使う人 |
 | --- | --- | --- |
@@ -350,6 +450,25 @@ Rules = [
 
 Spark、Hive、Presto、HBase などのオープンソースを動かすビッグデータ基盤です。Glue より設定の自由度が高く、アプリケーションやバージョンを細かく選べます。
 
+オンプレミスの Hadoop クラスターは、計算とデータ(HDFS)が同じサーバーに載っています。そのため、データが増えると計算が要らなくても台数を足し、クラスターは止められません。EMR はデータを S3 に置けるようにして、クラスターを「ジョブのときだけ作る計算機」に変えられるようにしています。
+
+| 観点 | オンプレミスの Hadoop | EMR |
+| --- | --- | --- |
+| データの置き場 | HDFS(各サーバーのディスク) | S3 が基本。HDFS は中間データ |
+| 台数 | 買った台数で固定 | マネージドスケーリングで増減する |
+| 使わない時間 | 動かし続ける | 自動終了で消せる |
+| 安い計算資源 | なし | タスクノードに Spot |
+| バージョンアップ | クラスター全体を入れ替える作業 | 新しいリリースで別のクラスターを作る |
+
+```mermaid
+flowchart LR
+    A["クラスターを作る"] --> B["S3 から読む"]
+    B --> C["処理<br/>中間データは HDFS"]
+    C --> D["S3 に書く"]
+    D --> E["クラスターを終了<br/>課金が止まる"]
+    E -. "次のジョブ" .-> A
+```
+
 提供単位はデプロイで異なります。EMR on EC2 のクラスターは VPC の 1 つのサブネットに置く AZ のリソースです。EMR on EKS は EKS のノードの配置に従います。EMR Serverless はリージョンのサービスで、VPC の外で動き、VPC のデータへはサブネットを指定して接続します（[リソースの提供単位](resource-scope.md#scope-zonal)）。
 
 | デプロイ | 管理するもの | 向く場面 |
@@ -362,6 +481,8 @@ Spark、Hive、Presto、HBase などのオープンソースを動かすビッ�
 **例（選び方）**: GPU や独自の Spark 設定を試すなら on EC2、100 個のコンテナが動く EKS に相乗りするなら on EKS、月 2 回だけの Hive のジョブなら Serverless です。
 
 ### クラスターのノード {#emr-nodes}
+
+ノードを 3 種類に分けるのは、「失うと困るもの」と「いつ消えてもよいもの」を分けるためです。データ(HDFS)を持つコアは安定して動かし、計算だけのタスクは Spot で安く増やします。
 
 | ノード | 役割 | HDFS を持つか | Spot の適否 |
 | --- | --- | --- | --- |
@@ -437,6 +558,8 @@ EMR にアタッチした EBS も一時的です。クラスターやインス�
 
 ### EMR on EKS {#emr-on-eks}
 
+分析のためだけに別のクラスターを持つと、アプリ用の EKS と分析用の EMR で、空き容量が別々に余ります。EMR on EKS は、同じ EKS の上に Spark のジョブを相乗りさせて、使用率を上げるための形態です。
+
 既存の EKS クラスターで EMR のコンテナを動かします。EKS の名前空間を仮想クラスターとして登録し、そこにジョブを送ります。
 
 - 他のコンテナアプリと資源を共用でき、使用率が上がります。
@@ -455,6 +578,8 @@ aws emr-containers create-virtual-cluster --name analytics \
 ### EMR Serverless {#emr-serverless}
 
 クラスターの代わりにアプリケーションを作り、ジョブを送ります。ランタイム（Spark または Hive）と EMR のリリースを指定します。
+
+EMR の Spark をそのまま使いたいが、台数やノードの種類は考えたくない、という場合のための形態です。資源は自動で増減するので、利用者が決めるのは費用の上限だけになります。
 
 | 用語 | 意味 |
 | --- | --- |
@@ -490,6 +615,19 @@ aws emr-serverless update-application --application-id "$APP_ID" \
 
 列指向で超並列（MPP）のデータウェアハウスです。大きなテーブルの結合と集計に向きます。行単位の更新を大量に行う OLTP には向きません。
 
+業務の DB は「1 件の注文を速く書く」ために作られています。そこで「3 年分の売上を地域別に集計する」と、全行を読むので遅く、業務の処理も邪魔します。Redshift は、データを列ごとに保存し、多数のノードに分けて同時に処理することで、集計を速くします。
+
+| 観点 | オンプレミスの DWH 専用機 | Redshift(RA3、RG、Serverless) |
+| --- | --- | --- |
+| 処理の仕組み | 列指向、MPP | 同じ |
+| 容量の追加 | 装置の増設、ディスクとセットで計算も買う | RMS が S3 の上に広がる。計算と別に増える |
+| 使わない時間 | 動かし続ける | Serverless なら計算の料金がかからない |
+| 他のデータとの連携 | ロードしてから使う | Spectrum で S3 をそのまま読む。データ共有でコピーせず渡す |
+
+その代わり、1 行ずつの更新や、ミリ秒の応答が必要な画面の検索には向きません。業務の DB と分けて使う前提の設計です。
+
+[![Redshift の構成とデータの置き場](../assets/diagrams/data-engineering-redshift.png)](../assets/diagrams/data-engineering-redshift.png)
+
 提供単位は形態で異なります。Provisioned のクラスターは VPC のクラスターサブネットグループに置き、既定では 1 つの AZ で動きます。Serverless のワークグループは 2 つ以上の AZ のサブネットを指定します（Enhanced VPC Routing なら 3 つ以上）。どちらも VPC の中に置きます（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 ### 構成 {#redshift-architecture}
@@ -518,6 +656,24 @@ AWS は新規構築に RG か RA3 を推奨しています。RMS があるので
 ### 分散スタイル {#redshift-distribution}
 
 行をどのスライスに置くかを決めます。目的は、結合時のデータ移動を減らすことです。
+
+倉庫の仕分けにたとえると分かりやすくなります。注文の箱と顧客の箱を、同じ顧客番号ごとに同じ棚へ置けば、照らし合わせるときに棚の間を運ばずに済みます。別々の棚に置くと、照合のたびに箱をトラックで運ぶことになります。これがノード間の再配布です。
+
+```mermaid
+flowchart LR
+    subgraph S1["スライス 1"]
+        A1["sales<br/>顧客 1、3、5 の行"]
+        B1["customers<br/>顧客 1、3、5 の行"]
+    end
+    subgraph S2["スライス 2"]
+        A2["sales<br/>顧客 2、4、6 の行"]
+        B2["customers<br/>顧客 2、4、6 の行"]
+    end
+    A1 --- B1
+    A2 --- B2
+```
+
+図は、両方のテーブルを `customer_id` で `KEY` 分散した例です。同じ顧客の行が同じスライスにあるので、結合はスライスの中だけで終わります(`DS_DIST_NONE`)。どの値がどのスライスに行くかは Redshift が決めます。
 
 | スタイル | 配置 | 向くテーブル | 誤ったときの症状 |
 | --- | --- | --- | --- |
@@ -565,6 +721,16 @@ DISTSTYLE KEY DISTKEY (customer_id);
 
 ディスク上の並び順を決めます。Redshift は 1 MB のブロックごとに最小値と最大値を持つので、範囲の条件で読まないブロックを飛ばせます。
 
+書庫のファイルを日付順に並べ、各箱に「10 月 1 日〜10 月 3 日」と書いたラベルを貼っておくのと同じです。10 月 2 日の書類を探すなら、ラベルを見て 1 箱だけ開ければ済みます。並んでいなければ、全部の箱を開けることになります。
+
+```mermaid
+flowchart LR
+    Q["WHERE sold_at = 10/02"] --> Z{"ブロックの<br/>最小値と最大値"}
+    Z -- "10/01〜10/03" --> R["読む"]
+    Z -- "10/04〜10/06" --> SK["飛ばす"]
+    Z -- "10/07〜10/09" --> SK
+```
+
 | 種類 | 効く条件 | 注意 |
 | --- | --- | --- |
 | `AUTO` | Redshift が選ぶ | 推奨 |
@@ -591,6 +757,8 @@ DISTSTYLE KEY DISTKEY (customer_id);
 ### COPY と UNLOAD {#redshift-copy}
 
 大量ロードの標準は `COPY` です。`INSERT` を繰り返すより大幅に速くなります。
+
+`INSERT` を 1 文ずつ流すのは、トラック 1 台に荷物を 1 個ずつ載せて運ぶようなものです。`COPY` は S3 の複数のファイルを並列に読み込むので、何台ものトラックで同時に運べます。ファイルを分割してそろえる、という下のコツは、すべてのスライスに同じ量の仕事を配るためのものです。
 
 ```sql
 COPY sales
@@ -667,6 +835,8 @@ MAXFILESIZE 256 MB;
 
 S3 のファイルをロードせずに、Redshift の SQL で読みます。ローカルのテーブルとも結合できます。
 
+めったに見ない古いデータまで DWH に入れると、そのぶん容量とロードの時間を払い続けます。Spectrum は、よく使うデータは Redshift に、たまに使うデータは S3 に置いたまま、1 つの SQL で両方を読めるようにします。
+
 ```sql
 CREATE EXTERNAL SCHEMA lake
 FROM DATA CATALOG
@@ -727,6 +897,8 @@ FROM kds."clicks";
 
 クラスターを管理せずに使える形態です。ストレージとコンピュートを別の単位で管理します。
 
+月末だけ重く、夜間はほとんど使わない DWH を、ピークに合わせたノードで動かし続けると、使わない時間にも払います。Serverless はクエリを実行した時間だけ計算の料金を払う形にして、この無駄を減らします。その代わり、常に高い負荷があるなら、Provisioned のほうが安くなることがあります(下の「選び方」を参照)。
+
 | 単位 | 持つもの |
 | --- | --- |
 | 名前空間 | データベース、スキーマ、ユーザー、KMS キー |
@@ -763,6 +935,18 @@ aws redshift-serverless create-workgroup --workgroup-name bi \
 ### ワークロード管理 {#redshift-wlm}
 
 クエリの実行枠と優先度を制御します。パラメータグループの `wlm_json_configuration` で設定します。
+
+スーパーのレジにたとえられます。大量の買い物の客(1 時間の ETL)の後ろに、ガム 1 個の客(2 秒のダッシュボードの照会)が並ぶと、待ち時間ばかり長くなります。WLM は列を分け(キュー)、少ない買い物の専用レジ(SQA)を作り、混んだら臨時のレジを開けます(同時実行スケーリング)。
+
+```mermaid
+flowchart TD
+    Q["届いたクエリ"] --> S{"短いと予測された?"}
+    S -- はい --> SQA["SQA の優先枠"]
+    S -- いいえ --> G{"ユーザーグループ、<br/>クエリグループは?"}
+    G -- "etl" --> E["ETL のキュー<br/>優先度 low"]
+    G -- "bi" --> B["BI のキュー<br/>優先度 high"]
+    B -- "詰まったら" --> CS["同時実行スケーリング<br/>一時クラスター"]
+```
 
 | 機能 | 内容 | 既定値、範囲 |
 | --- | --- | --- |
@@ -840,6 +1024,8 @@ REFRESH MATERIALIZED VIEW daily_sales;
 ### データ共有 {#redshift-data-sharing}
 
 データをコピーせず、ライブのまま別のクラスターやワークグループと共有します。アカウントやリージョンをまたげます。Provisioned と Serverless の間でも共有できます。
+
+部署ごとに DWH を持つと、夜間に `UNLOAD` と `COPY` でデータを配る仕事が生まれ、配った先のデータは翌朝まで古いままです。データ共有は、データの置き場は 1 つのまま、読む計算資源だけを部署ごとに分けます。重いクエリを流す部署があっても、他の部署は遅くなりません。
 
 ```sql
 -- プロデューサー側
@@ -935,6 +1121,19 @@ RDS と Aurora でも考え方は同じです。PostgreSQL は `pg_locks` と `p
 
 Data Catalog と S3 上のデータに、データベースのような権限モデルを与えるサービスです。S3 バケットポリシーと IAM を組み合わせる代わりに、テーブル、列、行で権限を付けられます。
 
+#### なぜ必要か {#lake-formation-why}
+
+S3 の権限はバケットとオブジェクトのキーが単位です。「`customers` テーブルの `ssn` 列だけ隠す」「日本の行だけ見せる」は、ファイルの単位では表せません。
+
+| 困りごと | S3 と IAM だけだと起きること | 使う仕組み |
+| --- | --- | --- |
+| 個人番号の列だけ隠したい | 列を抜いたコピーを別のバケットに作る | 列の権限 |
+| 日本の担当者には日本の行だけ見せたい | 国ごとにファイルとテーブルを分ける | 行のフィルター |
+| テーブルが 1,000 個ある | バケットポリシーのプレフィックスが増え続け、上限に近づく | LF タグ |
+| 別アカウントの部署に共有したい | バケットポリシーと KMS と IAM を、相手ごとに書く | クロスアカウント共有 |
+
+オンプレミスの DB で `GRANT SELECT (列) ON テーブル TO ロール` と書くのと同じ感覚で、S3 のファイルに権限を付けられます。違いは、守るのがファイルを読む各エンジンだという点です。Lake Formation が許可した範囲と一時的な認証情報をエンジンに渡し、エンジンがその範囲だけを返します。
+
 提供単位はリージョンで、AZ は選びません。VPC の外のサービスです（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 ```mermaid
@@ -961,6 +1160,15 @@ Athena、Glue、EMR、Redshift Spectrum などの統合エンジンが権限を�
 | IAM のみの設定の解除 | `IAMAllowedPrincipals` の `Super` を外す | Lake Formation の権限が事実上効かない |
 
 後方互換のため、初期状態では `IAMAllowedPrincipals` グループに `Super` が付きます。つまり、IAM だけで制御されています。**「Lake Formation で権限を絞ったのに全員読める」のは、これが原因です。**
+
+この既定は、Lake Formation を有効にした瞬間に、既存の IAM の利用者が読めなくなる事故を防ぐためのものです。安全側に倒すと既存の業務が止まり、互換側に倒すと絞ったつもりで絞れていない。AWS は後者を既定にしたので、移行の最後に自分で外す必要があります。
+
+```mermaid
+flowchart TD
+    A["テーブルに SELECT を付与した"] --> B{"IAMAllowedPrincipals に<br/>Super が残っている?"}
+    B -- はい --> C["IAM で S3 を読める人は<br/>全員読める"]
+    B -- いいえ --> D["Lake Formation で<br/>付与した主体だけ読める"]
+```
 
 ハイブリッドアクセスモードを使うと、既存の IAM のアクセスを止めずに、選んだ主体だけ Lake Formation の権限へ移せます。
 
@@ -1031,6 +1239,16 @@ aws lakeformation grant-permissions \
 
 リソースにキーと値のタグを付け、タグの式で権限を付与します（LF-TBAC）。テーブルが多い環境で推奨される方法です。
 
+名前で付与する方法は、主体の数 × テーブルの数だけ付与が増えます。LF タグは、テーブルに「分類」を、主体に「見てよい分類」を付け、組み合わせは Lake Formation が判断します。書類に「社外秘」の判子を押し、社員に「社外秘まで閲覧可」の資格を与えるのと同じです。
+
+```mermaid
+flowchart LR
+    R1["SalesAnalyst"] -- "module=Sales を SELECT" --> E["タグの式"]
+    E --> T1["sales.orders<br/>module=Sales"]
+    E --> T2["sales.refunds<br/>module=Sales"]
+    E -. "対象外" .-> T3["hr.salaries<br/>module=HR"]
+```
+
 **例**: 3 人の主体に 7 個のテーブルの権限を付けると、名前付きリソースの方式では 17 回の付与が必要です。`module=Sales` のようなタグにすれば、主体ごとのタグの付与だけで済み、新しいテーブルはタグを付けるだけで対象になります。
 
 ```bash
@@ -1072,6 +1290,8 @@ aws lakeformation grant-permissions \
 
 SaaS と AWS の間でデータを転送する、コード不要のサービスです。
 
+SaaS ごとに API の認証、ページング、レート制限の扱いが違うので、取り込みのスクリプトを自作すると、SaaS の数だけ保守が増えます。AppFlow はその接続の部分を部品として用意し、設定だけで定型の転送を動かせるようにします。
+
 提供単位はリージョンで、VPC の外のサービスです。PrivateLink に対応した SaaS とは非公開の経路で接続できます（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 | 項目 | 内容 |
@@ -1100,6 +1320,16 @@ SaaS と AWS の間でデータを転送する、コード不要のサービス�
 [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional }
 
 Apache Kafka を実行するマネージドサービスです。Kafka の API とツールをそのまま使えます。
+
+Kafka は社内で広く使われていますが、ブローカーのパッチ、故障したサーバーの交換、ディスクの監視など、運用の手間が大きいソフトです。MSK は、アプリから見た Kafka は変えずに、その運用を AWS に任せるためのサービスです。
+
+| 観点 | 自前の Kafka クラスター | MSK(Provisioned) |
+| --- | --- | --- |
+| クライアント | Kafka のクライアント | 同じ。接続先のブローカーを変えるだけ |
+| ブローカーの故障 | 自分で検知して交換 | AWS が交換する |
+| 配置 | 複数のラックやデータセンター | 2 つか 3 つの AZ |
+| 認証 | 自分で SASL や TLS を組む | IAM、SCRAM、相互 TLS から選ぶ |
+| 容量の追加 | サーバーの調達 | ブローカーの追加、ストレージの拡張 |
 
 提供単位は形態で異なります。Provisioned のブローカーは VPC のサブネットに置く AZ のリソースで、2 つか 3 つの AZ に分けます（Express は 3 AZ のみ）。Serverless はリージョンのサービスで、指定したサブネットからプライベートに接続します（[リソースの提供単位](resource-scope.md#two-axes)）。
 
@@ -1156,6 +1386,8 @@ Apache Kafka を実行するマネージドサービスです。Kafka の API �
 
 Apache Flink のアプリケーションを実行するサービスです。ウィンドウ集計や結合など、状態を持つストリーム処理に向きます。Java、Scala、Python、SQL を使えます。
 
+「同じカードで 1 分間に 5 回以上」のような判定には、過去のイベントを覚えておく「状態」が必要です。状態を自作のコードで持つと、障害で再起動したときに消えたり二重に数えたりします。Flink は状態を定期的にチェックポイントへ保存し、障害時にそこから続けられるようにしています。
+
 提供単位はリージョンで、既定では VPC の外で動きます。VPC のリソースを読むときは、アプリケーションに VPC を設定し、サブネットに ENI を置きます（[リソースの提供単位](resource-scope.md#two-axes)）。
 
 旧称は Kinesis Data Analytics です。旧 **Kinesis Data Analytics for SQL アプリケーション** は 2025 年 10 月に新規作成が停止され、2026 年 1 月 27 日からアプリケーションの削除が始まりました。SQL で書くなら Flink の Studio か Flink SQL を使います。
@@ -1193,6 +1425,8 @@ Apache Flink のアプリケーションを実行するサービスです。ウ�
 [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate }
 
 Apache Airflow のマネージドサービスです。DAG（有向非巡回グラフ）を Python で書き、依存関係を定義します。
+
+オンプレミスのジョブ管理ツールで行っていた「順序、待ち合わせ、再実行、実行履歴」を、オープンソースの Airflow で行います。Airflow 自体の運用(スケジューラー、ワーカー、メタデータの DB)は手間がかかるので、それを AWS に任せる形です。既存の Airflow の DAG をそのまま持ち込めるのが、Step Functions との大きな違いです。
 
 提供単位はリージョンで、VPC の中に置きます。2 つの AZ のプライベートサブネットを指定します（[リソースの提供単位](resource-scope.md#two-axes)）。
 
@@ -1367,6 +1601,18 @@ Amazon Quick は、Quick Sight のほか、AI エージェント、Quick Flows�
 
 S3 のファイルの上に、テーブルの機能を載せるオープンテーブル形式です。
 
+従来の Hive 形式のテーブルは「このフォルダの中のファイル全部がテーブル」という約束だけで、DB が当然持っている更新、トランザクション、履歴がありません。Iceberg は、どのファイルがテーブルのどの版に属するかをメタデータのファイルで管理し、S3 のファイルのまま DB に近い操作をできるようにします。
+
+```mermaid
+flowchart TD
+    C["カタログ<br/>今の版のメタデータの場所"] --> M["メタデータファイル<br/>スキーマ、パーティション、スナップショット一覧"]
+    M --> L["マニフェストリスト<br/>1 つのスナップショット"]
+    L --> F["マニフェスト<br/>データファイルの一覧と統計"]
+    F --> D["データファイル<br/>Parquet など"]
+```
+
+書き込みは新しいメタデータを作り、カタログの指す先を一度に切り替えます。読む側は古い版か新しい版のどちらかを見るので、途中の状態を読むことがありません。これが ACID とタイムトラベルの仕組みです。
+
 | 機能 | 効果 | Hive 形式との違い |
 | --- | --- | --- |
 | ACID トランザクション | 同時の読み書きで壊れない | ファイルの差し替え中に読むと不整合が出ることがある |
@@ -1491,6 +1737,8 @@ glueContext.write_dynamic_frame.from_options(
 
 データをフォルダの値で分け、不要な範囲を読まないようにします。[Athena のパーティション](streaming.md#athena-partitions) も参照してください。
 
+書類を年月ごとのキャビネットに分けておけば、「2026 年 10 月」の書類を探すとき、そのキャビネットだけを開ければ済みます。S3 では読んだ量で費用と時間が決まることが多いので、読まない範囲を作ることがそのまま節約になります。分けすぎると、引き出しを開ける手間(ファイルの一覧)のほうが大きくなります。
+
 ```text
 s3://lake/orders/dt=2026-10-31/region=jp/part-0000.parquet
 ```
@@ -1528,6 +1776,16 @@ sink = glueContext.write_dynamic_frame_from_catalog(
 ```
 
 パーティション射影を有効にすると、Athena はカタログに登録されたパーティションを無視します。
+
+```mermaid
+flowchart TD
+    A["新しいパーティションを<br/>カタログに載せたい"] --> B{"ETL ジョブが<br/>書き込む?"}
+    B -- はい --> U["enableUpdateCatalog"]
+    B -- いいえ --> C{"パスの値を<br/>予測できる?"}
+    C -- "はい、非常に多い" --> P["パーティション射影"]
+    C -- "はい、少ない" --> AL["ALTER TABLE ADD PARTITION"]
+    C -- いいえ --> CR["クローラー"]
+```
 
 **例（選び方）**: 毎日 1 パーティション増えるだけなら、ETL の最後に `enableUpdateCatalog` を使います。外部から予測できる日付のパスに毎時ファイルが届くなら、パーティション射影にします。形が変わり得る他社のデータならクローラーです。
 

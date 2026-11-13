@@ -6,7 +6,58 @@
 
 [![ECSタスクと2つのロールの役割](../assets/diagrams/containers-ecs-flow.png)](../assets/diagrams/containers-ecs-flow.png)
 
+## コンテナを使う理由 {#why-containers}
+
+サーバーでアプリを動かすと、「手元では動くのに本番では動かない」がよく起きます。OS のライブラリや言語の版が、開発機と本番のサーバーで少しずつ違うためです。
+
+コンテナは、アプリと依存するライブラリを 1 つのイメージにまとめます。どのサーバーでも同じイメージを動かすので、環境の差が出にくくなります。
+
+名前のとおり、輸送用のコンテナにたとえられます。中身が何でも箱の形が決まっているので、船でもトラックでも同じ方法で運べます。
+
+### 物理サーバー、仮想マシンとの違い {#containers-vs-vm}
+
+| 観点 | 物理サーバー | 仮想マシン（EC2 など） | コンテナ |
+| --- | --- | --- | --- |
+| 分ける単位 | 機械ごと | ハイパーバイザーの上で OS ごと | 1 つの OS の上でプロセスごと |
+| OS のカーネル | 1 台に 1 つ | VM ごとに持つ | ホストのものを共有する |
+| 起動の速さ | 分単位 | 分単位 | 秒単位が多い |
+| 中身の作り方 | 手順書で構築 | AMI、ユーザーデータ | Dockerfile からイメージを作る |
+
+カーネルを共有するので軽く、たくさん詰めて動かせます。その代わり、VM ほど強い分離ではありません。分離を強くしたいときは、タスクごとに分かれた Fargate を使います（[Fargate と EC2](#fargate-vs-ec2)）。
+
+### ECR、ECS、EKS の役割 {#containers-roles}
+
+```mermaid
+flowchart LR
+    D["Dockerfile"] -- docker build --> I["イメージ"]
+    I -- docker push --> R["ECR<br/>イメージの置き場"]
+    R -- プル --> O{"どこで動かす?"}
+    O --> E["ECS<br/>タスク"]
+    O --> K["EKS<br/>Pod"]
+```
+
+| サービス | 役割 | オンプレミスでいえば |
+| --- | --- | --- |
+| ECR | イメージを保存して配る | 社内のパッケージリポジトリ、プライベートな Docker レジストリ |
+| ECS | どのサーバーで何個動かすかを決め、落ちたら起動し直す | 運用担当者がサーバーを割り当て、監視して再起動する作業 |
+| EKS | 同じことを Kubernetes の API で行う | 自前で構築した Kubernetes のクラスター |
+
+コンテナを動かすだけなら `docker run` で足ります。数十台のサーバーに何百個も並べ、落ちたら起動し直し、負荷で増やす作業は人の手では追いつきません。この作業を自動で行うのがオーケストレーター（ECS、EKS）です。
+
+```mermaid
+flowchart TD
+    A["コンテナを動かしたい"] --> B{"Kubernetes の API や<br/>ツールが必要?<br/>他のクラウドと同じ運用にしたい?"}
+    B -- はい --> EKS["EKS"]
+    B -- いいえ --> C{"サーバーの管理を<br/>なくしたい?"}
+    C -- はい --> F["ECS on Fargate"]
+    C -- いいえ: GPU、特権 --> EC2["ECS on EC2"]
+```
+
+ECS は AWS 独自の API で、AWS の他のサービスとの連携が簡単です。EKS は Kubernetes そのものなので、他の環境に持ち出しやすい代わりに、Kubernetes の知識と運用が要ります。
+
 ## Dockerfile の基本 {#dockerfile}
+
+Dockerfile は、イメージの作り方を書いたレシピです。サーバーの構築手順書と違い、同じファイルから何度でも同じイメージを作れます。命令ごとに読み取り専用のレイヤーが積み重なり、変わっていないレイヤーは前回の結果を使い回します。
 
 ```dockerfile
 FROM python:3.12-slim
@@ -81,9 +132,31 @@ ECS のタスク定義では、`entryPoint` が `ENTRYPOINT` を、`command` が
 
 **提供単位**: リポジトリはリージョン単位で、VPC の外にあります（[リソースの提供単位](resource-scope.md#scope-regional-outside)）。プライベートサブネットからは VPC エンドポイントか NAT 経由で使います。
 
+イメージは、ビルドした場所から動かす場所へ届ける必要があります。自前でレジストリを立てると、そのサーバーの容量、可用性、認証、脆弱性の確認まで自分で運用します。ECR は、これらをマネージドで提供します。
+
+| 観点 | 同じ点（自前のレジストリ） | 違う点（ECR ならでは） |
+| --- | --- | --- |
+| 使い方 | `docker push`、`docker pull` で使う | 認証は IAM。`docker login` には一時的なトークンを使う |
+| 保存 | イメージをタグで管理する | 容量の管理は不要。ライフサイクルポリシーで古いものを消す |
+| 配布 | 社内のサーバーから取得する | リージョンのサービスなので、近いリージョンへはレプリケーションで複製する |
+| 安全 | 脆弱性の確認は別のツール | スキャンを組み込みで使える |
+
 ### 認証とプッシュ、プル {#ecr-auth}
 
 Docker CLI は IAM を直接扱えません。トークンを取得して `docker login` します。
+
+IAM の署名を Docker が理解できる「ユーザー名とパスワード」に変換する橋渡しが、このトークンです。12 時間で切れるので、漏れても被害は限られます。
+
+```mermaid
+sequenceDiagram
+    participant CI as CI や開発者
+    participant API as ECR API
+    participant Reg as レジストリ
+    CI->>API: GetAuthorizationToken（IAM で署名）
+    API-->>CI: 12 時間有効なトークン
+    CI->>Reg: docker login（ユーザー名 AWS）
+    CI->>Reg: docker push
+```
 
 ```bash
 aws ecr get-login-password --region ap-northeast-1 | \
@@ -110,6 +183,10 @@ docker push 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/my-app:1.4.2
 - **トークンの時間の例:** 9 時に取得したトークンは 21 時に切れます。夜 22 時に動くジョブが 9 時のトークンを使い回すと、認証エラーになります。
 
 ### タグと不変タグ {#image-tags}
+
+障害が起きたとき、「今どの版が動いているか」が分からないと、戻すことも原因を探すこともできません。タグは、そのための目印です。
+
+タグは荷物に貼る付箋のようなもので、貼り替えられます。ダイジェストは中身から計算した指紋で、中身が 1 バイトでも違えば変わります。不変タグは、付箋を貼り替えられないようにする設定です。
 
 | 指定方法 | 例 | 特徴 |
 | --- | --- | --- |
@@ -180,6 +257,8 @@ aws ecr put-image --repository-name my-app \
 ### ライフサイクルポリシー {#ecr-lifecycle}
 
 古いイメージを自動で期限切れにします。適用前にプレビューで確認します。
+
+CI がコミットのたびにイメージを作ると、リポジトリには使われないイメージが溜まり、保存の料金が増え続けます。手で消すと、本番で使っている版を消す事故が起きます。ルールで「何を残すか」を決めておけば、機械的に整理できます。
 
 ```json
 {
@@ -290,6 +369,8 @@ aws ecr put-image --repository-name my-app \
 
 レプリケーションはリポジトリではなく、プライベートレジストリの設定です。リージョン間とアカウント間に対応します。
 
+リポジトリはリージョンのリソースなので、別のリージョンで動かすタスクは、遠いリージョンからプルすることになります。そのリージョンに障害が起きると、DR のリージョンでもイメージを取れません。近くに複製を置けば、プルが速くなり、リージョンの障害にも備えられます。
+
 ```bash
 aws ecr put-replication-configuration --replication-configuration '{
   "rules": [{
@@ -341,6 +422,28 @@ aws ecr put-replication-configuration --replication-configuration '{
 | タスク定義 | イメージ、CPU、メモリ、ロールなどの設計図。バージョン管理される(リビジョン) |
 | タスク | タスク定義から起動した実体 |
 | サービス | 指定した数のタスクを維持し、ロードバランサーと連携する |
+
+ECS は、AWS が「フルマネージドのコンテナオーケストレーション」と呼ぶサービスです。コントロールプレーン（どこに置くか、いくつ動かすかを決める部分）を AWS が運用するので、自分で管理サーバーを立てる必要がありません。
+
+| 困りごと | ECS がないと起きること | ECS の仕組み |
+| --- | --- | --- |
+| どのサーバーに置くか | 空きを見て手で割り当てる | スケジューラーが配置する |
+| コンテナが落ちた | 誰かが気付くまで止まったまま | サービスが希望数に戻す |
+| 新しい版に入れ替える | 1 台ずつ手で入れ替える | デプロイの設定に従って置き換える |
+| 負荷が増えた | 手で台数を増やす | サービスの Auto Scaling |
+
+料理にたとえると、タスク定義はレシピ、タスクはレシピから作った料理、サービスは「常に 4 皿並べておく」と決めて足りなくなれば作り直す店長です。
+
+```mermaid
+flowchart TD
+    TD1["タスク定義 web:12<br/>イメージ、CPU、メモリ、ロール"] --> S["サービス web<br/>desiredCount 4"]
+    S --> T1["タスク"]
+    S --> T2["タスク"]
+    S --> T3["タスク"]
+    S --> T4["タスク"]
+    S --- LB["ALB の<br/>ターゲットグループ"]
+    C["クラスター prod"] -. 入れ物 .- S
+```
 
 **提供単位**: クラスターはリージョン単位です。タスクは AZ のサブネットに置き、VPC の中で動きます（[リソースの提供単位](resource-scope.md#scope-regional-vpc)）。
 
@@ -525,6 +628,12 @@ Docker 20.10 以降は最低 6 MiB を予約するので、これ未満は指定
 
 試験で最もよく問われる違いです。
 
+ロールが 2 つあるのは、権限を使う「主体」が 2 つあるからです。タスクが起動する前に、ECS のエージェントがイメージをプルし、シークレットを取り、ログの送り先を準備します。その後で、アプリのコードが S3 などを呼びます。
+
+1 つのロールにまとめると、アプリのコードもイメージのプルやすべてのシークレットの取得ができてしまいます。分けておけば、アプリが乗っ取られても、使えるのはアプリに必要な権限だけです。
+
+ホテルにたとえると、実行ロールは清掃スタッフが部屋を準備するための鍵、タスクロールは宿泊客が受け取る部屋の鍵です。客の鍵では、ほかの部屋や倉庫は開きません。
+
 | 観点 | タスクロール (`taskRoleArn`) | 実行ロール (`executionRoleArn`) |
 | --- | --- | --- |
 | 使うのは | コンテナの中のアプリ | ECS エージェント、Fargate エージェント |
@@ -554,6 +663,20 @@ Docker 20.10 以降は最低 6 MiB を予約するので、これ未満は指定
 | インスタンスプロファイル | コンテナからは使えない | あり |
 | 特権コンテナ、GPU | 使えない | 使える |
 | 向く場面 | 運用を減らしたい | 特殊な要件、コストの細かい最適化 |
+
+どちらもコンテナを動かす「場所」の選択です。EC2 では、コンテナを載せるサーバーを自分で用意し、OS の更新や台数の調整も自分で行います。Fargate では AWS がそれを引き受け、タスクの単位で CPU とメモリを借ります。
+
+建物にたとえると、EC2 は建物を 1 棟借りて部屋を自由に割り振る方式、Fargate は必要な広さの部屋だけを借りる方式です。1 棟借りは割り振りを工夫すれば安くでき、特殊な設備も入れられますが、建物の管理は自分の仕事です。
+
+```mermaid
+flowchart TD
+    A{"GPU、特権コンテナ、<br/>特定のインスタンスタイプが必要?"} -- はい --> E["EC2"]
+    A -- いいえ --> B{"OS の更新や<br/>台数の管理をしたくない?"}
+    B -- はい --> F["Fargate"]
+    B -- いいえ --> C{"多数のタスクを詰めて<br/>費用を細かく下げたい?"}
+    C -- はい --> E
+    C -- いいえ --> F
+```
 
 **アプリの要件に合わせて CPU とメモリを決めます**。Fargate の有効な組み合わせの例です。
 
@@ -608,6 +731,8 @@ ARN の末尾の指定は次のように読みます。
 
 ### デプロイ {#ecs-deployments}
 
+デプロイの方法が複数あるのは、速さ、費用、戻しやすさのどれを優先するかが、サービスによって違うからです。ローリング更新は追加の容量が少なくて済みますが、新旧が混ざり、戻すにはもう一度置き換えます。ブルー/グリーンは一時的に 2 倍の容量を使う代わりに、旧版を残したまま切り替え、すぐに戻せます。考え方は [Beanstalk のデプロイポリシー](ec2-beanstalk.md#deployment-policies) と同じです。
+
 | 種類 | 設定 | 動作 |
 | --- | --- | --- |
 | ローリング更新 | `deploymentController: ECS`(デフォルト) | タスクを順に置き換える |
@@ -645,6 +770,8 @@ ARN の末尾の指定は次のように読みます。
 
 ### キャパシティプロバイダー {#capacity-providers}
 
+キャパシティプロバイダーは、タスクを「どの種類の容量」で動かすかを配分する仕組みです。全部を Spot にすると安い代わりに、まとめて中断されるおそれがあります。全部を通常の Fargate にすると安定しますが、割高です。`base` で最低限を安定な容量に置き、残りを `weight` で Spot に回すと、両方の利点を取れます。
+
 | 項目 | 内容 |
 | --- | --- |
 | `FARGATE` | 通常の Fargate |
@@ -669,6 +796,8 @@ ARN の末尾の指定は次のように読みます。
 - **誤ると:** `base` を 2 つのプロバイダーに書くとエラーです。CLI で `weight` を省くと 0 です。`weight` が 0 のプロバイダーはタスクの配置に使われないので、`FARGATE_SPOT` だけ省くと Spot は動きません。
 
 ### タスクの配置 {#task-placement}
+
+EC2 のクラスターでは、どのインスタンスにタスクを置くかで、可用性と費用が変わります。1 台に詰めればインスタンスが減って安くなりますが、その 1 台が止まると多くのタスクが止まります。散らせば安全ですが、空きの多いインスタンスが残ります。戦略はこの兼ね合いを決め、制約は「GPU のある台だけ」のような必須の条件を決めます。
 
 配置の戦略と制約は **EC2 だけ** です。Fargate では使えず、AZ に分散するよう最善が尽くされます。サービスの既定は AZ への `spread` です。
 
@@ -754,6 +883,8 @@ aws application-autoscaling put-scaling-policy \
 
 #### デプロイサーキットブレーカー {#circuit-breaker}
 
+壊れた版をデプロイすると、タスクは起動に失敗し、ECS は希望数に戻そうとして起動を繰り返します。止めないと、旧版にも戻らず、失敗を延々と続けます。サーキットブレーカーは、家の電気のブレーカーと同じで、失敗が続いたら自動で止めます。
+
 失敗を検知してデプロイを止めます。`rollback` を有効にすると、最後に `COMPLETED` になったデプロイに戻します。**ローリング更新(`ECS` コントローラー)でのみ使えます**。
 
 ```bash
@@ -828,6 +959,37 @@ flowchart TD
 [:material-sprout: CLF](../courses/clf/services.md){ .exam-badge .exam-foundational } [:material-sprout: AIF](../courses/aif/services.md){ .exam-badge .exam-foundational } [:material-certificate: SAA](../courses/saa/services.md){ .exam-badge .exam-associate } [:material-certificate: DVA](../courses/dva/services.md){ .exam-badge .exam-associate } [:material-certificate: SOA](../courses/soa/services.md){ .exam-badge .exam-associate } [:material-certificate: DEA](../courses/dea/services.md){ .exam-badge .exam-associate } [:material-certificate: MLA](../courses/mla/services.md){ .exam-badge .exam-associate } [:material-star-circle: SAP](../courses/sap/services.md){ .exam-badge .exam-professional } [:material-star-circle: DOP](../courses/dop/services.md){ .exam-badge .exam-professional } [:material-star-circle: AIP](../courses/aip/services.md){ .exam-badge .exam-professional } [:material-target: ANS](../courses/ans/services.md){ .exam-badge .exam-specialty } [:material-target: SCS](../courses/scs/services.md){ .exam-badge .exam-specialty }
 
 マネージドの Kubernetes です。アプリはマニフェストで宣言します。
+
+Kubernetes は、オープンソースのコンテナオーケストレーターです。自前で運用すると、API サーバーや etcd などのコントロールプレーンの冗長化、更新、バックアップまで自分で行います。EKS では、コントロールプレーンを AWS が運用し、ノードと Pod を自分で動かします。
+
+| 観点 | 自前の Kubernetes（オンプレミス） | EKS |
+| --- | --- | --- |
+| コントロールプレーン | 自分で冗長化し、更新する | AWS が運用する |
+| マニフェスト、`kubectl` | 同じ | 同じ。Kubernetes の API そのもの |
+| ノード | 自社のサーバー | EC2 か Fargate |
+| ロードバランサー | ハードウェアの LB や MetalLB など | ELB と連携 |
+| Pod の権限 | 外部のシステムごとに資格情報を配る | Pod Identity か IRSA で IAM ロール |
+
+| 観点 | ECS | EKS |
+| --- | --- | --- |
+| API | AWS 独自 | Kubernetes |
+| 学ぶこと | 少ない | Kubernetes の概念と周辺ツール |
+| 持ち運び | AWS の中 | 他のクラウドやオンプレミスでも同じマニフェスト |
+| 料金 | クラスター自体は無料 | クラスターごとに料金がかかる |
+
+宣言型なので、「こうあってほしい」状態を書けば、Kubernetes が今の状態との差を埋め続けます。Pod が消えても、Deployment が数を戻します。
+
+```mermaid
+flowchart TD
+    M["マニフェスト<br/>replicas: 4"] -- kubectl apply --> D["Deployment"]
+    D --> RS["ReplicaSet<br/>版ごとに作られる"]
+    RS --> P1["Pod"]
+    RS --> P2["Pod"]
+    RS --> P3["Pod"]
+    RS --> P4["Pod"]
+    SV["Service<br/>app: web を選ぶ"] -. ラベルで接続先を選ぶ .-> P1
+    SV -.-> P2
+```
 
 **提供単位**: クラスターはリージョン単位です。ノードと Pod は AZ のサブネットに置き、VPC の中で動きます（[リソースの提供単位](resource-scope.md#scope-regional-vpc)）。
 
@@ -938,6 +1100,22 @@ spec:
 
 ### ヘルスチェックとプローブ {#probes}
 
+「動いているか」と「リクエストを受けられるか」は別の問いです。起動中のアプリや DB の接続を待っているアプリは、プロセスは生きていても、まだリクエストを受けられません。再起動しても直らない状態で再起動を繰り返すと、かえって悪化します。
+
+そのため Kubernetes は、確認を 3 つに分け、失敗したときの扱いを変えています。
+
+```mermaid
+flowchart TD
+    S["コンテナが起動"] --> SP{"スタートアップ<br/>成功した?"}
+    SP -- 失敗が続く --> RS["コンテナを再起動"]
+    SP -- 成功 --> RUN["稼働中<br/>2 つを並行して確認"]
+    RUN --> LV{"ライブネス<br/>生きている?"}
+    RUN --> RD{"レディネス<br/>受けられる?"}
+    LV -- 失敗が続く --> RS
+    RD -- 失敗 --> OUT["Service から外す<br/>再起動しない"]
+    RD -- 成功 --> IN["Service に入れる"]
+```
+
 | プローブ | 実行時期 | 失敗時の動作 | トラフィックへの影響 |
 | --- | --- | --- | --- |
 | スタートアップ | 起動時に成功するまで | コンテナを再起動 | 成功するまで他のプローブを止める |
@@ -989,6 +1167,25 @@ ECS での対応関係は次のとおりです。Kubernetes のようにレデ�
 - **`timeoutSeconds` の例:** 応答に 2 秒かかるなら `timeoutSeconds: 3` にします。
 
 ### Pod に IAM 権限を与える {#pod-identity}
+
+1 台のノードには、別々のアプリの Pod が同居します。ノードのロール（インスタンスプロファイル）を Pod に使わせると、すべての Pod が同じ権限を持ち、1 つの Pod が乗っ取られると全部の権限が漏れます。Pod ごとにロールを分けるのは、このためです。ECS のタスクロールと同じ考え方です。
+
+Pod Identity では、Pod の中の SDK は各ノードのエージェントから認証情報を受け取ります。EC2 のインスタンスプロファイルが IMDS から認証情報を受け取るのと似た形です。
+
+```mermaid
+sequenceDiagram
+    participant App as Pod の SDK
+    participant Ag as Pod Identity Agent<br/>（各ノード）
+    participant Auth as EKS Auth API
+    participant S3
+    App->>Ag: 認証情報を要求<br/>（ServiceAccount のトークン付き）
+    Ag->>Auth: AssumeRoleForPodIdentity
+    Auth-->>Ag: 一時認証情報
+    Ag-->>App: 一時認証情報
+    App->>S3: 署名付きリクエスト
+```
+
+SDK は、Pod に自動で入る環境変数 `AWS_CONTAINER_CREDENTIALS_FULL_URI` を見てエージェントに接続します。
 
 | 観点 | EKS Pod Identity | IRSA |
 | --- | --- | --- |
